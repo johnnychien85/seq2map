@@ -181,7 +181,10 @@ void HetergeneousDetextractor::ApplyParams()
 
 Parameterised::Options HetergeneousDetextractor::GetOptions(int flag)
 {
-    return Options().add(m_detector->GetOptions(flag)).add(m_extractor->GetOptions(flag));
+    if (flag & FeatureOptionType::DETECTION_OPTIONS)  return m_detector ->GetOptions(flag);
+    if (flag & FeatureOptionType::EXTRACTION_OPTIONS) return m_extractor->GetOptions(flag);
+
+    return Options();
 }
 
 ImageFeatureSet HetergeneousDetextractor::DetectAndExtractFeatures(const Mat& im) const
@@ -214,6 +217,14 @@ ImageFeatureSet CvFeatureDetextractorAdaptor::DetectAndExtractFeatures(const Mat
     m_cvDxtor->detectAndCompute(im, Mat(), keypoints, descriptors);
 
     return ImageFeatureSet(keypoints, descriptors, m_cvDxtor->defaultNorm());
+}
+
+template<class T>
+void CvSuperDetextractorAdaptor<T>::SetCvSuperDetextractorPtr(CvDextractorPtr cvDxtor)
+{
+    SetCvDetectorPtr(cvDxtor);
+    SetCvExtractorPtr(cvDxtor);
+    SetCvDetextractorPtr(cvDxtor);
 }
 
 /**
@@ -470,13 +481,13 @@ bool SIFTFeatureDetextractor::ReadParams(const cv::FileNode& fn)
 
 void SIFTFeatureDetextractor::ApplyParams()
 {
-    *m_cvDxtor = *cv::xfeatures2d::SIFT::create(
+    SetCvSuperDetextractorPtr(cv::xfeatures2d::SIFT::create(
         m_maxFeatures,
         m_octaveLayers,
         m_contrastThreshold,
         m_edgeThreshold,
         m_sigma
-    );
+    ));
 }
 
 Parameterised::Options SIFTFeatureDetextractor::GetOptions(int flag)
@@ -491,7 +502,7 @@ Parameterised::Options SIFTFeatureDetextractor::GetOptions(int flag)
             ("octave-layers",      po::value<int>   (&m_octaveLayers     )->default_value(m_octaveLayers     ), "The number of layers in each octave. 3 is the value used in D. Lowe paper. The number of octaves is computed automatically from the image resolution.")
             ("contrast-threshold", po::value<double>(&m_contrastThreshold)->default_value(m_contrastThreshold), "The contrast threshold used to filter out weak features in semi-uniform (low-contrast) regions. The larger the threshold, the less features are produced by the detector.")
             ("edge-threshold",     po::value<double>(&m_edgeThreshold    )->default_value(m_edgeThreshold    ), "The threshold used to filter out edge-like features. Note that the its meaning is different from the contrastThreshold, i.e. the larger the edgeThreshold, the less features are filtered out (more features are retained).")
-            ("sigma",              po::value<double>(&m_sigma            )->default_value(m_sigma            ), "	The sigma of the Gaussian applied to the input image at the octave #0. If your image is captured with a weak camera with soft lenses, you might want to reduce the number.");
+            ("sigma",              po::value<double>(&m_sigma            )->default_value(m_sigma            ), "The sigma of the Gaussian applied to the input image at the octave #0. If your image is captured with a weak camera with soft lenses, you might want to reduce the number.");
         a.add(o);
     }
 

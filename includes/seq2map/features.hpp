@@ -144,6 +144,7 @@ namespace seq2map
         /* ctor */ CvFeatureDetectorAdaptor(CvDetectorPtr cvDetector) : m_cvDetector(cvDetector) {}
         /* dtor */ virtual ~CvFeatureDetectorAdaptor() {}
         virtual KeyPoints DetectFeatures(const cv::Mat& im) const;
+        inline void SetCvDetectorPtr(CvDetectorPtr cvDetector) {m_cvDetector = cvDetector;}
 	private:
         CvDetectorPtr m_cvDetector;
     };
@@ -155,6 +156,7 @@ namespace seq2map
         /* ctor */ CvFeatureExtractorAdaptor(CvExtractorPtr cvExtractor) : m_cvExtractor(cvExtractor) {}
         /* dtor */ virtual ~CvFeatureExtractorAdaptor() {}
         virtual ImageFeatureSet ExtractFeatures(const cv::Mat& im, KeyPoints& keypoints) const;
+        inline void SetCvExtractorPtr(CvExtractorPtr cvExtractor) { m_cvExtractor = cvExtractor; }
 	private:
         CvExtractorPtr m_cvExtractor;
     };
@@ -166,6 +168,7 @@ namespace seq2map
         /* ctor */ CvFeatureDetextractorAdaptor(CvDextractorPtr cvDxtor) : m_cvDxtor(cvDxtor) {}
         /* dtor */ virtual ~CvFeatureDetextractorAdaptor() {}
         virtual ImageFeatureSet DetectAndExtractFeatures(const cv::Mat& im) const;
+        inline void SetCvDetextractorPtr(CvDextractorPtr cvDxtor) { m_cvDxtor = cvDxtor; }
     private:
         CvDextractorPtr m_cvDxtor;
     };
@@ -182,6 +185,7 @@ namespace seq2map
 			CvFeatureExtractorAdaptor   (cvDxtor),
 			CvFeatureDetextractorAdaptor(cvDxtor) {}
 		/* dtor */ virtual ~CvSuperDetextractorAdaptor() {}
+        inline void SetCvSuperDetextractorPtr(CvDextractorPtr cvDxtor);
 		cv::Ptr<T> m_cvDxtor;
 	};
 

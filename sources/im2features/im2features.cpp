@@ -220,20 +220,14 @@ bool init(int argc, char* argv[], Args& args, FeatureDetextractorPtr& dxtor)
     {
         Parameterised::Options detectorOptions = dxtor->GetOptions(FeatureOptionType::DETECTION_OPTIONS);
         Parameterised::Options xtractorOptions = dxtor->GetOptions(FeatureOptionType::EXTRACTION_OPTIONS);
+        Parameterised::Options allOptions;
+
+        allOptions.add(detectorOptions).add(xtractorOptions);
 
         po::variables_map vm;
-        po::parsed_options parsed = po::command_line_parser(unknownToks).options(detectorOptions).allow_unregistered().run();
-        
+        po::parsed_options parsed = po::command_line_parser(unknownToks).options(allOptions).run();
+
         // store the parsed values to the detector object's internal data member(s)
-        po::store(parsed, vm);
-        po::notify(vm);
-
-        // Now we collect the unknown options and do the parsing again for the extractor.
-        // As this is the final pass, any unrecognised option will trigger a parsing error!
-        unknownToks = po::collect_unrecognized(parsed.options, po::collect_unrecognized_mode::include_positional);
-        parsed = po::command_line_parser(unknownToks).options(xtractorOptions).run();
-
-        // store the parsed values to the extractor object's internal data member(s)
         po::store(parsed, vm);
         po::notify(vm);
     }
