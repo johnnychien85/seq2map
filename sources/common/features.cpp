@@ -511,51 +511,55 @@ Parameterised::Options SIFTFeatureDetextractor::GetOptions(int flag)
 
 void SURFFeatureDetextractor::WriteParams(cv::FileStorage & fs) const
 {
-	fs << "m_hessianThreshold" << m_surf->getHessianThreshold();
-	fs << "m_nOctaves" << m_surf->getNOctaves();
-	fs << "m_nOctaveLayers" << m_surf->getNOctaveLayers();
-	fs << "m_extended" << m_surf->getExtended();
-	fs << "m_upright" << m_surf->getUpright();
+	fs << "hessianThreshold" << m_cvDxtor->getHessianThreshold();
+	fs << "levels"           << m_cvDxtor->getNOctaves();
+	fs << "octaveLayers"     << m_cvDxtor->getNOctaveLayers();
+	fs << "extended"         << m_cvDxtor->getExtended();
+	fs << "upright"          << m_cvDxtor->getUpright();
 }
 
 bool SURFFeatureDetextractor::ReadParams(const cv::FileNode & fn)
 {
-	fn["m_hessianThreshold"] >> m_hessianThreshold;
-	fn["m_nOctaves"] >> m_nOctaves;
-	fn["m_nOctaveLayers"] >> m_nOctaveLayers;
-	fn["m_extended"] >> m_extended;
-	fn["m_upright"] >> m_upright;
+	fn["hessianThreshold"] >> m_hessianThreshold;
+    fn["levels"]           >> m_levels;
+	fn["octaveLayers"]     >> m_octaveLayers;
+	fn["extended"]         >> m_extended;
+	fn["upright"]          >> m_upright;
 
-	return false;
+	return true;
 }
 
 void SURFFeatureDetextractor::ApplyParams()
 {
-	m_surf->setHessianThreshold(m_hessianThreshold);
-	m_surf->setNOctaves(m_nOctaves);
-	m_surf->setNOctaveLayers(m_nOctaveLayers);
-	m_surf->setExtended(m_extended);
-	m_surf->setUpright(m_upright);
+    m_cvDxtor->setHessianThreshold(m_hessianThreshold);
+    m_cvDxtor->setNOctaves        (m_levels          );
+    m_cvDxtor->setNOctaveLayers   (m_octaveLayers    );
+    m_cvDxtor->setExtended        (m_extended        );
+    m_cvDxtor->setUpright         (m_upright         );
 }
 
 Parameterised::Options SURFFeatureDetextractor::GetOptions(int flag)
 {
-	double hessianThreshold = m_surf->getHessianThreshold();
-	int nOctaves = m_surf->getNOctaves();
-	int nOctaveLayers = m_surf->getNOctaveLayers();
-	bool extended = m_surf->getExtended();
-	bool upright = m_surf->getUpright();
-
-	Options o("SURF (Speeded up robust features) Feature Detection Options");
+    Options a;
 
 	if (flag & FeatureOptionType::DETECTION_OPTIONS)
 	{
+        Options o("SURF (Speeded up robust features) Feature Detection Options");
 		o.add_options()
-			("hessianThreshold", po::value<double>(&m_hessianThreshold)->default_value(hessianThreshold), "Threshold for hessian keypoint detector used in SURF.")
-			("nOctaves", po::value<int>(&m_nOctaves)->default_value(nOctaves), "Number of pyramid octaves the keypoint detector will use.")
-			("nOctaveLayers", po::value<int>(&m_nOctaveLayers)->default_value(nOctaveLayers), "Number of octave layers within each octave.")
-			("extended", po::value<bool>(&m_extended)->default_value(extended), "Extended descriptor flag (true - use extended 128-element descriptors; false - use 64-element descriptors).")
-			("upright", po::value<bool>(&m_upright)->default_value(upright), "	Up-right or rotated features flag (true - do not compute orientation of features; false - compute orientation).");
-	}
-	return o;
+			("hessian-threshold", po::value<double>(&m_hessianThreshold)->default_value(m_cvDxtor->getHessianThreshold()), "Threshold for hessian keypoint detector used in SURF.")
+			("levels",            po::value<int>   (&m_levels          )->default_value(m_cvDxtor->getNOctaves()        ), "Number of pyramid octaves the keypoint detector will use.")
+			("octave-layers",     po::value<int>   (&m_octaveLayers    )->default_value(m_cvDxtor->getNOctaveLayers()   ), "Number of octave layers within each octave.")
+			("upright",           po::value<bool>  (&m_upright         )->default_value(m_cvDxtor->getUpright()         ), "Up-right or rotated features flag (true - do not compute orientation of features; false - compute orientation).");
+        a.add(o);
+    }
+
+    if (flag & FeatureOptionType::EXTRACTION_OPTIONS)
+    {
+        Options o("SURF (Speeded up robust features) Feature Extraction Option");
+        o.add_options()
+            ("extended",          po::value<bool>  (&m_extended        )->default_value(m_cvDxtor->getExtended()        ), "Extended descriptor flag (true - use extended 128-element descriptors; false - use 64-element descriptors).");
+        a.add(o);
+    }
+
+	return a;
 }

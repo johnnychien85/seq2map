@@ -247,13 +247,13 @@ namespace seq2map
 	public:
 		/* ctor */ ORBFeatureDetextractor(cv::Ptr<cv::ORB> orb = cv::ORB::create())
 			: m_maxFeatures(orb->getMaxFeatures()),
-			m_scaleFactor(orb->getScaleFactor()),
-			m_levels(orb->getNLevels()),
-			m_edgeThreshold(orb->getEdgeThreshold()),
-			m_wtaK(orb->getWTA_K()),
-			m_scoreType(ScoreType2String(orb->getScoreType())),
-			m_patchSize(orb->getPatchSize()),
-			m_fastThreshold(orb->getFastThreshold()),
+			  m_scaleFactor(orb->getScaleFactor()),
+              m_levels(orb->getNLevels()),
+              m_edgeThreshold(orb->getEdgeThreshold()),
+              m_wtaK(orb->getWTA_K()),
+              m_scoreType(ScoreType2String(orb->getScoreType())),
+              m_patchSize(orb->getPatchSize()),
+              m_fastThreshold(orb->getFastThreshold()),
 			CvSuperDetextractorAdaptor(orb) {}
 		/* dtor */ virtual ~ORBFeatureDetextractor() {}
 		virtual void WriteParams(cv::FileStorage& fs) const;
@@ -310,12 +310,12 @@ namespace seq2map
 	{
 	public:
 		/* ctor */ SIFTFeatureDetextractor(cv::Ptr<cv::xfeatures2d::SIFT> sift = cv::xfeatures2d::SIFT::create())
-			: m_maxFeatures(0),
-			m_octaveLayers(3),
-			m_contrastThreshold(0.04f),
-			m_edgeThreshold(10.0f),
-			m_sigma(1.6f),
-			CvSuperDetextractorAdaptor(sift) {}
+            : m_maxFeatures      ( 0    ),
+			  m_octaveLayers     ( 3    ),
+			  m_contrastThreshold( 0.04f),
+              m_edgeThreshold    (10.00f),
+              m_sigma            ( 1.60f),
+			  CvSuperDetextractorAdaptor(sift) {}
 		/* dtor */ virtual ~SIFTFeatureDetextractor() {}
 		void WriteParams(cv::FileStorage& fs) const;
 		virtual bool ReadParams(const cv::FileNode& fn);
@@ -334,25 +334,23 @@ namespace seq2map
 	{
 	public:
 		/* ctor */ SURFFeatureDetextractor(cv::Ptr<cv::xfeatures2d::SURF> surf = cv::xfeatures2d::SURF::create())
-			: m_surf(surf),
-			m_hessianThreshold(surf->getHessianThreshold()),
-			m_nOctaves(surf-> getNOctaves()),
-			m_nOctaveLayers(surf-> getNOctaveLayers()),
-			m_extended(surf-> getExtended()),
-			m_upright(surf-> getUpright()),
-			CvSuperDetextractorAdaptor(surf) {}
-		/* dtor */ virtual ~SURFFeatureDetextractor() {}
-		virtual void WriteParams(cv::FileStorage& fs) const;
-		virtual bool ReadParams(const cv::FileNode& fn);
-		virtual void ApplyParams();
-		virtual Options GetOptions(int flag);
+            : m_hessianThreshold(surf->getHessianThreshold()),
+              m_levels          (surf->getNOctaves()        ),
+              m_octaveLayers    (surf->getNOctaveLayers()   ),
+              m_extended        (surf->getExtended()        ),
+              m_upright         (surf->getUpright()         ),
+              CvSuperDetextractorAdaptor(surf) {}
+        /* dtor */ virtual ~SURFFeatureDetextractor() {}
+        virtual void WriteParams(cv::FileStorage& fs) const;
+        virtual bool ReadParams(const cv::FileNode& fn);
+        virtual void ApplyParams();
+        virtual Options GetOptions(int flag);
 	private:
-		cv::Ptr<cv::xfeatures2d::SURF> m_surf;
-		double m_hessianThreshold;
-		int m_nOctaves;
-		int m_nOctaveLayers;
-		bool m_extended;
-		bool m_upright;
+        double m_hessianThreshold;
+        int    m_levels;
+        int    m_octaveLayers;
+        bool   m_extended;
+        bool   m_upright;
 	};
 
 	class BRIEFFeatureExtractor :
