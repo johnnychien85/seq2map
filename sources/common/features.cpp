@@ -575,18 +575,18 @@ Parameterised::Options SURFFeatureDetextractor::GetOptions(int flag)
 	return a;
 }
 
-void seq2map::AKAZEFeatureDetextractor::WriteParams(cv::FileStorage & fs) const
+void AKAZEFeatureDetextractor::WriteParams(cv::FileStorage & fs) const
 {
-    fs << "descriptorType"       << ScoreType2String(m_akaze->getDescriptorType());
-    fs << "descriptorSize"       << m_akaze->getDescriptorSize();
-    fs << "m_descriptorChannels" << m_akaze->getDescriptorChannels();
-    fs << "m_threshold"          << m_akaze->getThreshold();
-    fs << "m_levels"             << m_akaze->getNOctaves();
-    fs << "m_octaveLayers"       << m_akaze->getNOctaveLayers();
-    fs << "m_diffusivityType"    << KazeScoreType2String(m_akaze->getDiffusivity());
+    fs << "descriptorType"       << ScoreType2String(m_cvDxtor->getDescriptorType());
+    fs << "descriptorSize"       <<  m_cvDxtor->getDescriptorSize();
+    fs << "m_descriptorChannels" <<  m_cvDxtor->getDescriptorChannels();
+    fs << "m_threshold"          <<  m_cvDxtor->getThreshold();
+    fs << "m_levels"             <<  m_cvDxtor->getNOctaves();
+    fs << "m_octaveLayers"       <<  m_cvDxtor->getNOctaveLayers();
+    fs << "m_diffusivityType"    << KazeScoreType2String(m_cvDxtor->getDiffusivity());
 }
 
-bool seq2map::AKAZEFeatureDetextractor::ReadParams(const cv::FileNode & fn)
+bool AKAZEFeatureDetextractor::ReadParams(const cv::FileNode & fn)
 {
     fn["descriptorType"] >>      m_descriptorType;
     fn["descriptorType"] >>      m_descriptorType;
@@ -599,15 +599,15 @@ bool seq2map::AKAZEFeatureDetextractor::ReadParams(const cv::FileNode & fn)
     return true;
 }
 
-void seq2map::AKAZEFeatureDetextractor::ApplyParams()
+void AKAZEFeatureDetextractor::ApplyParams()
 {
-    m_akaze->setDescriptorType(String2ScoreType(m_descriptorType));
-    m_akaze->setDescriptorSize( m_descriptorSize);
-    m_akaze->setDescriptorChannels(m_descriptorChannels);
-    m_akaze->setThreshold(m_threshold);
-    m_akaze->setNOctaves(m_levels);
-    m_akaze->setNOctaveLayers(m_octaveLayers);
-    m_akaze->setDiffusivity(String2KazeScoreType(m_diffusivityType));
+    m_cvDxtor->setDescriptorType(String2ScoreType(m_descriptorType));
+    m_cvDxtor->setDescriptorSize( m_descriptorSize);
+    m_cvDxtor->setDescriptorChannels(m_descriptorChannels);
+    m_cvDxtor->setThreshold(m_threshold);
+    m_cvDxtor->setNOctaves(m_levels);
+    m_cvDxtor->setNOctaveLayers(m_octaveLayers);
+    m_cvDxtor->setDiffusivity(String2KazeScoreType(m_diffusivityType));
 }
 
 Parameterised::Options AKAZEFeatureDetextractor::GetOptions(int flag)
@@ -616,24 +616,24 @@ Parameterised::Options AKAZEFeatureDetextractor::GetOptions(int flag)
 
     if (flag & FeatureOptionType::DETECTION_OPTIONS)
     {
-        String diffusivityType = KazeScoreType2String(m_akaze->getDiffusivity());
+        String diffusivityType = KazeScoreType2String(m_cvDxtor->getDiffusivity());
         Options o("AKAZE () Feature Detection Options");
         o.add_options()
-            ("threshold",      po::value<float> (&m_threshold)      ->default_value(m_akaze->getThreshold()), "Detector response threshold to accept point.")
-            ("levels",         po::value<int>   (&m_levels)         ->default_value(m_akaze->getThreshold()), "Maximum octave evolution of the image.")
-            ("octave-layers",  po::value<int>   (&m_octaveLayers)   ->default_value(m_akaze->getThreshold()), "Default number of sublevels per scale level.")
+            ("threshold",      po::value<float> (&m_threshold)      ->default_value( m_cvDxtor->getThreshold()), "Detector response threshold to accept point.")
+            ("levels",         po::value<int>   (&m_levels)         ->default_value( m_cvDxtor->getThreshold()), "Maximum octave evolution of the image.")
+            ("octave-layers",  po::value<int>   (&m_octaveLayers)   ->default_value( m_cvDxtor->getThreshold()), "Default number of sublevels per scale level.")
             ("diffusivity-type",po::value<String>(&m_diffusivityType)->default_value(diffusivityType),        "Diffusivity type. DIFF_PM_G1, DIFF_PM_G2, DIFF_WEICKERT or DIFF_CHARBONNIER.");
           a.add(o);
     }
 
     if (flag & FeatureOptionType::EXTRACTION_OPTIONS)
     {
-        String  descriptorType = ScoreType2String(m_akaze->getDescriptorType());
+        String  descriptorType = ScoreType2String( m_cvDxtor->getDescriptorType());
         Options o("AKAZE ( ) Feature Extraction Option");
         o.add_options()
             ("descriptor-type",     po::value<String>(&m_descriptorType)    ->default_value(descriptorType),                   "Type of the extracted descriptor: DESCRIPTOR_KAZE, DESCRIPTOR_KAZE_UPRIGHT, DESCRIPTOR_MLDB or DESCRIPTOR_MLDB_UPRIGHT.")
-            ("descriptor-size",     po::value<int>   (&m_descriptorSize)    ->default_value(m_akaze->getDescriptorSize()),     "Size of the descriptor in bits. 0 -> Full size.")
-            ("descriptor-channels", po::value<int>   (&m_descriptorChannels)->default_value(m_akaze->getDescriptorChannels()), "	Number of channels in the descriptor (1, 2, 3).");
+            ("descriptor-size",     po::value<int>   (&m_descriptorSize)    ->default_value( m_cvDxtor->getDescriptorSize()),     "Size of the descriptor in bits. 0 -> Full size.")
+            ("descriptor-channels", po::value<int>   (&m_descriptorChannels)->default_value( m_cvDxtor->getDescriptorChannels()), "	Number of channels in the descriptor (1, 2, 3).");
         a.add(o);
     }
 
@@ -696,12 +696,12 @@ seq2map::String AKAZEFeatureDetextractor::KazeScoreType2String(int type)
 
 void KAZEFeatureDetextractor::WriteParams(cv::FileStorage & fs) const
 {
-    fs << "extended"         << m_kaze->getExtended();
-    fs << "upright"          << m_kaze->getUpright();
-    fs << "threshold"        << m_kaze->getThreshold();
-    fs << "levels"           << m_kaze->getNOctaves();
-    fs << "octaveLayers"     << m_kaze->getNOctaveLayers();
-    fs << "diffusivityType"  << ScoreType2String(m_kaze->getDiffusivity());
+    fs << "extended"         <<  m_cvDxtor->getExtended();
+    fs << "upright"          <<  m_cvDxtor->getUpright();
+    fs << "threshold"        <<  m_cvDxtor->getThreshold();
+    fs << "levels"           <<  m_cvDxtor->getNOctaves();
+    fs << "octaveLayers"     <<  m_cvDxtor->getNOctaveLayers();
+    fs << "diffusivityType"  << ScoreType2String( m_cvDxtor->getDiffusivity());
 }
 
 bool KAZEFeatureDetextractor::ReadParams(const cv::FileNode & fn)
@@ -718,12 +718,12 @@ bool KAZEFeatureDetextractor::ReadParams(const cv::FileNode & fn)
 
 void KAZEFeatureDetextractor::ApplyParams()
 {
-    m_kaze->setExtended(m_extended);
-    m_kaze->setUpright(m_upright);
-    m_kaze->setThreshold(m_threshold);
-    m_kaze->setNOctaves(m_levels);
-    m_kaze->setNOctaveLayers(m_octaveLayers);
-    m_kaze->setDiffusivity(String2ScoreType(m_diffusivityType));
+    m_cvDxtor->setExtended(m_extended);
+    m_cvDxtor->setUpright(m_upright);
+    m_cvDxtor->setThreshold(m_threshold);
+    m_cvDxtor->setNOctaves(m_levels);
+    m_cvDxtor->setNOctaveLayers(m_octaveLayers);
+    m_cvDxtor->setDiffusivity(String2ScoreType(m_diffusivityType));
 }
 
 Parameterised::Options KAZEFeatureDetextractor::GetOptions(int flag)
@@ -732,12 +732,12 @@ Parameterised::Options KAZEFeatureDetextractor::GetOptions(int flag)
 
     if (flag & FeatureOptionType::DETECTION_OPTIONS)
     {
-        String diffusivityType = ScoreType2String(m_kaze->getDiffusivity());
+        String diffusivityType = ScoreType2String( m_cvDxtor->getDiffusivity());
         Options o("AKAZE () Feature Detection Options");
         o.add_options()
-            ("threshold",       po::value<float> (&m_threshold)      ->default_value(m_kaze->getThreshold()),     "Detector response threshold to accept point.")
-            ("levels",          po::value<int>   (&m_levels)         ->default_value(m_kaze->getNOctaves()),      "Maximum octave evolution of the image.")
-            ("octave-layers",   po::value<int>   (&m_octaveLayers)   ->default_value(m_kaze->getNOctaveLayers()), "Default number of sublevels per scale level.")
+            ("threshold",       po::value<float> (&m_threshold)      ->default_value( m_cvDxtor->getThreshold()),     "Detector response threshold to accept point.")
+            ("levels",          po::value<int>   (&m_levels)         ->default_value( m_cvDxtor->getNOctaves()),      "Maximum octave evolution of the image.")
+            ("octave-layers",   po::value<int>   (&m_octaveLayers)   ->default_value( m_cvDxtor->getNOctaveLayers()), "Default number of sublevels per scale level.")
             ("diffusivity-type",po::value<String>(&m_diffusivityType)->default_value(diffusivityType),            "Diffusivity type. DIFF_PM_G1, DIFF_PM_G2, DIFF_WEICKERT or DIFF_CHARBONNIER.");
         a.add(o);
     }
@@ -746,8 +746,8 @@ Parameterised::Options KAZEFeatureDetextractor::GetOptions(int flag)
     {
         Options o("AKAZE ( ) Feature Extraction Option");
         o.add_options()
-            ("extended",   po::value<bool> (&m_extended)->default_value(m_kaze->getExtended()), "Set to enable extraction of extended (128-byte) descriptor.")
-            ("upright",    po::value<bool> (&m_upright) ->default_value(m_kaze->getUpright()),  "Set to enable use of upright descriptors (non rotation-invariant).");
+            ("extended",   po::value<bool> (&m_extended)->default_value( m_cvDxtor->getExtended()), "Set to enable extraction of extended (128-byte) descriptor.")
+            ("upright",    po::value<bool> (&m_upright) ->default_value( m_cvDxtor->getUpright()),  "Set to enable use of upright descriptors (non rotation-invariant).");
         a.add(o);
     }
 

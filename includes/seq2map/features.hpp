@@ -379,18 +379,17 @@ namespace seq2map
     };
 
     class KAZEFeatureDetextractor :
-        public CvFeatureDetextractorAdaptor
+        public CvSuperDetextractorAdaptor<cv::KAZE>
     {
     public:
         /* ctor */ KAZEFeatureDetextractor(cv::Ptr<cv::KAZE> kaze = cv::KAZE::create())
-            : m_kaze(kaze), 
-            m_extended(kaze-> getExtended()),
+            :m_extended(kaze-> getExtended()),
             m_upright(kaze-> getUpright()),  
             m_threshold(kaze-> getThreshold()),
             m_levels(kaze-> getNOctaves()),
             m_octaveLayers(kaze-> getNOctaveLayers()),
             m_diffusivityType(ScoreType2String(kaze->getDiffusivity())),
-            CvFeatureDetextractorAdaptor(kaze) {}
+            CvSuperDetextractorAdaptor(kaze) {}
         /* dtor */ virtual ~KAZEFeatureDetextractor() {}
         virtual void WriteParams(cv::FileStorage& fs) const;
         virtual bool ReadParams(const cv::FileNode& fn);
@@ -399,7 +398,7 @@ namespace seq2map
     private:
         static int String2ScoreType(const seq2map::String& scoreName);
         static String ScoreType2String(int type);
-        cv::Ptr<cv::KAZE> m_kaze;
+        //cv::Ptr<cv::KAZE> m_kaze;
         bool 	m_extended;
         bool 	m_upright;
         float 	m_threshold;
@@ -411,19 +410,18 @@ namespace seq2map
     };
 
     class AKAZEFeatureDetextractor :
-        public CvFeatureDetextractorAdaptor
+        public  CvSuperDetextractorAdaptor<cv::AKAZE>
     {
     public:
         /* ctor */ AKAZEFeatureDetextractor(cv::Ptr<cv::AKAZE> akaze = cv::AKAZE::create())
-            : m_akaze(akaze),
-            m_descriptorType(ScoreType2String(akaze -> getDescriptorType())),
+            : m_descriptorType(ScoreType2String(akaze -> getDescriptorType())),
             m_descriptorSize(akaze -> getDescriptorSize()),
             m_descriptorChannels(akaze ->getDescriptorChannels()),
             m_threshold(akaze -> getThreshold()),
             m_levels(akaze -> getNOctaves()),
             m_octaveLayers(akaze -> getNOctaveLayers()),
             m_diffusivityType(KazeScoreType2String(akaze -> getDiffusivity())),
-            CvFeatureDetextractorAdaptor(akaze) {}
+            CvSuperDetextractorAdaptor(akaze) {}
         /* dtor */ virtual ~AKAZEFeatureDetextractor() {}
         virtual void WriteParams(cv::FileStorage& fs) const;
         virtual bool ReadParams(const cv::FileNode& fn);
@@ -434,7 +432,6 @@ namespace seq2map
         static String ScoreType2String(int type);
         static int String2KazeScoreType(const seq2map::String& scoreName);
         static String KazeScoreType2String(int type);
-        cv::Ptr<cv::AKAZE> m_akaze;
         String  m_descriptorType;
         int     m_descriptorSize;
         int     m_descriptorChannels;
