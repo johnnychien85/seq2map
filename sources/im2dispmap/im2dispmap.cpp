@@ -1,11 +1,11 @@
 #include <boost/program_options.hpp>
 #include <boost/algorithm/string.hpp>
 
-#include <seq2map/stereomatcher.hpp>
+#include <seq2map/disparity.hpp>
 
 using namespace std;
 using namespace cv;
-using namespace voutils;
+using namespace seq2map;
 
 struct Args
 {
@@ -13,13 +13,13 @@ struct Args
 	string disparityExt;
 };
 
-bool parseArgs(int, char*[], Args&, MatcherAdapter**);
+bool parseArgs(int, char*[], Args&, StereoMatcherAdaptor**);
 bool checkPaths(const Path&, const Path&, const Path&);
 
 int main(int argc, char* argv[])
 {
 	Args args;
-	MatcherAdapter* matcher = NULL;
+    StereoMatcherAdaptor* matcher = NULL;
 
 	if (!parseArgs(argc, argv, args, &matcher)) return -1;
 	if (!checkPaths(args.leftPath, args.rightPath, args.outPath)) return -1;
@@ -76,7 +76,7 @@ int main(int argc, char* argv[])
 	return 0;
 }
 
-bool parseArgs(int argc, char* argv[], Args& args, MatcherAdapter** matcher)
+bool parseArgs(int argc, char* argv[], Args& args, StereoMatcherAdaptor** matcher)
 {
 	string matcherName, params, left, right, out;
 	int blockSize = 0, dmax = 0;

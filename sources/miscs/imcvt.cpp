@@ -1,6 +1,6 @@
 #include <boost/program_options.hpp>
 #include <opencv2/opencv.hpp>
-#include <common.hpp>
+#include <seq2map/common.hpp>
 
 using namespace std;
 using namespace cv;

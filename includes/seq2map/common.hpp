@@ -35,6 +35,9 @@ namespace seq2map
     Paths enumerateFiles(const Path& sample);
     Paths enumerateDirs(const Path& root);
 
+    /**
+     * A common interface for parameterised objects.
+     */
     class Parameterised
     {
     public:
@@ -46,6 +49,21 @@ namespace seq2map
         virtual Options GetOptions(int flag) = 0;
     };
 
+    /**
+     * An interface to represent any object that is storable to and later
+     * restorable from a file.
+     */
+    class Persistent
+    {
+    public:
+        virtual bool Store(const Path& path) const = 0;
+        virtual bool Restore(const Path& path) = 0;
+    };
+
+    /**
+     * Templated factory class to instantiate an object derived from Base
+     * given a key indicating its concrete class.
+     */
     template<class Key, class Base> class Factory
     {
     public:

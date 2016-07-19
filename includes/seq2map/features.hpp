@@ -11,32 +11,50 @@
 namespace seq2map
 {
     typedef std::vector<cv::KeyPoint> KeyPoints;
+
+    /**
+     * Flags to indiate what kind of options are requested to a feature
+     * detector, an extractor, or a detextractor.
+     */
     enum FeatureOptionType
     {
-        DETECTION_OPTIONS = 0x000001,
+        DETECTION_OPTIONS  = 0x000001,
         EXTRACTION_OPTIONS = 0x000002
     };
 
+    /**
+     * Image feature class represents a single image feature.
+     */
     class ImageFeature
     {
     public:
         friend class ImageFeatureSet;
     protected:
         /* ctor */ ImageFeature(cv::KeyPoint& keypoint, cv::Mat descriptor)
-            : m_keypoint(keypoint), m_descriptor(descriptor) {}
+                   : m_keypoint(keypoint), m_descriptor(descriptor) {}
         /* dtor */ virtual ~ImageFeature() {}
         cv::KeyPoint& m_keypoint;
         cv::Mat       m_descriptor;
     };
 
-    class ImageFeatureSet
+    /**
+     * The class deficated to the collection of image features. As most of the
+     * operations related to image feature involve more than one feature, it is
+     * reasonable to actualise the concept of image feature collection as a new
+     * class.
+     */
+    class ImageFeatureSet : public Persistent
     {
     public:
         /* ctor */ ImageFeatureSet(const KeyPoints& keypoints, const cv::Mat& descriptors, int normType = cv::NormTypes::NORM_L2)
-            : m_keypoints(keypoints), m_descriptors(descriptors), m_normType(normType) {}
+                   : m_keypoints(keypoints), m_descriptors(descriptors), m_normType(normType) {}
+        /* ctor */ ImageFeatureSet() : m_normType(cv::NormTypes::NORM_L2) {}
         /* dtor */ virtual ~ImageFeatureSet() {}
         inline ImageFeature GetFeature(const size_t idx);
-        bool Write(const Path& path) const;
+        virtual bool Store(const Path& path) const;
+        virtual bool Restore(const Path& path);
+        inline bool IsEmpty() const { return m_keypoints.empty(); }
+        inline size_t GetSize() const { return m_keypoints.size(); }
     protected:
         static String NormType2String(int type);
         static String MatType2String(int type);
@@ -49,10 +67,11 @@ namespace seq2map
         const int m_normType;
     };
 
+
+
     /**
     * Feature detector and extractor interfaces
     */
-
     class FeatureDetector : public virtual Parameterised
     {
     public:
@@ -84,7 +103,7 @@ namespace seq2map
     {
     public:
         /* ctor */ HetergeneousDetextractor(FeatureDetectorPtr detector, FeatureExtractorPtr extractor)
-            : m_detector(detector), m_extractor(extractor) {}
+                   : m_detector(detector), m_extractor(extractor) {}
         /* dtor */ virtual ~HetergeneousDetextractor() {}
         virtual ImageFeatureSet DetectAndExtractFeatures(const cv::Mat& im) const;
         virtual void WriteParams(cv::FileStorage& f) const;
@@ -179,8 +198,8 @@ namespace seq2map
         public CvFeatureDetextractorAdaptor
     {
     protected:
-        /* ctor */ CvSuperDetextractorAdaptor(cv::Ptr<T> cvDxtor) :
-            m_cvDxtor(cvDxtor),
+        /* ctor */ CvSuperDetextractorAdaptor(cv::Ptr<T> cvDxtor)
+            : m_cvDxtor(cvDxtor),
             CvFeatureDetectorAdaptor(cvDxtor),
             CvFeatureExtractorAdaptor(cvDxtor),
             CvFeatureDetextractorAdaptor(cvDxtor) {}

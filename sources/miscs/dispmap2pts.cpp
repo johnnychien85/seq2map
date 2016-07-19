@@ -29,11 +29,13 @@
 #include <boost/unordered_map.hpp>
 #include <boost/foreach.hpp>
 
-#include "common.hpp"
+#include <seq2map/disparity.hpp>
 
 using namespace std;
 using namespace cv;
-using namespace voutils;
+using namespace seq2map;
+
+namespace fs = boost::filesystem;
 
 struct CalibPaths
 {
@@ -141,9 +143,9 @@ bool parseArgs(
 	po::options_description o("Options");
 	o.add_options()
 		("help,h",	"Show this help message and exit.")
-		("gradfilt",po::value<double>(&filter.gradientThreshold)->default_value(0),	"Points having image gradient values lower than the threshold will are considered low contrast region and will be filtered out. Set 0 to disable image contrast filtering. <image_dir> must be specified to enable checking.")
-		("zmin",	po::value<double>(&filter.zmin)->default_value(0),	"Minmum depth value. Set -1 to disable near point filtering")
-		("zmax",	po::value<double>(&filter.zmax)->default_value(-1),	"Maximum disparity value. Set -1 to disable far point filtering.")
+		("gradfilt",po::value<float>(&filter.gradientThreshold)->default_value(0),	"Points having image gradient values lower than the threshold will are considered low contrast region and will be filtered out. Set 0 to disable image contrast filtering. <image_dir> must be specified to enable checking.")
+		("zmin",	po::value<float>(&filter.zmin)->default_value(0),	"Minmum depth value. Set -1 to disable near point filtering")
+		("zmax",	po::value<float>(&filter.zmax)->default_value(-1),	"Maximum disparity value. Set -1 to disable far point filtering.")
 		("params,p",po::value<string>(&disp)->default_value("matcher.yml"),"File name of stereo matching parameters to be read in the <disparity_dir> folder.")
 		("ext,e",	po::value<string>(&ext)->default_value("pcd"),		"Extension of point cloud files. Must be one of \"pcd\".")
 		("binary,b",po::value<bool>(&binary)->default_value(true),		"Write point data in binary format whenever possible.")
@@ -241,19 +243,19 @@ bool checkPaths(const fs::path& inPath, const fs::path& outPath, const fs::path&
 {
 	bool okay = true;
 
-	if (!directoryExists(inPath))
+	if (!dirExists(inPath))
 	{
 		BOOST_LOG_TRIVIAL(fatal) << "<disparity_dir> is not readable: " << inPath.string();
 		okay = false;
 	}
 
-	if (!imPath.empty() && !directoryExists(imPath))
+	if (!imPath.empty() && !dirExists(imPath))
 	{
 		BOOST_LOG_TRIVIAL(fatal) << "<image_dir> is not readable: " << imPath.string();
 		okay = false;
 	}
 
-	if (okay && !makeOutDirectory(outPath))
+	if (okay && !makeOutDir(outPath))
 	{
 		BOOST_LOG_TRIVIAL(fatal) << "error creating output directory: " << outPath.string();
 		okay = false;

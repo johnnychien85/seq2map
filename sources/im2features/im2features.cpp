@@ -61,7 +61,7 @@ int main(int argc, char* argv[])
             }
 
             ImageFeatureSet features = dxtor->DetectAndExtractFeatures(im);
-            if (!features.Write(dstFile))
+            if (!features.Store(dstFile))
             {
                 E_FATAL << "error writing features to " << dstFile;
                 return -1;
@@ -78,7 +78,6 @@ int main(int argc, char* argv[])
 
     return 0;
 }
-
 
 bool init(int argc, char* argv[], Args& args, FeatureDetextractorPtr& dxtor)
 {

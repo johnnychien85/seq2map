@@ -22,27 +22,27 @@ FeatureDetectorFactory::FeatureDetectorFactory()
     Factory::Register<KAZEFeatureDetextractor> ("KAZE" );
     Factory::Register<AKAZEFeatureDetextractor>("AKAZE");
 #ifdef HAVE_XFEATURES2D // non-free feature detectors .....
-	Factory::Register<SIFTFeatureDetextractor> ("SIFT" );
-	Factory::Register<SURFFeatureDetextractor> ("SURF" );
     Factory::Register<StarFeatureDetector>     ("STAR" );
-    Factory::Register<MSDFeatureDetector>     ("MSDD" );
+    Factory::Register<MSDFeatureDetector>      ("MSD"  );
+    Factory::Register<SIFTFeatureDetextractor> ("SIFT" );
+	Factory::Register<SURFFeatureDetextractor> ("SURF" );
 #endif // HAVE_XFEATURES2D ................................
 }
 
 FeatureExtractorFactory::FeatureExtractorFactory()
 {
-	Factory::Register<ORBFeatureDetextractor>  ("ORB"  );
-	Factory::Register<BRISKFeatureDetextractor>("BRISK");
+    Factory::Register<ORBFeatureDetextractor>  ("ORB"  );
+    Factory::Register<BRISKFeatureDetextractor>("BRISK");
     Factory::Register<KAZEFeatureDetextractor> ("KAZE" );
     Factory::Register<AKAZEFeatureDetextractor>("AKAZE");
 #ifdef HAVE_XFEATURES2D // non-free descriptor extractors..
 	Factory::Register<SIFTFeatureDetextractor> ("SIFT" );
 	Factory::Register<SURFFeatureDetextractor> ("SURF" );
 	Factory::Register<BRIEFFeatureExtractor>   ("BRIEF");
-    Factory::Register<FREAKFeatureExtractor>   ("FREAK");
-    Factory::Register<LUCIDFeatureExtractor>   ("LUCID");
     Factory::Register<DAISYFeatureExtractor>   ("DAISY");
+    Factory::Register<FREAKFeatureExtractor>   ("FREAK");
     Factory::Register<LATCHFeatureExtractor>   ("LATCH");
+    Factory::Register<LUCIDFeatureExtractor>   ("LUCID");
 #endif // HAVE_XFEATURES2D ................................
 }
 
@@ -85,13 +85,13 @@ seq2map::String ImageFeatureSet::MatType2String(int type)
 {
 	switch (type)
 	{
-	case CV_8U:  return "8U";  break;
-	case CV_8S:  return "8S";  break;
-	case CV_16U: return "16U"; break;
-	case CV_16S: return "16S"; break;
-	case CV_32S: return "32S"; break;
-	case CV_32F: return "32F"; break;
-	case CV_64F: return "64F"; break;
+	case CV_8U:       return "8U";  break;
+	case CV_8S:       return "8S";  break;
+	case CV_16U:      return "16U"; break;
+	case CV_16S:      return "16S"; break;
+	case CV_32S:      return "32S"; break;
+	case CV_32F:      return "32F"; break;
+	case CV_64F:      return "64F"; break;
 	case CV_USRTYPE1: return "USR"; break;
 	}
 
@@ -100,7 +100,7 @@ seq2map::String ImageFeatureSet::MatType2String(int type)
     return MatType2String(CV_USRTYPE1);
 }
 
-bool ImageFeatureSet::Write(const Path& path) const
+bool ImageFeatureSet::Store(const Path& path) const
 {
 	std::ofstream of(path.string(), std::ios::out | std::ios::binary);
 
@@ -115,7 +115,7 @@ bool ImageFeatureSet::Write(const Path& path) const
 
 	// the header
 	of << "CV3" << s_fileHeaderSep;
-	of << NormType2String(m_normType) << s_fileHeaderSep;
+	of << NormType2String(m_normType)          << s_fileHeaderSep;
 	of << MatType2String(m_descriptors.type()) << s_fileHeaderSep;
 
 	of.write((char*)&m_descriptors.rows, sizeof m_descriptors.rows);
@@ -124,12 +124,12 @@ bool ImageFeatureSet::Write(const Path& path) const
 	// the key points section
 	BOOST_FOREACH(const KeyPoint& kp, m_keypoints)
 	{
-		of.write((char*)&kp.pt.x, sizeof kp.pt.x);
-		of.write((char*)&kp.pt.y, sizeof kp.pt.y);
+		of.write((char*)&kp.pt.x,     sizeof kp.pt.x);
+		of.write((char*)&kp.pt.y,     sizeof kp.pt.y);
 		of.write((char*)&kp.response, sizeof kp.response);
-		of.write((char*)&kp.octave, sizeof kp.octave);
-		of.write((char*)&kp.angle, sizeof kp.angle);
-		of.write((char*)&kp.size, sizeof kp.size);
+		of.write((char*)&kp.octave,   sizeof kp.octave);
+		of.write((char*)&kp.angle,    sizeof kp.angle);
+		of.write((char*)&kp.size,     sizeof kp.size);
 	}
 
 	// feature vectors
@@ -139,6 +139,15 @@ bool ImageFeatureSet::Write(const Path& path) const
 	of.close();
 
 	return true;
+}
+
+bool ImageFeatureSet::Restore(const Path& path)
+{
+    //
+    // TODO: somebody please finish this function!!
+    //
+    //
+    return false;
 }
 
 FeatureDetextractorPtr FeatureDetextractorFactory::Create(const seq2map::String& detectorName, const seq2map::String& extractorName)
@@ -182,19 +191,19 @@ void HetergeneousDetextractor::WriteParams(cv::FileStorage& fs) const
 
 bool HetergeneousDetextractor::ReadParams(const cv::FileNode& fn)
 {
-	return m_detector->ReadParams(fn[s_detectorFileNodeName]) &&
-		m_extractor->ReadParams(fn[s_extractorFileNodeName]);
+	return m_detector ->ReadParams(fn[s_detectorFileNodeName] ) &&
+		   m_extractor->ReadParams(fn[s_extractorFileNodeName]);
 }
 
 void HetergeneousDetextractor::ApplyParams()
 {
-	m_detector->ApplyParams();
+	m_detector ->ApplyParams();
 	m_extractor->ApplyParams();
 }
 
 Parameterised::Options HetergeneousDetextractor::GetOptions(int flag)
 {
-	if (flag & FeatureOptionType::DETECTION_OPTIONS)  return m_detector->GetOptions(flag);
+	if (flag & FeatureOptionType::DETECTION_OPTIONS ) return m_detector ->GetOptions(flag);
 	if (flag & FeatureOptionType::EXTRACTION_OPTIONS) return m_extractor->GetOptions(flag);
 
 	return Options();

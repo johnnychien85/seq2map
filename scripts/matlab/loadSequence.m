@@ -3,19 +3,89 @@ function seq = loadSequence(seqPath)
 
     fprintf('Loading VO + LiDAR sequence [%s]..\n', seqPath);
 
-    kittiIMUPath = fullfile(seqPath, 'oxts');
+	kittiCalibPath = fullfile(seqPath, 'calib.txt');
+    kittiIMUPath   = fullfile(seqPath, 'oxts');
 
-    if exist(kittiIMUPath, 'dir' ) > 0, seq = loadSequenceKITTI(seqPath);
-    else                                seq = loadSequenceVG   (seqPath); end
-    
-    %playSequence(seq);
+	if     exist(kittiCalibPath, 'file') > 0, seq = loadSequenceKittiOdometry(seqPath);
+    elseif exist(kittiIMUPath,   'dir' ) > 0, seq = loadSequenceKittiRawData (seqPath);
+    else                                      seq = loadSequenceVG(seqPath); end
+end
+
+%
+% Load a sequence downloaded from http://www.cvlibs.net/datasets/kitti/eval_odometry.php
+% An odometry sequence comes with stereo images and optionally GPS/IMU readings
+% and LiDAR point clouds. The sequences are supposed to be structured in this way:
+%  <DATASET_ROOT>
+%   + 00
+%   |  + image_0
+%   |  | + 000000.png
+%   |  | + 000001.png
+%   |  | .
+%   |  | .
+%   |  + image_1
+%   |  + calib.txt
+%   |  \ times.txt
+%   + 01
+%   + 02
+%   .
+%   .
+%   \ 21
+%
+% and the ground truth poses are supposed to be stored at <DATASET_ROOT>/../poses/
+% where contains the downloaded ground truth poses 00.txt, 01.txt, ..., 10.txt.
+%
+function seq = loadSequenceKittiOdometry(seqPath)
+    fprintf('..this sequence is from KITTI Odometry dataset!!\n');
+
+	[~,seqNum] = fileparts(seqPath);
+	
+	poseFile = [seqNum '.txt'];
+	
+    paths = struct(                                               ...
+        'seqPath', seqPath,                                       ...
+		'calPath', fullfile(seqPath,'calib.txt'),                 ...
+        'imuPath', fullfile(seqPath,'../','../','poses',poseFile),...
+        'imgPath', fullfile(seqPath,'image_*')                    ...
+    );
+	
+	% load camera calibration
+	if exist(paths.calPath,'file') == 00
+		error 'missing calibration!!';
+	end
+
+	f = fopen(paths.calPath);
+	[cal,toks] = fscanf(f,'%s %f %f %f %f %f %f %f %f %f %f %f %f');
+	fclose(f);
+	
+	assert(toks - 1 == 64);
+
+	cal = reshape(cal,15,[]);
+	cal = reshape(cal(4:end,:),4,3,[]);
+
+	% check if the 3rd and the 4th colour cameras are used
+	d = dir(paths.imgPath);
+	cams = numel(d);
+cal
+	if     cams == 2, fprintf('..2 greyscale cameras are found!\n');
+	elseif cams == 4, fprintf('..2 greyscale + 2 colour cameras are found!!\n');
+	else,             error 'something wrong with the number of image folders!!';
+	end
+
+	for k = 1 : cams
+		cam(k) = makeCameraStruct();
+		cam(k).PixelClass = 'uint8';
+		cam(k).P = cal(:,:,k)';
+	end
+
+	seq.cam = cam;
+	
 end
 
 %
 % Load a sequence downloaded from http://www.cvlibs.net/datasets/kitti/raw_data.php
 % both [unsynced+unrectified data] and [synced+rectified data] sequences are supported.
 %
-function seq = loadSequenceKITTI(seqPath)
+function seq = loadSequenceKittiRawData(seqPath)
     fprintf('..this sequence was grabbed by the KITTI car!!\n');
 
     paths = struct( ...
