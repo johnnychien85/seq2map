@@ -32,6 +32,8 @@ int main(int argc, char* argv[])
                 continue;
             }
 
+            features.Store(file);
+
             E_INFO << "restored " << file.string();
             E_INFO << "we just found " << features.GetSize() << " feature(s) from it!!";
         }

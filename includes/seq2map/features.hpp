@@ -31,7 +31,7 @@ namespace seq2map
         friend class ImageFeatureSet;
     protected:
         /* ctor */ ImageFeature(cv::KeyPoint& keypoint, cv::Mat descriptor)
-                   : m_keypoint(keypoint), m_descriptor(descriptor) {}
+            : m_keypoint(keypoint), m_descriptor(descriptor) {}
         /* dtor */ virtual ~ImageFeature() {}
         cv::KeyPoint& m_keypoint;
         cv::Mat       m_descriptor;
@@ -47,7 +47,7 @@ namespace seq2map
     {
     public:
         /* ctor */ ImageFeatureSet(const KeyPoints& keypoints, const cv::Mat& descriptors, int normType = cv::NormTypes::NORM_L2)
-                   : m_keypoints(keypoints), m_descriptors(descriptors), m_normType(normType) {}
+            : m_keypoints(keypoints), m_descriptors(descriptors), m_normType(normType) {}
         /* ctor */ ImageFeatureSet() : m_normType(cv::NormTypes::NORM_L2) {}
         /* dtor */ virtual ~ImageFeatureSet() {}
         inline ImageFeature GetFeature(const size_t idx);
@@ -58,20 +58,20 @@ namespace seq2map
     protected:
         static String NormType2String(int type);
         static String MatType2String(int type);
+        static int    String2NormType(const String& type);
+        static int    String2MatType(const String& type);
 
         static const String s_fileMagicNumber;
-        static const String s_fileHeaderSep;
+        static const char   s_fileHeaderSep;
 
         KeyPoints m_keypoints;
         cv::Mat   m_descriptors;
-        const int m_normType;
+        int       m_normType;
     };
 
-
-
     /**
-    * Feature detector and extractor interfaces
-    */
+     * Feature detector and extractor interfaces
+     */
     class FeatureDetector : public virtual Parameterised
     {
     public:
@@ -91,9 +91,9 @@ namespace seq2map
     };
 
     /**
-    * A concrete feature detection-and-extraction class that ultilises the
-    * composition of FeatureDetector and FeatureExtractor objects to do the work.
-    */
+     * A concrete feature detection-and-extraction class that ultilises the
+     * composition of FeatureDetector and FeatureExtractor objects to do the work.
+     */
 
     typedef boost::shared_ptr<FeatureDetector>	   FeatureDetectorPtr;
     typedef boost::shared_ptr<FeatureExtractor>	   FeatureExtractorPtr;
@@ -103,7 +103,7 @@ namespace seq2map
     {
     public:
         /* ctor */ HetergeneousDetextractor(FeatureDetectorPtr detector, FeatureExtractorPtr extractor)
-                   : m_detector(detector), m_extractor(extractor) {}
+            : m_detector(detector), m_extractor(extractor) {}
         /* dtor */ virtual ~HetergeneousDetextractor() {}
         virtual ImageFeatureSet DetectAndExtractFeatures(const cv::Mat& im) const;
         virtual void WriteParams(cv::FileStorage& f) const;
@@ -118,9 +118,9 @@ namespace seq2map
     };
 
     /**
-    * Factories to instantiate feature detector/extractor objects
-    * from a given name string.
-    */
+     * Factories to instantiate feature detector/extractor objects
+     * from a given name string.
+     */
 
     class FeatureDetectorFactory :
         public Factory<String, FeatureDetector>
@@ -153,8 +153,8 @@ namespace seq2map
     };
 
     /**
-    * Feature detection and extraction adaptors for OpenCV
-    */
+     * Feature detection and extraction adaptors for OpenCV
+     */
 
     class CvFeatureDetectorAdaptor : public FeatureDetector
     {
