@@ -6,6 +6,7 @@ namespace po = boost::program_options;
 struct Args
 {
     Path srcPath;
+    Path imgPath;
     bool help;
 };
 
@@ -23,19 +24,40 @@ int main(int argc, char* argv[])
         Paths files = enumerateFiles(args.srcPath);
         int i = 0;
 
+        cv::Mat I1, I2;
+        ImageFeatureSet f1, f2;
+        FeatureMatcher matcher;
+
         BOOST_FOREACH(const Path& file, files)
         {
-            ImageFeatureSet features;
-            if (!features.Restore(file))
+            if (!f2.Restore(file))
             {
                 E_ERROR << "error reading features from " << file.string();
                 continue;
             }
 
-            features.Store(file);
+            if (!f1.IsEmpty())
+            {
+                ImageFeatureMap map = matcher.MatchFeatures(f1, f2);
 
-            E_INFO << "restored " << file.string();
-            E_INFO << "we just found " << features.GetSize() << " feature(s) from it!!";
+                Path imPath = args.imgPath / file.filename();
+                imPath.replace_extension(".png");
+
+                I2 = cv::imread(imPath.string());
+
+                if (!I1.empty() && !I2.empty())
+                {
+                    cv::Mat im = map.Draw(I1, I2);
+                    cv::imshow("matched result", im);
+                    cv::waitKey(1);
+                }
+            }
+
+            E_INFO << file;
+            E_INFO << matcher.Report();
+
+            f1 = f2;
+            I1 = I2;
         }
     }
     catch (std::exception& ex)
@@ -49,7 +71,7 @@ int main(int argc, char* argv[])
 
 bool init(int argc, char* argv[], Args& args)
 {
-    String srcPath;
+    String srcPath, imgPath;
 
     po::options_description o("General Options");
     o.add_options()
@@ -57,10 +79,11 @@ bool init(int argc, char* argv[], Args& args)
 
     po::options_description h("Hiddens");
     h.add_options()
-        ("in", po::value<String>(&srcPath)->default_value(""), "Input folder containing images");
+        ("in", po::value<String>(&srcPath)->default_value(""), "Input folder containing features")
+        ("im", po::value<String>(&imgPath)->default_value(""), "Input folder containing images");
 
     po::positional_options_description p;
-    p.add("in", 1);
+    p.add("in", 1).add("im", 1);
 
     try
     {
@@ -87,16 +110,25 @@ bool init(int argc, char* argv[], Args& args)
     }
 
     args.srcPath = srcPath;
+    args.imgPath = imgPath;
 
     if (args.help)
     {
-        std::cout << "Usage: " << argv[0] << " <features_in_dir> [options]" << std::endl;
+        std::cout << "Usage: " << argv[0] << " <features_in_dir> <images_in_dir> [options]" << std::endl;
         std::cout << o << std::endl;
     }
 
     if (srcPath.empty())
     {
-        E_FATAL << "input directory path missing";
+        E_FATAL << "input feature directory path missing";
+        showSynopsis(argv[0]);
+
+        return false;
+    }
+
+    if (imgPath.empty())
+    {
+        E_FATAL << "input image directory path missing";
         showSynopsis(argv[0]);
 
         return false;

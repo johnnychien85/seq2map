@@ -1,6 +1,6 @@
-function im = loadImage(cam, frame, varargin)
+function im = loadImage(cam,frame,varargin)
     im = imread(cam.ImageFiles{frame});
-    if isfield(cam, 'Demosaic') && ~isempty(cam.Demosaic), im = demosaic(im, cam.Demosaic); end
+    if isfield(cam,'Demosaic') && ~isempty(cam.Demosaic), im = demosaic(im,cam.Demosaic); end
     for i = 1 : numel(varargin)
         if ~isstr(varargin{i}), continue; end
         switch lower(varargin{i})

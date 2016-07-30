@@ -5,6 +5,7 @@
 #include <boost/log/trivial.hpp>
 #include <boost/foreach.hpp>
 #include <boost/program_options.hpp>
+#include <boost/timer/timer.hpp>
 #include <opencv2/opencv.hpp>
 
 #if defined ( WIN32 )
@@ -25,6 +26,8 @@ namespace seq2map
     typedef boost::filesystem::path Path;
     typedef std::vector<Path> Paths;
 
+    typedef std::list<size_t> Indices;
+
     double rad2deg(double radian);
     double deg2rad(double degree);
 
@@ -34,6 +37,9 @@ namespace seq2map
     Paths enumerateFiles(const Path& root, const std::string& ext);
     Paths enumerateFiles(const Path& sample);
     Paths enumerateDirs(const Path& root);
+
+    cv::Mat rgb2gray(const cv::Mat& rgb);
+    cv::Mat imfuse(const cv::Mat& im0, const cv::Mat& im1);
 
     /**
      * A common interface for parameterised objects.
@@ -58,6 +64,35 @@ namespace seq2map
     public:
         virtual bool Store(const Path& path) const = 0;
         virtual bool Restore(const Path& path) = 0;
+    };
+
+    class Speedometre
+    {
+    public:
+        /* ctor */ Speedometre(const String& name = "Unamed Speedometre", const String& unit = "unit/s")
+            : m_displayName(name), m_displayUnit(unit) { Reset(); }
+        void Start();
+        void Stop(size_t amount);
+        void Reset();
+        inline double GetSpeed() const;
+        String ToString() const;
+    protected:
+        String m_displayName;
+        String m_displayUnit;
+        bool   m_activated;
+        size_t m_accumulated;
+        boost::timer::cpu_timer m_timer;
+    };
+
+    class AutoSpeedometreMeasure
+    {
+    public:
+        /* ctor */ AutoSpeedometreMeasure(Speedometre& metre, size_t amount)
+                   : m_metre(metre), m_amount(amount) { m_metre.Start(); };
+        /* dtor */ virtual ~AutoSpeedometreMeasure()  { m_metre.Stop(m_amount); }
+    protected:
+        Speedometre& m_metre;
+        const size_t m_amount;
     };
 
     /**
@@ -116,7 +151,6 @@ namespace seq2map
         typedef std::map<Key, CtorType> Registry;
         Registry m_ctors;
     };
-
 }
 
 #endif //COMMON_HPP

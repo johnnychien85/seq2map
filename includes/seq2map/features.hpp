@@ -1,11 +1,10 @@
 #ifndef FEATURES_HPP
 #define FEATURES_HPP
 #define HAVE_XFEATURES2D
-
+#include <list>
 #ifdef HAVE_XFEATURES2D
 #include <opencv2\xfeatures2d.hpp>
 #endif // HAVE_XFEATURES2D
-
 #include <seq2map\common.hpp>
 
 namespace seq2map
@@ -18,8 +17,8 @@ namespace seq2map
      */
     enum FeatureOptionType
     {
-        DETECTION_OPTIONS  = 0x000001,
-        EXTRACTION_OPTIONS = 0x000002
+        DETECTION_OPTIONS  = 0x00000001,
+        EXTRACTION_OPTIONS = 0x00000002
     };
 
     /**
@@ -29,12 +28,12 @@ namespace seq2map
     {
     public:
         friend class ImageFeatureSet;
+        cv::KeyPoint& keypoint;
+        cv::Mat       descriptor;
     protected:
         /* ctor */ ImageFeature(cv::KeyPoint& keypoint, cv::Mat descriptor)
-            : m_keypoint(keypoint), m_descriptor(descriptor) {}
+            : keypoint(keypoint), descriptor(descriptor) {}
         /* dtor */ virtual ~ImageFeature() {}
-        cv::KeyPoint& m_keypoint;
-        cv::Mat       m_descriptor;
     };
 
     /**
@@ -46,19 +45,24 @@ namespace seq2map
     class ImageFeatureSet : public Persistent
     {
     public:
+        static String NormType2String(int type);
+        static int    String2NormType(const String& type);
+
         /* ctor */ ImageFeatureSet(const KeyPoints& keypoints, const cv::Mat& descriptors, int normType = cv::NormTypes::NORM_L2)
             : m_keypoints(keypoints), m_descriptors(descriptors), m_normType(normType) {}
         /* ctor */ ImageFeatureSet() : m_normType(cv::NormTypes::NORM_L2) {}
         /* dtor */ virtual ~ImageFeatureSet() {}
         inline ImageFeature GetFeature(const size_t idx);
+        inline ImageFeature operator[](size_t idx) { return GetFeature(idx); }
         virtual bool Store(const Path& path) const;
         virtual bool Restore(const Path& path);
         inline bool IsEmpty() const { return m_keypoints.empty(); }
         inline size_t GetSize() const { return m_keypoints.size(); }
+        inline int GetNormType() const { return m_normType; }
+        inline const KeyPoints& GetKeyPoints() const { return m_keypoints; }
+        inline const cv::Mat GetDescriptors() const { return m_descriptors; }
     protected:
-        static String NormType2String(int type);
         static String MatType2String(int type);
-        static int    String2NormType(const String& type);
         static int    String2MatType(const String& type);
 
         static const String s_fileMagicNumber;
@@ -90,15 +94,14 @@ namespace seq2map
         virtual ImageFeatureSet DetectAndExtractFeatures(const cv::Mat& im) const = 0;
     };
 
-    /**
-     * A concrete feature detection-and-extraction class that ultilises the
-     * composition of FeatureDetector and FeatureExtractor objects to do the work.
-     */
-
     typedef boost::shared_ptr<FeatureDetector>	   FeatureDetectorPtr;
     typedef boost::shared_ptr<FeatureExtractor>	   FeatureExtractorPtr;
     typedef boost::shared_ptr<FeatureDetextractor> FeatureDetextractorPtr;
 
+    /**
+     * A concrete feature detection-and-extraction class that ultilises the
+     * composition of FeatureDetector and FeatureExtractor objects to do the work.
+     */
     class HetergeneousDetextractor : public FeatureDetextractor
     {
     public:
@@ -150,6 +153,103 @@ namespace seq2map
     private:
         FeatureDetectorFactory  m_detectorFactory;
         FeatureExtractorFactory m_extractorFactory;
+    };
+
+    /**
+    * A feature match is represented by a (srdIdx,dstIdx) tuplie along
+    * with their distance in the feature space as well as a state flag.
+    */
+    struct FeatureMatch
+    {
+        enum Flag
+        {
+            INLIER            = 0x00000000,
+            RATIO_TEST_FAILED = 0x00000001,
+            UNIQUENESS_FAILED = 0x00000002,
+            FMAT_TEST_FAILED  = 0x00000004,
+            INLIER_RECOVERED  = 0x80000000
+        };
+
+        const static size_t InvalidIdx;
+
+        /* ctor */ FeatureMatch(size_t srcIdx, size_t dstIdx, float distance, int state = Flag::INLIER)
+            : srcIdx(srcIdx), dstIdx(dstIdx), distance(distance), state(state) {}
+
+        size_t srcIdx = InvalidIdx;
+        size_t dstIdx = InvalidIdx;
+        float  distance = -1;
+        int    state = 0;
+    };
+
+    typedef std::vector<FeatureMatch> FeatureMatches;
+
+    /**
+     *
+     */
+    class ImageFeatureMap
+    {
+    public:
+        inline FeatureMatch& operator[] (size_t idx) { return m_matches[idx]; }
+        Indices Select(int mask) const;
+        void Draw(cv::Mat& canvas);
+        cv::Mat Draw(const cv::Mat& src, const cv::Mat& dst);
+    protected:
+        /* ctor */ ImageFeatureMap(const ImageFeatureSet& src, const ImageFeatureSet& dst)
+            : m_src(src), m_dst(dst) {};
+        const ImageFeatureSet& m_src;
+        const ImageFeatureSet& m_dst;
+
+        std::vector<FeatureMatch> m_matches;
+
+        friend class FeatureMatcher;
+    };
+
+    class FeatureMatchFilter
+    {
+    public:
+        virtual size_t Filter(ImageFeatureMap& map, Indices& inliers) = 0;
+    };
+
+    class FeatureMatcher
+    {
+    public:
+        /* ctor */ FeatureMatcher(bool exhaustive = true, bool symmetric = true, float maxRatio = 0.6f)
+            : m_exhaustive(exhaustive), m_symmetric(symmetric), m_maxRatio(maxRatio),
+              m_descMatchingMetre("Descriptors Matching", "features/s"),
+              m_ratioTestMetre   ("Ratio Test",           "matches/s"),
+              m_symmetryTestMetre("Symmetry Test",        "matches/s"),
+              m_filteringMetre   ("Filtering",            "matches/s") {};
+        /* dtor */ virtual ~FeatureMatcher() {}
+        inline FeatureMatcher& AddFilter(FeatureMatchFilter& filter);
+        ImageFeatureMap MatchFeatures(const ImageFeatureSet& src, const ImageFeatureSet& dst);
+        String Report() const;
+    protected:
+        FeatureMatches MatchDescriptors(const cv::Mat& src, const cv::Mat& dst, int metric);
+
+        std::vector<FeatureMatchFilter*> m_filters;
+        bool  m_exhaustive;
+        bool  m_symmetric;
+        float m_maxRatio;
+        Speedometre m_descMatchingMetre;
+        Speedometre m_ratioTestMetre;
+        Speedometre m_symmetryTestMetre;
+        Speedometre m_filteringMetre;
+    private:
+        static void RunSymmetryTest(FeatureMatches& forward, const FeatureMatches& backward);
+    };
+
+    class FundamentalMatFilter : public FeatureMatchFilter
+    {
+    public:
+        /* ctor */ FundamentalMatFilter(double epsilon = 1, double confidence = 0.99f)
+            : m_epsilon(epsilon), m_confidence(confidence) {}
+        /* dtor */ virtual ~FundamentalMatFilter() {}
+        virtual size_t Filter(ImageFeatureMap& map, Indices& inliers);
+        inline cv::Mat GetFundamentalMatrix() const { return m_fmat.clone(); }
+    protected:
+        double m_epsilon;
+        double m_confidence;
+        cv::Mat m_fmat;
     };
 
     /**

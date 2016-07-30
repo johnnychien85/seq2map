@@ -1,5 +1,6 @@
-function features = loadFeatures(filename)
-	features = [];
+function F = loadFeatures(cam,frame)
+	
+	filename = cam.FeatureFiles{frame};
 
 	f = fopen(filename,'r');
 	magic = char(fread(f,[1,8],'char'));
@@ -24,29 +25,30 @@ function features = loadFeatures(filename)
 	descriptorSize = fread(f,1,'int');
 	descriptorType = cv2matlabType(descriptorType);
 
-	features = struct(...
-		'NumOfFeatures',  numFeatures,                     ...
-		'Metric',         normType2metric(descriptorNorm), ...
-		'KP',             zeros(numFeatures,2,'single'),   ...
-		'F',              zeros(numFeatures,descriptorSize)...
+	F = struct(...
+		'NumOfFeatures', numFeatures,                     ...
+		'Metric',        normType2metric(descriptorNorm), ...
+		'KP',            zeros(numFeatures,2,'single'),   ...
+		'V',             zeros(numFeatures,descriptorSize)...
 	);
 
 	for i = 1 : numFeatures
-		features.KP(i,:) = fread(f,2,'single');
-		score = fread(f,1,'single');
-		scale = fread(f,1,'int');
-		angle = fread(f,1,'single');
-		radii = fread(f,1,'single');
+		F.KP(i,:) = fread(f,2,'single'); % key point location
+		score = fread(f,1,'single'); % detector response, unused
+		scale = fread(f,1,'int');    % feature's octave, unused
+		angle = fread(f,1,'single'); % feature's orientation, unused
+		radii = fread(f,1,'single'); % feature's neighbourhood radius, unused
 	end
 
+	% load feature descriptors
 	precision = [descriptorType '=>' descriptorType];
-	features.F = fread(f,[descriptorSize,numFeatures],precision)';
+	F.V = fread(f,[descriptorSize,numFeatures],precision)';
 	
 	fclose(f);
 end
 
-function type = cv2matlabType(cvType)
-	switch cvType
+function type = cv2matlabType(type)
+	switch type
 		case '8U',  type = 'uchar';
 		case '8S',  type = 'char';
 		case '16U', type = 'ushort';

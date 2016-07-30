@@ -1,5 +1,6 @@
 #include <boost/program_options.hpp>
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/algorithm/string/join.hpp>
 #include <seq2map/features.hpp>
 
 using namespace cv;
@@ -11,6 +12,7 @@ const seq2map::String HetergeneousDetextractor::s_detectorFileNodeName  = "detec
 const seq2map::String HetergeneousDetextractor::s_extractorFileNodeName = "extraction";
 const seq2map::String ImageFeatureSet::s_fileMagicNumber = "IMKPTDSC"; // which means IMage KeyPoinTs & DeSCriptors
 const char ImageFeatureSet::s_fileHeaderSep = ' ';
+const size_t FeatureMatch::InvalidIdx = (size_t) -1;
 
 FeatureDetectorFactory::FeatureDetectorFactory()
 {
@@ -134,50 +136,50 @@ int seq2map::ImageFeatureSet::String2NormType(const seq2map::String& type)
 
 bool ImageFeatureSet::Store(const Path& path) const
 {
-    std::ofstream of(path.string(), std::ios::out | std::ios::binary);
+    std::ofstream os(path.string(), std::ios::out | std::ios::binary);
 
-    if (!of.is_open())
+    if (!os.is_open())
     {
         E_ERROR << "error opening output stream";
         return false;
     }
 
     // write the magic number first
-    of << s_fileMagicNumber;
+    os << s_fileMagicNumber;
 
     // the header
-    of << "CV3" << s_fileHeaderSep;
-    of << NormType2String(m_normType)          << s_fileHeaderSep;
-    of << MatType2String(m_descriptors.type()) << s_fileHeaderSep;
+    os << "CV3" << s_fileHeaderSep;
+    os << NormType2String(m_normType)          << s_fileHeaderSep;
+    os << MatType2String(m_descriptors.type()) << s_fileHeaderSep;
 
-    of.write((char*)&m_descriptors.rows, sizeof m_descriptors.rows);
-    of.write((char*)&m_descriptors.cols, sizeof m_descriptors.cols);
+    os.write((char*)&m_descriptors.rows, sizeof m_descriptors.rows);
+    os.write((char*)&m_descriptors.cols, sizeof m_descriptors.cols);
 
     // the key points section
     BOOST_FOREACH(const KeyPoint& kp, m_keypoints)
     {
-        of.write((char*)&kp.pt.x,     sizeof kp.pt.x);
-        of.write((char*)&kp.pt.y,     sizeof kp.pt.y);
-        of.write((char*)&kp.response, sizeof kp.response);
-        of.write((char*)&kp.octave,   sizeof kp.octave);
-        of.write((char*)&kp.angle,    sizeof kp.angle);
-        of.write((char*)&kp.size,     sizeof kp.size);
+        os.write((char*)&kp.pt.x,     sizeof kp.pt.x);
+        os.write((char*)&kp.pt.y,     sizeof kp.pt.y);
+        os.write((char*)&kp.response, sizeof kp.response);
+        os.write((char*)&kp.octave,   sizeof kp.octave);
+        os.write((char*)&kp.angle,    sizeof kp.angle);
+        os.write((char*)&kp.size,     sizeof kp.size);
     }
 
     // feature vectors
-    of.write((char*)m_descriptors.data, m_descriptors.elemSize() * m_descriptors.total());
+    os.write((char*)m_descriptors.data, m_descriptors.elemSize() * m_descriptors.total());
 
     // end of file
-    of.close();
+    os.close();
 
     return true;
 }
 
 bool ImageFeatureSet::Restore(const Path& path)
 {
-    std::ifstream nf(path.string(), std::ios::in | std::ios::binary);
+    std::ifstream is(path.string(), std::ios::in | std::ios::binary);
 
-    if (!nf.is_open())
+    if (!is.is_open())
     {
         E_ERROR << "error opening input stream";
         return false;
@@ -189,7 +191,7 @@ bool ImageFeatureSet::Restore(const Path& path)
     String matType;
     Size2i matSize;
 
-    nf.read((char*)&magicNumber, sizeof magicNumber);
+    is.read((char*)&magicNumber, sizeof magicNumber);
     
     if (!boost::equal(magicNumber, ImageFeatureSet::s_fileMagicNumber))
     {
@@ -197,11 +199,9 @@ bool ImageFeatureSet::Restore(const Path& path)
         return false;
     }
 
-    getline(nf, version,  ImageFeatureSet::s_fileHeaderSep);
-    getline(nf, normType, ImageFeatureSet::s_fileHeaderSep);
-    getline(nf, matType,  ImageFeatureSet::s_fileHeaderSep);
-
-    std::cout << version << version.size() << std::endl;
+    getline(is, version,  ImageFeatureSet::s_fileHeaderSep);
+    getline(is, normType, ImageFeatureSet::s_fileHeaderSep);
+    getline(is, matType,  ImageFeatureSet::s_fileHeaderSep);
 
     if (!boost::equals(version, "CV3"))
     {
@@ -211,27 +211,32 @@ bool ImageFeatureSet::Restore(const Path& path)
 
     m_normType = String2NormType(normType);
 
-    nf.read((char*)&matSize.height, sizeof matSize.height);
-    nf.read((char*)&matSize.width,  sizeof matSize.width);
+    is.read((char*)&matSize.height, sizeof matSize.height);
+    is.read((char*)&matSize.width,  sizeof matSize.width);
 
     m_keypoints.clear();
+    m_keypoints.reserve(matSize.height);
 
     for (int i = 0; i < matSize.height; i++)
     {
-        cv::KeyPoint keyPoint;
+        cv::KeyPoint kp;
 
-        nf.read((char*)&keyPoint.pt.x,     sizeof keyPoint.pt.x);
-        nf.read((char*)&keyPoint.pt.y,     sizeof keyPoint.pt.y);
-        nf.read((char*)&keyPoint.response, sizeof keyPoint.response);
-        nf.read((char*)&keyPoint.octave,   sizeof keyPoint.octave);
-        nf.read((char*)&keyPoint.angle,    sizeof keyPoint.angle);
-        nf.read((char*)&keyPoint.size,     sizeof keyPoint.size);
+        is.read((char*)&kp.pt.x,     sizeof kp.pt.x);
+        is.read((char*)&kp.pt.y,     sizeof kp.pt.y);
+        is.read((char*)&kp.response, sizeof kp.response);
+        is.read((char*)&kp.octave,   sizeof kp.octave);
+        is.read((char*)&kp.angle,    sizeof kp.angle);
+        is.read((char*)&kp.size,     sizeof kp.size);
       
-        m_keypoints.push_back(keyPoint);
+        m_keypoints.push_back(kp);
     }
 
     m_descriptors = Mat::zeros(matSize.height, matSize.width, String2MatType(matType)); 
-    nf.read((char*)m_descriptors.data, m_descriptors.elemSize() * m_descriptors.total());
+    is.read((char*)m_descriptors.data, m_descriptors.elemSize() * m_descriptors.total());
+
+    // TODO: add file corruption check (e.g. reaching EoF pre-maturely)
+    // ..
+    // ..
 
     return true;
 }
@@ -333,6 +338,164 @@ void CvSuperDetextractorAdaptor<T>::SetCvSuperDetextractorPtr(CvDextractorPtr cv
     SetCvDetectorPtr(cvDxtor);
     SetCvExtractorPtr(cvDxtor);
     SetCvDetextractorPtr(cvDxtor);
+}
+
+Indices ImageFeatureMap::Select(int mask) const
+{
+    Indices indices;
+    for (size_t i = 0; i < m_matches.size(); i++)
+    {
+        if (m_matches[i].state & mask) indices.push_back(i);
+    }
+
+    return indices;
+}
+
+void ImageFeatureMap::Draw(Mat& canvas)
+{
+    const KeyPoints& src = m_src.GetKeyPoints();
+    const KeyPoints& dst = m_dst.GetKeyPoints();
+
+    cv::Scalar inlierColour  = cv::Scalar(  0, 255,   0);
+    cv::Scalar outlierColour = cv::Scalar(200, 200, 200);
+
+    BOOST_FOREACH(const FeatureMatch& match, m_matches)
+    {
+        if (match.state & FeatureMatch::Flag::RATIO_TEST_FAILED) continue;
+
+        bool inlier = match.state == FeatureMatch::Flag::INLIER;
+        cv::line(canvas, src[match.srcIdx].pt, dst[match.dstIdx].pt, inlier ? inlierColour : outlierColour);
+    }
+}
+
+Mat ImageFeatureMap::Draw(const cv::Mat& src, const cv::Mat& dst)
+{
+    Mat canvas = imfuse(src, dst);
+    Draw(canvas);
+
+    return canvas;
+}
+
+ImageFeatureMap FeatureMatcher::MatchFeatures(const ImageFeatureSet& src, const ImageFeatureSet& dst)
+{
+    ImageFeatureMap map(src, dst);
+
+    if (src.GetNormType() != dst.GetNormType())
+    {
+        int stype = src.GetNormType(), dtype = dst.GetNormType();
+        E_WARNING << "the given feature sets have different norm types";
+        E_WARNING << "the first set has"         << ImageFeatureSet::NormType2String(stype) << " (" << stype << ")";
+        E_WARNING << "while the second set has " << ImageFeatureSet::NormType2String(dtype) << " (" << dtype << ")";
+
+        return map;
+    }
+
+    int metric = src.GetNormType();
+
+    // Perform descriptor matching in feature space
+    map.m_matches = MatchDescriptors(src.GetDescriptors(), dst.GetDescriptors(), metric);
+
+    if (map.m_matches.empty()) return map;
+
+    // Perform symmetry test
+    if (m_symmetric)
+    {
+        FeatureMatches& forward = map.m_matches;
+        FeatureMatches backward = MatchDescriptors(dst.GetDescriptors(), src.GetDescriptors(), metric);
+
+        AutoSpeedometreMeasure measure(m_symmetryTestMetre, map.m_matches.size());
+        RunSymmetryTest(forward, backward);
+    }
+
+    Indices inliers = map.Select(FeatureMatch::Flag::INLIER);
+
+    BOOST_FOREACH(FeatureMatchFilter* filter, m_filters)
+    {
+        size_t total = inliers.size();
+        size_t passed = 0;
+
+        AutoSpeedometreMeasure measure(m_filteringMetre, total);
+        passed = filter->Filter(map, inliers);
+
+        if (passed == 0)
+        {
+            E_INFO << "feature match filtering stopped because one of the filters has eliminated all the matches";
+            break;
+        }
+    }
+
+    return map;
+}
+
+inline FeatureMatcher& FeatureMatcher::AddFilter(FeatureMatchFilter& filter)
+{
+    m_filters.push_back(&filter);
+    return *this;
+};
+
+FeatureMatches FeatureMatcher::MatchDescriptors(const Mat& src, const Mat& dst, int metric)
+{
+    FeatureMatches matches;
+
+    const bool ratioTest = m_maxRatio > 0.0f && m_maxRatio < 1.0f;
+    const int k = ratioTest ? 2 : 1;
+    std::vector<std::vector<DMatch>> knn;
+
+    Ptr<cv::DescriptorMatcher> matcher = m_exhaustive ?
+        Ptr<DescriptorMatcher>(new BFMatcher(metric)) : Ptr<DescriptorMatcher>(new FlannBasedMatcher());
+
+    matches.reserve(src.rows);
+
+    {
+        AutoSpeedometreMeasure measure(m_descMatchingMetre, src.rows + dst.rows);
+        matcher->knnMatch(src, dst, knn, k);
+    }
+
+    if (ratioTest)
+    {
+        AutoSpeedometreMeasure measure(m_ratioTestMetre, knn.size());
+        BOOST_FOREACH(const std::vector<DMatch>& match, knn)
+        {
+            float ratio = match[0].distance / match[1].distance;
+            int flag = ratio < m_maxRatio ? FeatureMatch::Flag::INLIER : FeatureMatch::Flag::RATIO_TEST_FAILED;
+
+            matches.push_back(FeatureMatch(match[0].queryIdx, match[0].trainIdx, match[0].distance, flag));
+        }
+    }
+    else
+    {
+        BOOST_FOREACH(const std::vector<DMatch>& match, knn)
+        {
+            matches.push_back(
+                FeatureMatch(match[0].queryIdx, match[0].trainIdx, match[0].distance)
+            );
+        }
+    }
+
+    return matches;
+}
+
+void FeatureMatcher::RunSymmetryTest(FeatureMatches& forward, const FeatureMatches& backward)
+{
+    // TODO: finish this method
+    // mark asymmetric matches with UNIQUENESS_FAILED
+    //
+}
+
+seq2map::String FeatureMatcher::Report() const
+{
+    std::vector<String> summary;
+    summary.push_back(m_descMatchingMetre.ToString());
+    summary.push_back(m_ratioTestMetre   .ToString());
+    summary.push_back(m_symmetryTestMetre.ToString());
+    summary.push_back(m_filteringMetre   .ToString());
+
+    return boost::algorithm::join(summary, " / ");
+}
+
+size_t FundamentalMatFilter::Filter(ImageFeatureMap& map, Indices& inliers)
+{
+    return 0;
 }
 
 //

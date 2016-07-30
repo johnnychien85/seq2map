@@ -6,9 +6,15 @@ function seq = loadSequence(seqPath)
 	kittiCalibPath = fullfile(seqPath, 'calib.txt');
     kittiIMUPath   = fullfile(seqPath, 'oxts');
 
-	if     exist(kittiCalibPath, 'file') > 0, seq = loadSequenceKittiOdometry(seqPath);
-    elseif exist(kittiIMUPath,   'dir' ) > 0, seq = loadSequenceKittiRawData (seqPath);
-    else                                      seq = loadSequenceVG(seqPath); end
+	if     exist(kittiCalibPath, 'file') > 0, seq = loadSequenceKITTI   (seqPath);
+    elseif exist(kittiIMUPath,   'dir' ) > 0, seq = loadSequenceKITTIRaw(seqPath);
+    else                                      seq = loadSequenceVG      (seqPath); end
+
+	featuresPath = fullfile(seqPath, 'features');
+	if exist(featuresPath, 'dir') > 0
+		fprintf('Possible existence of feature files detected!\n');
+		seq = locateFeatures(seq,featuresPath);
+	end
 end
 
 %
@@ -34,7 +40,7 @@ end
 % and the ground truth poses are supposed to be stored at <DATASET_ROOT>/../poses/
 % where contains the downloaded ground truth poses 00.txt, 01.txt, ..., 10.txt.
 %
-function seq = loadSequenceKittiOdometry(seqPath)
+function seq = loadSequenceKITTI(seqPath)
     fprintf('..this sequence is from KITTI Odometry dataset!!\n');
 
 	[~,seqNum] = fileparts(seqPath);
@@ -48,7 +54,9 @@ function seq = loadSequenceKittiOdometry(seqPath)
         'imgPath', fullfile(seqPath,'image_*')                    ...
     );
 	
-	% load camera calibration
+	%
+	% 1. Load camera calibration
+	%
 	if exist(paths.calPath,'file') == 00
 		error 'missing calibration!!';
 	end
@@ -65,7 +73,7 @@ function seq = loadSequenceKittiOdometry(seqPath)
 	% check if the 3rd and the 4th colour cameras are used
 	d = dir(paths.imgPath);
 	cams = numel(d);
-cal
+
 	if     cams == 2, fprintf('..2 greyscale cameras are found!\n');
 	elseif cams == 4, fprintf('..2 greyscale + 2 colour cameras are found!!\n');
 	else,             error 'something wrong with the number of image folders!!';
@@ -75,18 +83,44 @@ cal
 		cam(k) = makeCameraStruct();
 		cam(k).PixelClass = 'uint8';
 		cam(k).P = cal(:,:,k)';
+		
+		if k == 1 % KITTI uses the first camera as the referenced frame
+			cam(k).K = cam(k).P(1:3,1:3);
+			K_inv = inv(cam(1).K);
+		else
+			cam(k).K = cam(1).K;
+			cam(k).E(1:3,:) = K_inv * cam(k).P(1:3,:);
+		end
 	end
 
-	seq.cam = cam;
+	%
+	% 2. Locate image files
+	%
+    [imgs,found] = findImages(paths.imgPath, cams, '*.png');
+    frames = size(imgs, 2);
+    for k = 1 : cams, cam(k).ImageFiles = imgs(k,:); end
+    fprintf('..image data of %d camera(s) and %d frames located\n', found, frames);
 	
+	%
+	% 3. LiDAR..
+	%
+	lid2cam = cal(:,:,5)';
+	lid = []; % TODO: process LiDAR data when it's available
+	
+	seq = struct(...
+        'Grabber',  'KITTI',...
+        'Paths',    paths,  ...
+        'cam',      cam,    ...
+        'lid',      lid     ...
+    );
 end
 
 %
 % Load a sequence downloaded from http://www.cvlibs.net/datasets/kitti/raw_data.php
 % both [unsynced+unrectified data] and [synced+rectified data] sequences are supported.
 %
-function seq = loadSequenceKittiRawData(seqPath)
-    fprintf('..this sequence was grabbed by the KITTI car!!\n');
+function seq = loadSequenceKITTIRaw(seqPath)
+    fprintf('..this RAW sequence was grabbed by the KITTI car!!\n');
 
     paths = struct( ...
         'seqPath', seqPath,                                   ...
@@ -187,10 +221,10 @@ function seq = loadSequenceKittiRawData(seqPath)
     end
     
     seq = struct(...
-        'Grabber',  'KITTI',...
-        'Paths',    paths,  ...
-        'cam',      cam,    ...
-        'lid',      lid     ...
+        'Grabber',  'KITTI-RAW',...
+        'Paths',    paths,      ...
+        'cam',      cam,        ...
+        'lid',      lid         ...
     );
 end
 
@@ -276,6 +310,38 @@ function seq = loadSequenceVG(seqPath)
     );
 end
 
+function seq = locateFeatures(seq,featuresPath)
+	subs = subdirs(featuresPath);
+	
+	if numel(subs) == 0
+		fprintf('..nothing found, give it up\n');
+		return;
+	elseif numel(subs) > 1
+		fprintf('..more than 1 folders found in %s, manual selection required\n',featuresPath);
+		featuresPath = uigetdir(featuresPath);
+	else
+		featuresPath = fullfile(featuresPath,subs(1).name);
+	end
+
+	subs = subdirs(featuresPath);
+	cams = numel(seq.cam);
+	
+	if numel(subs) > cams
+		fprintf('..%d folder(s) found while we have only %d camera(s), gonna give up!\n',numel(subs),cams);
+		return;
+	end
+
+	for k = 1 : numel(subs)
+		seq.cam(k).FeatureFiles = fdir(fullfile(featuresPath,subs(k).name),'*.*');
+		features = numel(seq.cam(k).FeatureFiles);
+		images   = numel(seq.cam(k).ImageFiles);
+
+		assert(images == features);
+		
+		fprintf('..%d feature file(s) found for camera %d\n', numel(seq.cam(k).FeatureFiles),k);
+	end
+end
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -290,12 +356,13 @@ function cam = makeCameraStruct()
         'D', zeros(5,1), ... % 5-by-1 distortion coeffs.: kappa1 kappa2 p1 p2 and kappa3
         'E', eye(4),     ... % 4-by-4 pose matrix
         'P', [eye(3),zeros(3,1)], ... % 3-by-4 projection matrix
-        'M', zeros(4,4,0),   ... % 4-by-4-by-k motion matrix
-        'ImageSize',  [0,0], ... % rows and cols of image
-        'ImageFiles', [],    ... % paths to the image files
-        'Demosaic',   [],    ... % demosaic spec if required
-        'PixelClass', '',    ... % MATLAB class name of image pixel
-        'ParamsObject', []   ... % MATLAB camera parameters object if supported
+        'M', zeros(4,4,0),     ... % 4-by-4-by-k motion matrix
+        'ImageSize',    [0,0], ... % rows and cols of image
+        'ImageFiles',   [],    ... % paths to the image files
+		'FeatureFiles', [],    ... % paths to the stored feature files
+        'Demosaic',     [],    ... % demosaic spec if required
+        'PixelClass',   '',    ... % MATLAB class name of image pixel
+        'ParamsObject', []     ... % MATLAB camera parameters object if supported
     );
 end
 
@@ -353,7 +420,7 @@ end
 %
 function [imgs,found] = findImages(imgRoot,cams,patterns)
     subs = subdirs(imgRoot);
-    assert(numel(subs) <= cams, 'too many image sub folders!!');
+    assert(numel(subs) == cams, 'the number of image folders and the number of cameras mismatch!!');
 
     % if imgRoot specifies a pattern of folder name instead of the path to the
     %  root image directory, then we go up to the parent folder
@@ -388,6 +455,7 @@ function f = fdir(root, patterns)
     for i = 1 : numel(patterns)
         pattern = patterns{i};
         files   = dir(fullfile(root,pattern));
+		files   = files(arrayfun(@(x) ~ismember(x.name,{'.','..'}),files)); % remove ".." and "." entries
         dirPath = fileparts(pattern); % take into account the path contained in the pattern if there exists one
         if strcmp(dirPath, '..'), dirPath = ''; end
         f = [f; cellfun(@(x)fullfile(root,dirPath,x),{files(:).name}','UniformOutput',false)];

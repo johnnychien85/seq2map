@@ -1,3 +1,4 @@
+#include <iomanip>
 #include <boost/log/utility/setup/file.hpp>
 #include <boost/log/utility/setup/console.hpp>
 #include <boost/log/attributes/attribute.hpp>
@@ -87,5 +88,94 @@ namespace seq2map
         }
 
         return true;
+    }
+
+    cv::Mat rgb2gray(const cv::Mat& rgb)
+    {
+        cv::Mat gray;
+        switch (rgb.channels())
+        {
+        case 1: gray = rgb.clone(); break;
+        case 3: cv::cvtColor(rgb, gray, CV_RGB2GRAY); break;
+        default: E_ERROR << "the source image has " << rgb.channels() << " channels, while 1 or 3 expected!!";
+        }
+        return gray;
+    }
+
+    cv::Mat imfuse(const cv::Mat& im0, const cv::Mat& im1)
+    {
+        cv::Size sz = cv::Size(std::max(im0.cols, im1.cols), std::max(im0.rows, im1.rows));
+        cv::Mat r = cv::Mat::zeros(sz, CV_8U);
+        cv::Mat g = cv::Mat::zeros(sz, CV_8U);
+        cv::Mat b = cv::Mat::zeros(sz, CV_8U);
+
+        rgb2gray(im0).copyTo(r.rowRange(0, im0.rows).colRange(0, im0.cols));
+        rgb2gray(im1).copyTo(b.rowRange(0, im1.rows).colRange(0, im1.cols));
+        g = 0.5f * r + 0.5f * b;
+
+        std::vector<cv::Mat> bgr;
+        bgr.push_back(b);
+        bgr.push_back(g);
+        bgr.push_back(r);
+
+        cv::Mat im;
+        cv::merge(bgr, im);
+
+        return im;
+    }
+
+    void Speedometre::Start()
+    {
+        if (!m_activated)
+        {
+            m_activated = true;
+            m_timer.start();
+
+            return;
+        }
+
+        if (!m_timer.is_stopped())
+        {
+            E_WARNING << "the operation takes no effect as the timer is already ticking!!";
+            return;
+        }
+
+        m_timer.resume();
+    }
+
+    void Speedometre::Stop(size_t amount)
+    {
+        if (!m_activated || m_timer.is_stopped())
+        {
+            E_WARNING << "the operation takes no effect as the timer is not ticking!!";
+            return;
+        }
+
+        m_timer.stop();
+        m_accumulated += amount;
+    }
+
+    void Speedometre::Reset()
+    {
+        m_activated = false;
+        m_accumulated = 0;
+        m_timer.stop();
+    }
+
+    inline double Speedometre::GetSpeed() const
+    {
+        boost::timer::cpu_times elapsed = m_timer.elapsed();
+
+        return (double) m_accumulated / 
+            (double) boost::chrono::duration_cast<boost::chrono::seconds>(
+                boost::chrono::nanoseconds(elapsed.system + elapsed.user)).count();
+    }
+
+    String Speedometre::ToString() const
+    {
+        std::stringstream ss;
+        ss << m_displayName << ": " << std::fixed << std::setprecision(2) << GetSpeed() << " " << m_displayUnit;
+        
+        return ss.str();
     }
 }

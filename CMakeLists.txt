@@ -52,7 +52,7 @@ else()
 	message(SEND_ERROR "OpenCV not found")
 endif()
 
-find_package(Boost REQUIRED COMPONENTS chrono date_time filesystem thread log log_setup program_options system)
+find_package(Boost REQUIRED COMPONENTS chrono date_time filesystem thread timer log log_setup program_options system)
 mark_as_advanced(CLEAR BOOST_INCLUDEDIR BOOST_LIBRARYDIR)
 if(Boost_FOUND)
 	include_directories(${Boost_INCLUDE_DIRS})
