@@ -6,10 +6,11 @@ set(MONOLITHIC TRUE CACHE BOOL "Build big standalone executables statically link
 
 # Executables Configuration
 project(seq2map CXX)
-add_library   (common      includes/seq2map/common.hpp includes/seq2map/disparity.hpp includes/seq2map/features.hpp sources/common/common.cpp sources/common/disparity.cpp sources/common/features.cpp)
+add_library   (common      includes/seq2map/common.hpp includes/seq2map/disparity.hpp includes/seq2map/features.hpp includes/seq2map/sequence.hpp sources/common/common.cpp sources/common/disparity.cpp sources/common/features.cpp sources/common/sequence.cpp)
 add_executable(im2dispmap  sources/im2dispmap/im2dispmap.cpp)   # stereo matcher-based disparity map computatiion
 add_executable(im2flow     sources/im2flow/im2flow.cpp)         # optical flow computation
 add_executable(im2features sources/im2features/im2features.cpp) # image feature detection and extraction
+add_executable(raw2seq     sources/raw2seq/raw2seq.cpp)   # structured raw data folder to sequence profile
 add_executable(monovo      sources/monovo/monovo.cpp)     # monocular visual odometry
 add_executable(dispmap2pts sources/miscs/dispmap2pts.cpp) # convert a disparity map to a point cloud
 add_executable(imrect      sources/miscs/imrect.cpp)      # image rectification utility
@@ -44,6 +45,7 @@ if(OpenCV_VERSION AND NOT OpenCV_VERSION_MAJOR LESS 3)
 	target_link_libraries(im2dispmap  ${OpenCV_LIBS})
 	target_link_libraries(im2features ${OpenCV_LIBS})
 	target_link_libraries(im2flow     ${OpenCV_LIBS})
+	target_link_libraries(raw2seq     ${OpenCV_LIBS})
 	target_link_libraries(monovo      ${OpenCV_LIBS})
 	target_link_libraries(dispmap2pts ${OpenCV_LIBS})
 	target_link_libraries(imrect      ${OpenCV_LIBS})
@@ -59,6 +61,7 @@ if(Boost_FOUND)
 	target_link_libraries(im2dispmap  ${Boost_LIBRARIES})
 	target_link_libraries(im2features ${Boost_LIBRARIES})
 	target_link_libraries(im2flow     ${Boost_LIBRARIES})
+	target_link_libraries(raw2seq     ${Boost_LIBRARIES})
 	target_link_libraries(monovo      ${Boost_LIBRARIES})
 	target_link_libraries(dispmap2pts ${Boost_LIBRARIES})
 	target_link_libraries(imrect      ${Boost_LIBRARIES})

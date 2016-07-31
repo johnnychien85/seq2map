@@ -27,6 +27,8 @@ namespace seq2map
     typedef std::vector<Path> Paths;
 
     typedef std::list<size_t> Indices;
+    typedef std::vector<cv::Point2f> Points2F;
+    typedef std::vector<cv::Point3f> Points3F;
 
     double rad2deg(double radian);
     double deg2rad(double degree);

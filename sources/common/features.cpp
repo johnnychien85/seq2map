@@ -128,7 +128,6 @@ int seq2map::ImageFeatureSet::String2NormType(const seq2map::String& type)
     else if (type == "HAMMING")  return NORM_HAMMING;  
     else if (type == "HAMMING2") return NORM_HAMMING2; 
 
-
     E_WARNING << "unknown string: " << type;
 
     return -1;
@@ -414,13 +413,19 @@ ImageFeatureMap FeatureMatcher::MatchFeatures(const ImageFeatureSet& src, const 
         size_t passed = 0;
 
         AutoSpeedometreMeasure measure(m_filteringMetre, total);
-        passed = filter->Filter(map, inliers);
 
+        if (!filter->Filter(map, inliers))
+        {
+            E_INFO << "filtering stopped because a filter failed";
+            break;
+        }
+
+        passed = inliers.size();
         E_INFO << "survival rate: " << passed << " / " << total;
 
         if (passed == 0)
         {
-            E_INFO << "feature match filtering stopped because one of the filters has eliminated all the matches";
+            E_INFO << "filtering stopped because no inlier survived";
             break;
         }
     }
@@ -467,9 +472,7 @@ FeatureMatches FeatureMatcher::MatchDescriptors(const Mat& src, const Mat& dst, 
     {
         BOOST_FOREACH(const std::vector<DMatch>& match, knn)
         {
-            matches.push_back(
-                FeatureMatch(match[0].queryIdx, match[0].trainIdx, match[0].distance)
-                );
+            matches.push_back(FeatureMatch(match[0].queryIdx, match[0].trainIdx, match[0].distance));
         }
     }
 
@@ -478,31 +481,29 @@ FeatureMatches FeatureMatcher::MatchDescriptors(const Mat& src, const Mat& dst, 
 
 void FeatureMatcher::RunSymmetryTest(FeatureMatches& forward, const FeatureMatches& backward)
 {
-    int forwardSize  = forward.size();
-    int backwardSize = backward.size();
+    size_t n = forward.size();
 
-    std::vector<size_t> index(forwardSize, FeatureMatch::InvalidIdx);
-    std::vector<bool>   good(forwardSize, false);
+    std::vector<size_t> dstIdx(n, FeatureMatch::InvalidIdx);
+    std::vector<bool>   good(n, false);
    
     BOOST_FOREACH(FeatureMatch& match, forward)
     {
-        index[match.srcIdx] = match.dstIdx;
+        dstIdx[match.srcIdx] = match.dstIdx;
     }
 
     BOOST_FOREACH(const FeatureMatch& match, backward)
     {
-        int i = match.dstIdx;
-        int j = match.srcIdx;
-        
-        good[i] = good[i] || (index[i] == j);
+        size_t i = match.dstIdx;
+        size_t j = match.srcIdx;
+
+        good[i] = good[i] ? good[i] : (dstIdx[i] == j);
     } 
 
     BOOST_FOREACH(FeatureMatch& match, forward)
     {
-        if (good[match.srcIdx] == false )
+        if (good[match.srcIdx] == false)
         {
-            match.state ^= FeatureMatch::Flag::INLIER;
-            match.state |= FeatureMatch::Flag::UNIQUENESS_FAILED;
+            match.Reject(FeatureMatch::Flag::UNIQUENESS_FAILED);
         }
     }
 }
@@ -518,10 +519,17 @@ seq2map::String FeatureMatcher::Report() const
     return boost::algorithm::join(summary, " / ");
 }
 
-size_t FundamentalMatFilter::Filter(ImageFeatureMap& map, Indices& inliers)
+bool FundamentalMatFilter::Filter(ImageFeatureMap& map, Indices& inliers)
 {
-    /**/
-    std::vector<Point2f> pts0, pts1;
+    // at least 8 point correspondences are required 
+    //  to estimate the fundamental matrix
+    if (inliers.size() < 8)
+    {
+        E_WARNING << "insufficient inliers of " << inliers.size() << ", eight required minimally";
+        return false;
+    }
+
+    Points2F pts0, pts1;
     const KeyPoints& src = map.From().GetKeyPoints();
     const KeyPoints& dst = map.To().GetKeyPoints();
     size_t inliersSize = inliers.size();
@@ -538,18 +546,18 @@ size_t FundamentalMatFilter::Filter(ImageFeatureMap& map, Indices& inliers)
         pts0.push_back(src[i].pt);
         pts1.push_back(dst[j].pt);
     }
-    
-    m_fmat = findFundamentalMat(pts0, pts1, mask, m_ransac ? CV_FM_RANSAC : CV_FM_LMEDS, m_epsilon, m_confidence);
-    Indices::iterator itr = inliers.begin(); 
 
+    int method = m_ransac ? CV_FM_RANSAC : CV_FM_LMEDS;
+    m_fmat = findFundamentalMat(pts0, pts1, mask, method, m_epsilon, m_confidence);
+
+    Indices::iterator itr = inliers.begin(); 
     for (size_t i = 0; itr != inliers.end(); i++)
     {
         bool outlier = mask[i] == 0;
 
         if (outlier)
         {
-            map[*itr].state ^= FeatureMatch::Flag::INLIER;
-            map[*itr].state |= FeatureMatch::Flag::FMAT_TEST_FAILED;
+            map[*itr].Reject(FeatureMatch::Flag::FMAT_TEST_FAILED);
             inliers.erase(itr++);
         }
         else
@@ -558,37 +566,40 @@ size_t FundamentalMatFilter::Filter(ImageFeatureMap& map, Indices& inliers)
         }
     }
 
-    return inliers.size();
+    return true;
 }
 
-size_t seq2map::StdevFilter::Filter(ImageFeatureMap & map, Indices & inliers)
+bool SigmaFilter::Filter(ImageFeatureMap& map, Indices& inliers)
 {
-    Mat mean, stddev;
-    int sigma = 2;
-    std::vector<float>  dis;
-    std::vector<FeatureMatch> getMatches;
-    int  matchesSize;
-    float cutoff;
+    m_mean = 0;
+    m_stdev = 0;
 
-    getMatches = map.match();
-    matchesSize = getMatches.size();
-    for (int i = 0; i < matchesSize; i++)
+    // calculate mean
+    BOOST_FOREACH(size_t idx, inliers)
     {
-        dis.push_back(getMatches[i].distance);
+        m_mean += map[idx].distance;
     }
-    meanStdDev(dis, mean, stddev);
-    cutoff =  sigma * stddev.at<double>(0, 0);
+    m_mean = m_mean / inliers.size();
 
-    Indices::iterator itr = inliers.begin(); 
-
-    for (size_t i = 0; itr != inliers.end(); i++)
+    // calculate standard deviation
+    BOOST_FOREACH(size_t idx, inliers)
     {
-        float dis = getMatches[i].distance;
+        float d = map[idx].distance - m_mean;
+        m_stdev += d * d;
+    }
+    m_stdev = std::sqrt(m_stdev / inliers.size());
 
-        if ( dis > (mean.at<double>(0, 0) + cutoff) || dis < (mean.at<double>(0, 0) - cutoff))
+    // calculate k-sigma
+    float ksigma = m_k * m_stdev;
+
+    Indices::iterator itr = inliers.begin();
+    while (itr != inliers.end())
+    {
+        bool outlier = std::abs(map[*itr].distance - m_mean) > ksigma;
+
+        if (outlier)
         {
-            map[*itr].state ^= FeatureMatch::Flag::INLIER;
-            map[*itr].state |= FeatureMatch::Flag::STDEV_TEST_FAILED;
+            map[*itr].Reject(FeatureMatch::Flag::SIGMA_TEST_FAILED);
             inliers.erase(itr++);
         }
         else
@@ -596,8 +607,8 @@ size_t seq2map::StdevFilter::Filter(ImageFeatureMap & map, Indices & inliers)
             itr++;
         }
     }
-    dis.resize(0);
-    return inliers.size();
+
+    return true;
 }
 
 

@@ -163,19 +163,19 @@ namespace seq2map
     {
         enum Flag
         {
-            INLIER            = 0x00000001, // 0000
-            RATIO_TEST_FAILED = 0x00000002, // 0011
-            UNIQUENESS_FAILED = 0x00000004, // 0101
-            FMAT_TEST_FAILED  = 0x00000008, // 1001
-            STDEV_TEST_FAILED = 0x00000010, //10001 
-            INLIER_RECOVERED  = 0x80000000
+            INLIER            = 1 << 0,
+            RATIO_TEST_FAILED = 1 << 1,
+            UNIQUENESS_FAILED = 1 << 2,
+            FMAT_TEST_FAILED  = 1 << 3,
+            SIGMA_TEST_FAILED = 1 << 4,
+            INLIER_RECOVERED  = 1 << 8 | INLIER
         };
-
-        const static size_t InvalidIdx;
 
         /* ctor */ FeatureMatch(size_t srcIdx, size_t dstIdx, float distance, int state = Flag::INLIER)
             : srcIdx(srcIdx), dstIdx(dstIdx), distance(distance), state(state) {}
+        inline void Reject(int flag) { state = (state ^ INLIER) | flag; }
 
+        const static size_t InvalidIdx;
         size_t srcIdx = InvalidIdx;
         size_t dstIdx = InvalidIdx;
         float  distance = -1;
@@ -196,7 +196,6 @@ namespace seq2map
         cv::Mat Draw(const cv::Mat& src, const cv::Mat& dst);
         inline const ImageFeatureSet& From() const { return m_src; }
         inline const ImageFeatureSet& To()   const { return m_dst; }
-        inline const std::vector<FeatureMatch> &match() const { return m_matches; }
     protected:
         /* ctor */ ImageFeatureMap(const ImageFeatureSet& src, const ImageFeatureSet& dst)
             : m_src(src), m_dst(dst) {};
@@ -210,7 +209,7 @@ namespace seq2map
     class FeatureMatchFilter
     {
     public:
-        virtual size_t Filter(ImageFeatureMap& map, Indices& inliers) = 0;
+        virtual bool Filter(ImageFeatureMap& map, Indices& inliers) = 0;
     };
 
     class FeatureMatcher
@@ -247,7 +246,7 @@ namespace seq2map
         /* ctor */ FundamentalMatFilter(double epsilon = 1, double confidence = 0.99f, bool ransac = true)
             : m_epsilon(epsilon), m_confidence(confidence), m_ransac(ransac) {}
         /* dtor */ virtual ~FundamentalMatFilter() {}
-        virtual size_t Filter(ImageFeatureMap& map, Indices& inliers);
+        virtual bool Filter(ImageFeatureMap& map, Indices& inliers);
         inline cv::Mat GetFundamentalMatrix() const { return m_fmat.clone(); }
     protected:
         double m_epsilon;
@@ -256,16 +255,18 @@ namespace seq2map
         cv::Mat m_fmat;
     };
 
-    class StdevFilter : public FeatureMatchFilter
+    class SigmaFilter : public FeatureMatchFilter
     {
     public:
-        /* ctor */ StdevFilter(double sigma = 2)
-            : m_sigma(sigma) {}
-        virtual size_t Filter(ImageFeatureMap& map, Indices& inliers);
-        /* dtor */ virtual ~StdevFilter() {}
+        /* ctor */ SigmaFilter(float k = 2.0f) : m_k(k) {}
+        /* dtor */ virtual ~SigmaFilter() {}
+        virtual bool Filter(ImageFeatureMap& map, Indices& inliers);
     protected:
-        int m_sigma;
+        float m_k;
+        float m_mean;
+        float m_stdev;
     };
+
     /**
      * Feature detection and extraction adaptors for OpenCV
      */
