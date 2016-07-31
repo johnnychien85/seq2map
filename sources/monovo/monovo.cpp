@@ -27,6 +27,9 @@ int main(int argc, char* argv[])
         cv::Mat I1, I2;
         ImageFeatureSet f1, f2;
         FeatureMatcher matcher;
+        FundamentalMatFilter fmatFilter;
+        StdevFilter stdevFilter;
+        matcher.AddFilter(fmatFilter).AddFilter(stdevFilter);
 
         BOOST_FOREACH(const Path& file, files)
         {
