@@ -10,19 +10,22 @@ add_library   (common      includes/seq2map/common.hpp includes/seq2map/disparit
 add_executable(im2dispmap  sources/im2dispmap/im2dispmap.cpp)   # stereo matcher-based disparity map computatiion
 add_executable(im2flow     sources/im2flow/im2flow.cpp)         # optical flow computation
 add_executable(im2features sources/im2features/im2features.cpp) # image feature detection and extraction
-add_executable(raw2seq     sources/raw2seq/raw2seq.cpp)   # structured raw data folder to sequence profile
+add_executable(raw2seq     sources/raw2seq/scanner.hpp sources/raw2seq/scanner.cpp sources/raw2seq/raw2seq.cpp) # structured raw data folder to sequence profile
 add_executable(monovo      sources/monovo/monovo.cpp)     # monocular visual odometry
 add_executable(dispmap2pts sources/miscs/dispmap2pts.cpp) # convert a disparity map to a point cloud
 add_executable(imrect      sources/miscs/imrect.cpp)      # image rectification utility
 add_executable(imcvt       sources/miscs/imcvt.cpp)       # image conversion utility
+add_executable(seqchk      sources/miscs/seqchk.cpp)      # sequence file examining utility
 
 target_link_libraries(im2dispmap  common)
 target_link_libraries(im2features common)
 target_link_libraries(im2flow     common)
+target_link_libraries(raw2seq     common)
 target_link_libraries(monovo      common)
 target_link_libraries(dispmap2pts common)
 target_link_libraries(imrect      common)
 target_link_libraries(imcvt       common)
+target_link_libraries(seqchk      common)
 
 include_directories(includes)
 
@@ -50,6 +53,7 @@ if(OpenCV_VERSION AND NOT OpenCV_VERSION_MAJOR LESS 3)
 	target_link_libraries(dispmap2pts ${OpenCV_LIBS})
 	target_link_libraries(imrect      ${OpenCV_LIBS})
 	target_link_libraries(imcvt       ${OpenCV_LIBS})
+	target_link_libraries(seqchk      ${OpenCV_LIBS})
 else()
 	message(SEND_ERROR "OpenCV not found")
 endif()
@@ -66,6 +70,7 @@ if(Boost_FOUND)
 	target_link_libraries(dispmap2pts ${Boost_LIBRARIES})
 	target_link_libraries(imrect      ${Boost_LIBRARIES})
 	target_link_libraries(imcvt       ${Boost_LIBRARIES})
+	target_link_libraries(seqchk      ${Boost_LIBRARIES})
 else()
 	set(BOOST_INCLUDEDIR ${Boost_INCLUDE_DIRS} CACHE PATH "The directory containing boost headers folder 'boost'." FORCE)
 	set(BOOST_LIBRARYDIR ${Boost_LIBRARY_DIRS} CACHE PATH "The directory containing boost libraries." FORCE)

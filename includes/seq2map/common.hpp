@@ -26,21 +26,35 @@ namespace seq2map
     typedef boost::filesystem::path Path;
     typedef std::vector<Path> Paths;
 
-    typedef std::list<size_t> Indices;
     typedef std::vector<cv::Point2f> Points2F;
     typedef std::vector<cv::Point3f> Points3F;
+
+    typedef std::list<size_t> Indices;
+    const size_t INVALID_INDEX = (size_t)-1;
 
     double rad2deg(double radian);
     double deg2rad(double degree);
 
+    // file system
     bool dirExists(const Path& path);
+    bool fileExists(const Path& path);
     bool makeOutDir(const Path& path);
     bool initLogFile(const Path& path = "");
-    Paths enumerateFiles(const Path& root, const std::string& ext);
+    Paths enumerateFiles(const Path& root, const String& ext);
     Paths enumerateFiles(const Path& sample);
     Paths enumerateDirs(const Path& root);
+    String removeFilenameExt(const String& filename);
+    Path getRelativePath(const Path& path, const Path& base);
 
+    // string processing
+    String makeNameList(Strings names);
+    Strings explode(const String& string, char delimiter);
+    String size2string(const cv::Size& size);
+    cv::Mat strings2mat(const Strings& strings, const cv::Size& matSize);
+
+    // image processing
     cv::Mat rgb2gray(const cv::Mat& rgb);
+    cv::Mat gray2rgb(const cv::Mat& gray);
     cv::Mat imfuse(const cv::Mat& im0, const cv::Mat& im1);
 
     /**
@@ -61,13 +75,121 @@ namespace seq2map
      * An interface to represent any object that is storable to and later
      * restorable from a file.
      */
+    template<class T1, class T2 = T1>
     class Persistent
     {
     public:
-        virtual bool Store(const Path& path) const = 0;
-        virtual bool Restore(const Path& path) = 0;
+        virtual bool Store(T1& path) const = 0;
+        virtual bool Restore(const T2& path) = 0;
     };
 
+    /**
+     * The storage class presents a collection of persistent objects
+     * sequentially stored in the same folder.
+     */
+    template<class DerivedPersistent> class SequentialPersistentLoader : public Persistent<cv::FileStorage, cv::FileNode>
+    {
+    public:
+        SequentialPersistentLoader() {}
+        SequentialPersistentLoader(const Path& root, size_t capacity) : m_root(root) { Allocate(capacity); }
+        virtual ~SequentialPersistentLoader() {}
+        //inline void Add(const String& filename) { m_persistents.insert(_Tp(filename)); }
+        inline void SetRootPath(const Path& root) {m_root = root; }
+        inline Path GetRootPath() const { return m_root; }
+        inline void Add(const String& filename) { m_filenames.push_back(filename); }
+        inline void Allocate(size_t capacity) { m_filenames.reserve(capacity); }
+        inline const Strings& GetFilenames() const { return m_filenames; }
+        inline size_t GetSize() const { return m_filenames.size(); }
+        virtual bool Store(cv::FileStorage& fs) const { return Store(fs, m_root); };
+        virtual bool Store(cv::FileStorage& fs, const Path& root) const
+        {
+            fs << "root" << root.string();
+            fs << "items" << (int) m_filenames.size();
+            fs << "files" << "[";
+            BOOST_FOREACH(const String& filename, m_filenames)
+            {
+                fs << filename;
+            }
+            fs << "]";
+            return true;
+        }
+
+        virtual bool Restore(const cv::FileNode& fn)
+        {
+            m_filenames.clear();
+            try
+            {
+                cv::FileNode filesNode = fn["files"];
+                String root;
+                int capacity = 0;
+
+                fn["root"]  >> root;
+                fn["items"] >> capacity;
+
+                m_root = root;
+                m_filenames.reserve(capacity);
+
+                for (cv::FileNodeIterator itr = filesNode.begin(); itr != filesNode.end(); itr++)
+                {
+                    m_filenames.push_back((String)*itr);
+                }
+            }
+            catch (std::exception& ex)
+            {
+                E_ERROR << "error restoring sequential persistent loader";
+                E_ERROR << ex.what();
+                return false;
+            }
+            return true;
+        }
+
+        /**
+         * element accessor
+         */
+        bool Retrieve(size_t idx, DerivedPersistent& persistent) const
+        {
+            return idx < m_filenames.size() ? persistent.Restore(m_root / m_filenames[idx]) : false;
+        }
+        //DerivedPersistent& operator[] (size_t idx)
+        //{
+        //    _Tp& tp = m_persistents.at(idx);
+        //    tp.restored = tp.restored ? tp.restored : tp.persistent.Restore(m_root / tp.filename);
+        //
+        //    if (!tp.restored)
+        //    {
+        //        E_ERROR << "error restoring from \"" << (m_root / tp.filename).string() << "\"";
+        //    }
+        //
+        //    return tp.persistent;
+        //}
+    protected:
+        //struct _Tp
+        //{
+        //    _Tp(const String& filename) : filename(filename) {}
+        //    const String filename;
+        //    DerivedPersistent persistent;
+        //    bool restored = false;
+        //};
+        Path m_root;
+        Strings m_filenames;
+        //std::vector<_Tp> m_persistents;
+    };
+
+    /**
+     * A wrapper of cv::Mat with disk storage backend.
+     */
+    class PersistentImage : public Persistent<Path>
+    {
+    public:
+        virtual bool Store(Path& path) const { return cv::imwrite(path.string(), im); };
+        virtual bool Restore(const Path& path) { return !(im = cv::imread(path.string())).empty(); };
+
+        cv::Mat im;
+    };
+
+    /**
+     * A class to measure the output of a process in unit time.
+     */
     class Speedometre
     {
     public:
@@ -76,7 +198,8 @@ namespace seq2map
         void Start();
         void Stop(size_t amount);
         void Reset();
-        inline double GetSpeed() const;
+        double GetElapsedSeconds() const;
+        inline double GetSpeed() const {return (double)m_accumulated / GetElapsedSeconds(); };
         String ToString() const;
     protected:
         String m_displayName;

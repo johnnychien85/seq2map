@@ -28,8 +28,9 @@ int main(int argc, char* argv[])
         ImageFeatureSet f1, f2;
         FeatureMatcher matcher;
         FundamentalMatFilter fmatFilter;
-        StdevFilter stdevFilter;
-        matcher.AddFilter(fmatFilter).AddFilter(stdevFilter);
+        SigmaFilter sigmaFilter;
+
+        matcher.AddFilter(fmatFilter).AddFilter(sigmaFilter);
 
         BOOST_FOREACH(const Path& file, files)
         {
@@ -119,6 +120,8 @@ bool init(int argc, char* argv[], Args& args)
     {
         std::cout << "Usage: " << argv[0] << " <features_in_dir> <images_in_dir> [options]" << std::endl;
         std::cout << o << std::endl;
+
+        return false;
     }
 
     if (srcPath.empty())

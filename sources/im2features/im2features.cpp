@@ -7,7 +7,7 @@ struct Args
 {
     Path srcPath;
     Path dstPath;
-    Path paramsPath;
+    Path dxtorPath;
     String dstExt;
     String detectorName;
     String xtractorName;
@@ -16,7 +16,6 @@ struct Args
 
 bool init(int, char*[], Args&, FeatureDetextractorPtr&);
 void showSynopsis(char*);
-String makeNameList(Strings names);
 
 int main(int argc, char* argv[])
 {
@@ -27,14 +26,10 @@ int main(int argc, char* argv[])
 
     try
     {
-        if (!args.paramsPath.empty())
+        if (!args.dxtorPath.empty())
         {
-            cv::FileStorage fs(args.paramsPath.string(), cv::FileStorage::WRITE);
-            fs << "keypoint"  << args.detectorName;
-            fs << "descriptor" << args.xtractorName;
-            fs << "parameters" << "{:";
-            dxtor->WriteParams(fs);
-            fs << "}";
+            cv::FileStorage fs(args.dxtorPath.string(), cv::FileStorage::WRITE);
+            dxtor->Store(fs);
         }
 
         if (!makeOutDir(args.dstPath))
@@ -61,6 +56,7 @@ int main(int argc, char* argv[])
             }
 
             ImageFeatureSet features = dxtor->DetectAndExtractFeatures(im);
+
             if (!features.Store(dstFile))
             {
                 E_FATAL << "error writing features to " << dstFile;
@@ -82,7 +78,7 @@ int main(int argc, char* argv[])
 bool init(int argc, char* argv[], Args& args, FeatureDetextractorPtr& dxtor)
 {
     FeatureDetextractorFactory dxtorFactory;
-    String srcPath, dstPath, paramsPath;
+    String srcPath, dstPath, dxtorPath;
 
     //
     // Prepare messages for argument parsing
@@ -101,7 +97,7 @@ bool init(int argc, char* argv[], Args& args, FeatureDetextractorPtr& dxtor)
         ("help,h",    "Show this help message and exit. This option can be combined with -k and/or -x to list feature-specific options.")
         ("detect,k",  po::value<String>(&args.detectorName)->default_value(""), detectorDesc.c_str())
         ("extract,x", po::value<String>(&args.xtractorName)->default_value(""), xtractorDesc.c_str())
-        ("params,p",  po::value<String>(&paramsPath)->default_value("features.yml"), "File name of the feature detection and extraction parameters to be written in the <features_dir> folder.")
+        ("dxtor",     po::value<String>(&dxtorPath)->default_value("dxtor.yml"), "Path to the feature detector and extractor persistent storage where parameters to be written.")
         ("ext,e",     po::value<String>(&args.dstExt)->default_value(".dat"),    "The extension name of the output feature files.");
 
     // two positional arguments - input and output directories
@@ -142,7 +138,7 @@ bool init(int argc, char* argv[], Args& args, FeatureDetextractorPtr& dxtor)
 
     args.srcPath = srcPath;
     args.dstPath = dstPath;
-    args.paramsPath = paramsPath;
+    args.dxtorPath = dxtorPath;
     args.detectorName = !args.detectorName.empty() ? args.detectorName : args.xtractorName;
 
     if (args.help)
@@ -247,20 +243,4 @@ void showSynopsis(char* exec)
 {
     std::cout << std::endl;
     std::cout << "Try \"" << exec << " -h\" for usage listing." << std::endl;
-}
-
-String makeNameList(Strings names)
-{
-    std::stringstream ss;
-    for (size_t i = 0; i < names.size(); i++)
-    {
-        if (i > 0) // make a comma-separated sentence
-        {
-            ss << (i < names.size() - 1 ? ", " : " and ");
-        }
-        ss << "\"" << names[i] << "\"";
-    }
-    ss << ".";
-
-    return ss.str();
 }

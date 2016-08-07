@@ -22,13 +22,15 @@ end
 % An odometry sequence comes with stereo images and optionally GPS/IMU readings
 % and LiDAR point clouds. The sequences are supposed to be structured in this way:
 %  <DATASET_ROOT>
-%   + 00
+%   + 00 <----------- seqPath
 %   |  + image_0
 %   |  | + 000000.png
 %   |  | + 000001.png
 %   |  | .
 %   |  | .
 %   |  + image_1
+%   |  + image_2
+%   |  + image_3
 %   |  + calib.txt
 %   |  \ times.txt
 %   + 01
@@ -117,7 +119,22 @@ end
 
 %
 % Load a sequence downloaded from http://www.cvlibs.net/datasets/kitti/raw_data.php
-% both [unsynced+unrectified data] and [synced+rectified data] sequences are supported.
+% both "unsynced+unrectified data" and "synced+rectified data" sequences are supported.
+%  <DATASET_ROOT>
+%   + <DATE_LABEL>
+%   |  + <SEQUENCE_LABEL>[_sync] <--------- seqPath
+%   |  |  + image_00
+%   |  |  |  + data
+%   |  |  |  |  + 0000000000.png
+%   |  |  |  |  + 0000000001.png
+%   |  |  |  |  .
+%   |  |  |  |  .
+%   |  |  |  \ timestamp.txt  
+%   |  |  + image_01
+%   |  |  + image_02
+%   |  |  + image_03
+%   |  |  + oxts
+%   |  |  \ velodyne_points
 %
 function seq = loadSequenceKITTIRaw(seqPath)
     fprintf('..this RAW sequence was grabbed by the KITTI car!!\n');

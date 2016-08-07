@@ -42,7 +42,7 @@ namespace seq2map
      * reasonable to actualise the concept of image feature collection as a new
      * class.
      */
-    class ImageFeatureSet : public Persistent
+    class ImageFeatureSet : public Persistent<Path>
     {
     public:
         static String NormType2String(int type);
@@ -54,7 +54,7 @@ namespace seq2map
         /* dtor */ virtual ~ImageFeatureSet() {}
         inline ImageFeature GetFeature(const size_t idx);
         inline ImageFeature operator[](size_t idx) { return GetFeature(idx); }
-        virtual bool Store(const Path& path) const;
+        virtual bool Store(Path& path) const;
         virtual bool Restore(const Path& path);
         inline bool IsEmpty() const { return m_keypoints.empty(); }
         inline size_t GetSize() const { return m_keypoints.size(); }
@@ -88,10 +88,16 @@ namespace seq2map
         virtual ImageFeatureSet ExtractFeatures(const cv::Mat& im, KeyPoints& keypoints) const = 0;
     };
 
-    class FeatureDetextractor : public virtual Parameterised
+    class FeatureDetextractor : public virtual Parameterised, public Persistent<cv::FileStorage, cv::FileNode>
     {
     public:
         virtual ImageFeatureSet DetectAndExtractFeatures(const cv::Mat& im) const = 0;
+        virtual bool Store(cv::FileStorage& fs) const;
+        virtual bool Restore(const cv::FileNode& fn);
+    private:
+        String m_keypointType;
+        String m_descriptorType;
+        friend class FeatureDetextractorFactory;
     };
 
     typedef boost::shared_ptr<FeatureDetector>	   FeatureDetectorPtr;
@@ -148,6 +154,7 @@ namespace seq2map
         /* ctor */ FeatureDetextractorFactory();
         /* dtor */ virtual ~FeatureDetextractorFactory() {}
         FeatureDetextractorPtr Create(const String& detectorName, const String& extractorName);
+        FeatureDetextractorPtr Create(const cv::FileNode& fn);
         inline const FeatureDetectorFactory&  GetDetectorFactory()  const { return m_detectorFactory; }
         inline const FeatureExtractorFactory& GetExtractorFactory() const { return m_extractorFactory; }
     private:
@@ -175,9 +182,8 @@ namespace seq2map
             : srcIdx(srcIdx), dstIdx(dstIdx), distance(distance), state(state) {}
         inline void Reject(int flag) { state = (state ^ INLIER) | flag; }
 
-        const static size_t InvalidIdx;
-        size_t srcIdx = InvalidIdx;
-        size_t dstIdx = InvalidIdx;
+        size_t srcIdx = INVALID_INDEX;
+        size_t dstIdx = INVALID_INDEX;
         float  distance = -1;
         int    state = 0;
     };

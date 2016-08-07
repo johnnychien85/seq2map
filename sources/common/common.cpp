@@ -26,22 +26,25 @@ namespace seq2map
         return fs::exists(path) && fs::is_directory(path);
     }
 
+    bool fileExists(const Path& path)
+    {
+        return fs::exists(path) && fs::is_regular(path);
+    }
+
     bool makeOutDir(const Path& path)
     {
         if (dirExists(path)) return true;
         else return fs::create_directories(path);
     }
 
-    Paths enumerateFiles(const Path& root, const std::string& ext)
+    Paths enumerateFiles(const Path& root, const String& ext)
     {
         Paths files;
         fs::directory_iterator endItr;
 
-        for (fs::directory_iterator itr(root) ;
-            itr != endItr ; itr++)
+        for (fs::directory_iterator itr(root); itr != endItr ; itr++)
         {
             if (!fs::is_regular(*itr)) continue;
-
             bool extCheck = ext.empty() || boost::iequals(ext, itr->path().extension().string());
             if(extCheck) files.push_back(*itr);
         }
@@ -70,12 +73,26 @@ namespace seq2map
         return dirs;
     }
 
+    String removeFilenameExt(const String& filename)
+    {
+        return filename.substr(0, filename.find_last_of("."));
+    }
+
+    Path getRelativePath(const Path& path, const Path& base)
+    {
+        if (path.empty()) return path;
+
+        Path normPath = fs::absolute(fs::canonical(path));
+        Path normBase = fs::absolute(fs::canonical(base));
+
+        return fs::relative(normPath, normBase);
+    }
+
     bool initLogFile(const Path& path)
     {
         try
         {
             logging::core::get()->add_global_attribute("TimeStamp", logging::attributes::local_clock());
-
             logging::add_file_log(path, logging::keywords::format = "[%TimeStamp%] %Message%");
             logging::add_console_log(std::cout);
         }
@@ -86,8 +103,60 @@ namespace seq2map
 
             return false;
         }
-
         return true;
+    }
+
+    String makeNameList(Strings names)
+    {
+        std::stringstream ss;
+        for (size_t i = 0; i < names.size(); i++)
+        {
+            if (i > 0) // make a comma-separated sentence
+            {
+                ss << (i < names.size() - 1 ? ", " : " and ");
+            }
+            ss << "\"" << names[i] << "\"";
+        }
+        ss << ".";
+
+        return ss.str();
+    }
+
+    Strings explode(const String& string, char delimiter)
+    {
+        String tok;
+        Strings toks;
+        std::istringstream iss(string);
+
+        while (getline(iss, tok, delimiter)) toks.push_back(tok);
+        return toks;
+    }
+    
+    String size2string(const cv::Size& size)
+    {
+        std::stringstream ss;
+        ss << size.height << "x" << size.width;
+
+        return ss.str();
+    }
+
+    cv::Mat strings2mat(const Strings& strings, const cv::Size& matSize)
+    {
+        if (matSize.height * matSize.width != strings.size())
+        {
+            E_ERROR << "given strings with " << strings.size()
+                    << " element(s) do not fit the desired matrix size of " << size2string(matSize);
+            return cv::Mat();
+        }
+
+        std::vector<float> data(strings.size());
+
+        for (size_t i = 0; i < strings.size(); i++)
+        {
+            data[i] = (float) atof(strings[i].c_str());
+        }
+
+        return cv::Mat(data).reshape(0, matSize.height).clone();
     }
 
     cv::Mat rgb2gray(const cv::Mat& rgb)
@@ -100,6 +169,14 @@ namespace seq2map
         default: E_ERROR << "the source image has " << rgb.channels() << " channels, while 1 or 3 expected!!";
         }
         return gray;
+    }
+
+    cv::Mat gray2rgb(const cv::Mat& gray)
+    {
+        cv::Mat rgb;
+        cv::cvtColor(gray, rgb, CV_GRAY2BGR);
+
+        return rgb;
     }
 
     cv::Mat imfuse(const cv::Mat& im0, const cv::Mat& im1)
@@ -162,13 +239,12 @@ namespace seq2map
         m_timer.stop();
     }
 
-    inline double Speedometre::GetSpeed() const
+    double Speedometre::GetElapsedSeconds() const
     {
         boost::timer::cpu_times elapsed = m_timer.elapsed();
 
-        return (double) m_accumulated / 
-            (double) boost::chrono::duration_cast<boost::chrono::seconds>(
-                boost::chrono::nanoseconds(elapsed.system + elapsed.user)).count();
+        return (double) boost::chrono::duration_cast<boost::chrono::seconds>(
+            boost::chrono::nanoseconds(elapsed.system + elapsed.user)).count();
     }
 
     String Speedometre::ToString() const

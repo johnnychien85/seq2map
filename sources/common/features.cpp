@@ -12,7 +12,6 @@ const seq2map::String HetergeneousDetextractor::s_detectorFileNodeName  = "detec
 const seq2map::String HetergeneousDetextractor::s_extractorFileNodeName = "extraction";
 const seq2map::String ImageFeatureSet::s_fileMagicNumber = "IMKPTDSC"; // which means IMage KeyPoinTs & DeSCriptors
 const char ImageFeatureSet::s_fileHeaderSep = ' ';
-const size_t FeatureMatch::InvalidIdx = (size_t) -1;
 
 FeatureDetectorFactory::FeatureDetectorFactory()
 {
@@ -133,7 +132,7 @@ int seq2map::ImageFeatureSet::String2NormType(const seq2map::String& type)
     return -1;
 }
 
-bool ImageFeatureSet::Store(const Path& path) const
+bool seq2map::ImageFeatureSet::Store(Path& path) const
 {
     std::ofstream os(path.string(), std::ios::out | std::ios::binary);
 
@@ -265,7 +264,80 @@ FeatureDetextractorPtr FeatureDetextractorFactory::Create(const seq2map::String&
         }
     }
 
+    if (dxtor)
+    {
+        dxtor->m_keypointType = detectorName;
+        dxtor->m_descriptorType = extractorName;
+    }
+
     return dxtor;
+}
+
+FeatureDetextractorPtr FeatureDetextractorFactory::Create(const cv::FileNode& fn)
+{
+    FeatureDetextractorPtr dxtor;
+    String keypointType, descriptorType;
+
+    try
+    {
+        fn["keypoint"]   >> keypointType;
+        fn["descriptor"] >> descriptorType;
+
+        dxtor = Create(keypointType, descriptorType);
+
+        if (dxtor) dxtor->Restore(fn);
+    }
+    catch (std::exception& ex)
+    {
+        E_ERROR << "exception caught while creating feature detextractor";
+        E_ERROR << ex.what();
+    }
+
+    return dxtor;
+}
+
+bool FeatureDetextractor::Store(cv::FileStorage& fs) const
+{
+    fs << "keypoint"   << m_keypointType;
+    fs << "descriptor" << m_descriptorType;
+    fs << "parameters" << "{:";
+    WriteParams(fs);
+    fs << "}";
+
+    return true;
+}
+
+bool FeatureDetextractor::Restore(const cv::FileNode& fn)
+{
+    String keypointType, descriptorType;
+
+    try
+    {
+        fn["keypoint"]   >> keypointType;
+        fn["descriptor"] >> descriptorType;
+
+        bool compatible = boost::equals(keypointType,   m_keypointType) &&
+                          boost::equals(descriptorType, m_descriptorType);
+        if (!compatible)
+        {
+            E_ERROR << "incompatible feature keypoint and/or descriptor";
+            E_ERROR << m_keypointType << " and " << m_descriptorType << " expected";
+            E_ERROR << "while " << keypointType << " and " << descriptorType << " presented";
+
+            return false;
+        }
+
+        ReadParams(fn["parameters"]);
+    }
+    catch (std::exception& ex)
+    {
+        E_ERROR << "exception caught while restoring feature detextractor";
+        E_ERROR << ex.what();
+
+        return false;
+    }
+
+    return true;
 }
 
 void HetergeneousDetextractor::WriteParams(cv::FileStorage& fs) const
@@ -483,7 +555,7 @@ void FeatureMatcher::RunSymmetryTest(FeatureMatches& forward, const FeatureMatch
 {
     size_t n = forward.size();
 
-    std::vector<size_t> dstIdx(n, FeatureMatch::InvalidIdx);
+    std::vector<size_t> dstIdx(n, INVALID_INDEX);
     std::vector<bool>   good(n, false);
    
     BOOST_FOREACH(FeatureMatch& match, forward)
