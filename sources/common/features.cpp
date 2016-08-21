@@ -64,7 +64,13 @@ ImageFeature ImageFeatureSet::GetFeature(const size_t idx)
     assert(idx < m_keypoints.size());
     return ImageFeature(m_keypoints[idx], m_descriptors.row((int)idx));
 }
-
+/*
+ImageFeature ImageFeatureSet::GetFeature(const size_t idx) const
+{
+    assert(idx < m_keypoints.size());
+    return ImageFeature(m_keypoints[idx], m_descriptors.row((int)idx).clone());
+}
+*/
 seq2map::String ImageFeatureSet::NormType2String(int type)
 {
     switch (type)
@@ -591,7 +597,7 @@ seq2map::String FeatureMatcher::Report() const
     return boost::algorithm::join(summary, " / ");
 }
 
-bool FundamentalMatFilter::Filter(ImageFeatureMap& map, Indices& inliers)
+bool FundamentalMatrixFilter::Filter(ImageFeatureMap& map, Indices& inliers)
 {
     // at least 8 point correspondences are required 
     //  to estimate the fundamental matrix
@@ -629,7 +635,7 @@ bool FundamentalMatFilter::Filter(ImageFeatureMap& map, Indices& inliers)
 
         if (outlier)
         {
-            map[*itr].Reject(FeatureMatch::Flag::FMAT_TEST_FAILED);
+            map[*itr].Reject(FeatureMatch::Flag::GEOMETRIC_TEST_FAILED);
             inliers.erase(itr++);
         }
         else
@@ -639,6 +645,111 @@ bool FundamentalMatFilter::Filter(ImageFeatureMap& map, Indices& inliers)
     }
 
     return true;
+}
+
+void EssentialMatrixFilter::SetCameraMatrices(const cv::Mat& K0, const cv::Mat& K1)
+{
+    if (!checkCameraMatrix(K0) || !checkCameraMatrix(K1))
+    {
+        E_ERROR << "invalid camera matrix/matrices given";
+        E_ERROR << mat2string(K0, "K0");
+        E_ERROR << mat2string(K1, "K1");
+
+        m_K0inv = cv::Mat::eye(3, 3, CV_64F);
+        m_K1inv = cv::Mat::eye(3, 3, CV_64F);
+
+        return;
+    }
+
+    m_K0inv = K0.inv();
+    m_K1inv = K1.inv();
+
+    m_K0inv.convertTo(m_K0inv, CV_64F);
+    m_K1inv.convertTo(m_K1inv, CV_64F);
+}
+
+bool EssentialMatrixFilter::Filter(ImageFeatureMap& map, Indices& inliers)
+{
+    // at least 5 point correspondences are required 
+    //  to estimate the essential matrix
+    if (inliers.size() < 8)
+    {
+        E_WARNING << "insufficient inliers of " << inliers.size() << ", five required minimally";
+        return false;
+    }
+
+    Points2F pts0, pts1;
+    const KeyPoints& src = map.From().GetKeyPoints();
+    const KeyPoints& dst = map.To().  GetKeyPoints();
+    size_t inliersSize = inliers.size();
+    std::vector<uchar> mask(inliersSize, 0);
+    Mat I = cv::Mat::eye(3, 3, CV_64F);
+
+    pts0.reserve(inliersSize);
+    pts1.reserve(inliersSize);
+
+    BOOST_FOREACH (size_t idx, inliers)
+    {
+        size_t i = map[idx].srcIdx;
+        size_t j = map[idx].dstIdx;
+
+        pts0.push_back(src[i].pt);
+        pts1.push_back(dst[j].pt);
+    }
+
+    BackprojectPoints(pts0, m_K0inv);
+    BackprojectPoints(pts1, m_K1inv);
+
+    int method = m_ransac ? CV_FM_RANSAC : CV_FM_LMEDS;
+    m_emat = findEssentialMat(pts0, pts1, I, method, m_confidence, m_epsilon, mask);
+
+    if (m_emat.empty())
+    {
+        E_WARNING << "findEssentialMat returns empty matrix";
+        return false;
+    }
+
+    Indices::iterator itr = inliers.begin(); 
+    for (size_t i = 0; itr != inliers.end(); i++)
+    {
+        bool outlier = mask[i] == 0;
+
+        if (outlier)
+        {
+            map[*itr].Reject(FeatureMatch::Flag::GEOMETRIC_TEST_FAILED);
+            inliers.erase(itr++);
+        }
+        else
+        {
+            itr++;
+        }
+    }
+
+    if (m_poseRecovery)
+    {
+        recoverPose(m_emat, pts0, pts1, I, m_rmat, m_tvec, Mat(mask));
+    }
+
+    return true;
+}
+
+void EssentialMatrixFilter::BackprojectPoints(Points2F& pts, const cv::Mat& Kinv)
+{
+    const double* Ki = Kinv.ptr<double>();
+    
+    //      / ki0 ki1 ki2 \
+    // Ki = | ki3 ki4 ki5 |
+    //      \ ki6 ki7 ki8 /
+
+    BOOST_FOREACH (cv::Point2f& pt, pts)
+    {
+        float x = pt.x * Ki[0] + pt.y * Ki[1] + Ki[2];
+        float y = pt.x * Ki[3] + pt.y * Ki[4] + Ki[5];
+        float z = pt.x * Ki[6] + pt.y * Ki[7] + Ki[8];
+
+        pt.x = x / z;
+        pt.y = y / z;
+    }
 }
 
 bool SigmaFilter::Filter(ImageFeatureMap& map, Indices& inliers)

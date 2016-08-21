@@ -6,7 +6,7 @@ set(MONOLITHIC TRUE CACHE BOOL "Build big standalone executables statically link
 
 # Executables Configuration
 project(seq2map CXX)
-add_library   (common      includes/seq2map/common.hpp includes/seq2map/disparity.hpp includes/seq2map/features.hpp includes/seq2map/sequence.hpp sources/common/common.cpp sources/common/disparity.cpp sources/common/features.cpp sources/common/sequence.cpp)
+add_library   (common      includes/seq2map/common.hpp includes/seq2map/disparity.hpp includes/seq2map/features.hpp includes/seq2map/geometry.hpp includes/seq2map/sequence.hpp includes/seq2map/solve.hpp sources/common/common.cpp sources/common/disparity.cpp sources/common/features.cpp sources/common/geometry.cpp sources/common/sequence.cpp sources/common/solve.cpp)
 add_executable(im2dispmap  sources/im2dispmap/im2dispmap.cpp)   # stereo matcher-based disparity map computatiion
 add_executable(im2flow     sources/im2flow/im2flow.cpp)         # optical flow computation
 add_executable(im2features sources/im2features/im2features.cpp) # image feature detection and extraction

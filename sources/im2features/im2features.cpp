@@ -1,3 +1,4 @@
+#include <iomanip>
 #include <seq2map/features.hpp>
 
 using namespace seq2map;
@@ -26,11 +27,7 @@ int main(int argc, char* argv[])
 
     try
     {
-        if (!args.dxtorPath.empty())
-        {
-            cv::FileStorage fs(args.dxtorPath.string(), cv::FileStorage::WRITE);
-            dxtor->Store(fs);
-        }
+        Speedometre metre("Image Feature Detection & Extraction", "px/s");
 
         if (!makeOutDir(args.dstPath))
         {
@@ -39,7 +36,23 @@ int main(int argc, char* argv[])
         }
 
         Paths files = enumerateFiles(args.srcPath);
-        int i = 0;
+        size_t frames = 0, features = 0, bytes = 0;
+
+        E_INFO << "feature extraction procedure starts for " << files.size() << " file(s)";
+        E_INFO << "source folder set to " << fullpath(args.srcPath);
+        E_INFO << "output folder set to " << fullpath(args.dstPath);
+
+        if (!args.dxtorPath.empty())
+        {
+            cv::FileStorage fs(args.dxtorPath.string(), cv::FileStorage::WRITE);
+            if (!dxtor->Store(fs))
+            {
+                E_ERROR << "error storing parameter to " << args.dxtorPath;
+                return -1;
+            }
+
+            E_INFO << "parameters stored to " << fullpath(args.dxtorPath);
+        }
 
         BOOST_FOREACH(const Path& file, files)
         {
@@ -55,16 +68,29 @@ int main(int argc, char* argv[])
                 continue;
             }
 
-            ImageFeatureSet features = dxtor->DetectAndExtractFeatures(im);
+            metre.Start();
+            ImageFeatureSet f = dxtor->DetectAndExtractFeatures(im);
+            metre.Stop(im.total());
 
-            if (!features.Store(dstFile))
+            if (!f.Store(dstFile))
             {
                 E_FATAL << "error writing features to " << dstFile;
                 return -1;
             }
 
-            E_INFO << "processed " << file.string() << " -> " << dstFile;
+            std::stringstream ss;
+            ss << std::fixed << std::setprecision(2) << metre.GetSpeed() << " " << metre.GetUnit();
+
+            frames++;
+            features += f.GetSize();
+            bytes += filesize(dstFile);
+
+            E_INFO << "processed " << file.filename() << " -> " << dstFile.filename() << " [" << ss.str() << "]";
         }
+
+        E_INFO << "image feature extraction procedure finished, " << features << " feature(s) detected from " << frames << " frame(s)";
+        E_INFO << "file storage: " << (bytes / 1024.0f / 1024.0f) << " MBytes";
+        E_INFO << "computation time: " << metre.GetElapsedSeconds() << " secs";
     }
     catch (std::exception& ex)
     {

@@ -21,6 +21,70 @@ namespace seq2map
         return degree * CV_PI / 180.0f;
     }
 
+    double rms(const cv::Mat& e)
+    {
+        size_t n = e.total();
+        bool rowvec = n == e.rows;
+        bool colvec = n == e.cols;
+
+        assert(rowvec || colvec);
+
+        cv::Mat e2 = rowvec ? e.t() * e : e * e.t();
+        cv::Mat e64f;
+        e2.convertTo(e64f, CV_64F);
+
+        return std::sqrt(e2.ptr<double>()[0] / n);
+    }
+
+    String mat2string(const cv::Mat& x, const String& name, size_t precision)
+    {
+        cv::Mat x64f;
+        x.convertTo(x64f, CV_64F);
+
+        std::stringstream ss;
+
+        ss << (name.empty() ? "" : name + " = ") << "[";
+
+        for (size_t i = 0; i < x64f.rows; i++)
+        {
+            bool lastrow = i == x64f.rows - 1;
+            for (size_t j = 0; j < x64f.cols; j++)
+            {
+                bool lastcol = j == x64f.cols - 1;
+
+                ss << std::setprecision(precision) << x64f.at<double>(static_cast<int>(i), static_cast<int>(j));
+                ss << (lastcol ? "" : ", ");
+            }
+            ss << (lastrow ? "" : "; ");
+        }
+
+        ss << "];";
+
+        return ss.str();
+    }
+
+    bool checkCameraMatrix(const cv::Mat& K)
+    {
+        if (K.rows != 3 || K.cols != 3 || (K.type() != CV_32F && K.type() != CV_64F))
+        {
+            E_WARNING << "the camera matrix has to be a 3-by-3 single/double matrix";
+            return false;
+        }
+
+        cv::Mat K64f;
+        K.convertTo(K64f, CV_64F);
+
+        if (K64f.at<double>(1,0) != 0 || 
+            K64f.at<double>(2,0) != 0 || K64f.at<double>(2,1) != 0 ||
+            K64f.at<double>(2,2) != 1)
+        {
+            E_WARNING << "the camera matrix has to be an upper triangular matrix with the third diagonal entry set to 1";
+            return false;
+        }
+
+        return true;
+    }
+
     bool dirExists(const Path& path)
     {
         return fs::exists(path) && fs::is_directory(path);
@@ -35,6 +99,11 @@ namespace seq2map
     {
         if (dirExists(path)) return true;
         else return fs::create_directories(path);
+    }
+
+    size_t filesize(const Path& path)
+    {
+        return fs::file_size(path);
     }
 
     Paths enumerateFiles(const Path& root, const String& ext)
@@ -78,14 +147,14 @@ namespace seq2map
         return filename.substr(0, filename.find_last_of("."));
     }
 
+    Path fullpath(const Path& path)
+    {
+        return fs::absolute(fs::canonical(path));
+    }
+
     Path getRelativePath(const Path& path, const Path& base)
     {
-        if (path.empty()) return path;
-
-        Path normPath = fs::absolute(fs::canonical(path));
-        Path normBase = fs::absolute(fs::canonical(base));
-
-        return fs::relative(normPath, normBase);
+        return path.empty() ? path : fs::relative(fullpath(path), fullpath(base));
     }
 
     bool initLogFile(const Path& path)

@@ -26,24 +26,31 @@ namespace seq2map
     typedef boost::filesystem::path Path;
     typedef std::vector<Path> Paths;
 
-    typedef std::vector<cv::Point2f> Points2F;
-    typedef std::vector<cv::Point3f> Points3F;
+    typedef cv::Point2f Point2F;
+    typedef cv::Point3f Point3F;
+    typedef std::vector<Point2F> Points2F;
+    typedef std::vector<Point3F> Points3F;
 
     typedef std::list<size_t> Indices;
     const size_t INVALID_INDEX = (size_t)-1;
 
     double rad2deg(double radian);
     double deg2rad(double degree);
+    double rms(const cv::Mat& e);
+    String mat2string(const cv::Mat& x, const String& name = "", size_t precision = 6);
+    bool checkCameraMatrix(const cv::Mat& K);
 
     // file system
     bool dirExists(const Path& path);
     bool fileExists(const Path& path);
     bool makeOutDir(const Path& path);
     bool initLogFile(const Path& path = "");
+    size_t filesize(const Path& path);
     Paths enumerateFiles(const Path& root, const String& ext);
     Paths enumerateFiles(const Path& sample);
     Paths enumerateDirs(const Path& root);
     String removeFilenameExt(const String& filename);
+    Path fullpath(const Path& path);
     Path getRelativePath(const Path& path, const Path& base);
 
     // string processing
@@ -198,8 +205,9 @@ namespace seq2map
         void Start();
         void Stop(size_t amount);
         void Reset();
+        String GetUnit() const { return m_displayUnit; }
         double GetElapsedSeconds() const;
-        inline double GetSpeed() const {return (double)m_accumulated / GetElapsedSeconds(); };
+        inline double GetSpeed() const {return (double)m_accumulated / GetElapsedSeconds(); }
         String ToString() const;
     protected:
         String m_displayName;

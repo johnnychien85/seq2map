@@ -111,7 +111,7 @@ bool KittiOdometryScanner::Scan(const Path& seqPath, const Path& calPath, const 
         Camera& cam = cams.at(i);
 
         // intrinsic parameters..
-        BouguetIntrinsics::Ptr intrinsics = BouguetIntrinsics::Ptr(new BouguetIntrinsics());
+        BouguetModel::Ptr intrinsics = BouguetModel::Ptr(new BouguetModel());
         intrinsics->SetCameraMatrix(K);
 
         cam.SetIntrinsics(intrinsics);
@@ -121,7 +121,7 @@ bool KittiOdometryScanner::Scan(const Path& seqPath, const Path& calPath, const 
         if (i != ref)
         {
             cv::Mat RT = K_inv * calib.P[i];
-            cam.GetExtrinsics().SetMatrix(RT);
+            cam.GetExtrinsics().SetTransformMatrix(RT);
         }
 
         // search for images
@@ -270,7 +270,7 @@ bool KittiRawDataScanner::Scan(const Path& seqPath, const Path& calPath, const P
         Camera& cam = cams.at(i);
 
         // intrinsic parameters..
-        BouguetIntrinsics::Ptr intrinsics = BouguetIntrinsics::Ptr(new BouguetIntrinsics());
+        BouguetModel::Ptr intrinsics = BouguetModel::Ptr(new BouguetModel());
 
         if (!rectified)
         {
@@ -293,7 +293,7 @@ bool KittiRawDataScanner::Scan(const Path& seqPath, const Path& calPath, const P
         else if (i != ref)
         {
             cv::Mat RT = K_inv * calib.data[i].P_rect;
-            cam.GetExtrinsics().SetMatrix(RT);
+            cam.GetExtrinsics().SetTransformMatrix(RT);
 
             // TODO: take R_rect into account
             // ...

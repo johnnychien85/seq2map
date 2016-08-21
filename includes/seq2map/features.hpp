@@ -28,12 +28,12 @@ namespace seq2map
     {
     public:
         friend class ImageFeatureSet;
+        /* dtor */ virtual ~ImageFeature() {}
         cv::KeyPoint& keypoint;
         cv::Mat       descriptor;
     protected:
         /* ctor */ ImageFeature(cv::KeyPoint& keypoint, cv::Mat descriptor)
             : keypoint(keypoint), descriptor(descriptor) {}
-        /* dtor */ virtual ~ImageFeature() {}
     };
 
     /**
@@ -52,8 +52,10 @@ namespace seq2map
             : m_keypoints(keypoints), m_descriptors(descriptors), m_normType(normType) {}
         /* ctor */ ImageFeatureSet() : m_normType(cv::NormTypes::NORM_L2) {}
         /* dtor */ virtual ~ImageFeatureSet() {}
-        inline ImageFeature GetFeature(const size_t idx);
+        ImageFeature GetFeature(const size_t idx);
+        //inline ImageFeature GetFeature(const size_t idx) const;
         inline ImageFeature operator[](size_t idx) { return GetFeature(idx); }
+        //inline ImageFeature operator[](size_t idx) const { return GetFeature(idx); }
         virtual bool Store(Path& path) const;
         virtual bool Restore(const Path& path);
         inline bool IsEmpty() const { return m_keypoints.empty(); }
@@ -170,12 +172,12 @@ namespace seq2map
     {
         enum Flag
         {
-            INLIER            = 1 << 0,
-            RATIO_TEST_FAILED = 1 << 1,
-            UNIQUENESS_FAILED = 1 << 2,
-            FMAT_TEST_FAILED  = 1 << 3,
-            SIGMA_TEST_FAILED = 1 << 4,
-            INLIER_RECOVERED  = 1 << 8 | INLIER
+            INLIER                 = 1 << 0,
+            RATIO_TEST_FAILED      = 1 << 1,
+            UNIQUENESS_FAILED      = 1 << 2,
+            SIGMA_TEST_FAILED      = 1 << 3,
+            GEOMETRIC_TEST_FAILED  = 1 << 4,
+            INLIER_RECOVERED       = 1 << 8 | INLIER
         };
 
         /* ctor */ FeatureMatch(size_t srcIdx, size_t dstIdx, float distance, int state = Flag::INLIER)
@@ -202,12 +204,14 @@ namespace seq2map
         cv::Mat Draw(const cv::Mat& src, const cv::Mat& dst);
         inline const ImageFeatureSet& From() const { return m_src; }
         inline const ImageFeatureSet& To()   const { return m_dst; }
+        inline const FeatureMatches& GetMatches() const { return m_matches; }
+        inline FeatureMatches& GetMatches() { return m_matches; }
     protected:
         /* ctor */ ImageFeatureMap(const ImageFeatureSet& src, const ImageFeatureSet& dst)
             : m_src(src), m_dst(dst) {};
         const ImageFeatureSet& m_src;
         const ImageFeatureSet& m_dst;
-        std::vector<FeatureMatch> m_matches;
+        FeatureMatches m_matches;
 
         friend class FeatureMatcher;
     };
@@ -246,19 +250,46 @@ namespace seq2map
         static void RunSymmetryTest(FeatureMatches& forward, const FeatureMatches& backward);
     };
 
-    class FundamentalMatFilter : public FeatureMatchFilter
+    class FundamentalMatrixFilter : public FeatureMatchFilter
     {
     public:
-        /* ctor */ FundamentalMatFilter(double epsilon = 1, double confidence = 0.99f, bool ransac = true)
+        /* ctor */ FundamentalMatrixFilter(double epsilon = 1, double confidence = 0.99f, bool ransac = true)
             : m_epsilon(epsilon), m_confidence(confidence), m_ransac(ransac) {}
-        /* dtor */ virtual ~FundamentalMatFilter() {}
+        /* dtor */ virtual ~FundamentalMatrixFilter() {}
         virtual bool Filter(ImageFeatureMap& map, Indices& inliers);
         inline cv::Mat GetFundamentalMatrix() const { return m_fmat.clone(); }
     protected:
-        double m_epsilon;
-        double m_confidence;
-        bool   m_ransac;
+        double  m_epsilon;
+        double  m_confidence;
+        bool    m_ransac;
         cv::Mat m_fmat;
+    };
+
+    class EssentialMatrixFilter : public FeatureMatchFilter
+    {
+    public:
+        /* ctor */ EssentialMatrixFilter(double epsilon = 1, double confidence = 0.99f, bool ransac = true, bool poseRecovery = false,
+                   const cv::Mat& K0 = cv::Mat::eye(3, 3, CV_32F), const cv::Mat&K1 = cv::Mat::eye(3, 3, CV_32F))
+                   : m_epsilon(epsilon), m_confidence(confidence), m_ransac(ransac), m_poseRecovery(poseRecovery) { SetCameraMatrices(K0, K1); }
+        /* dtor */ virtual ~EssentialMatrixFilter() {}
+        virtual bool Filter(ImageFeatureMap& map, Indices& inliers);
+        inline cv::Mat GetEssentialMatrix() const { return m_emat.clone(); }
+        inline void GetPose(cv::Mat& rmat, cv::Mat& tvec) const { rmat = m_rmat.clone(); tvec = m_tvec.clone(); };
+        inline void SetPoseRecovery(bool poseRecovery) { m_poseRecovery = poseRecovery; }
+        void SetCameraMatrices(const cv::Mat& K0, const cv::Mat& K1);
+    protected:
+        double  m_epsilon;
+        double  m_confidence;
+        bool    m_ransac;
+        bool    m_poseRecovery;
+        cv::Mat m_emat;
+        cv::Mat m_rmat;
+        cv::Mat m_tvec;
+    private:
+        static void BackprojectPoints(Points2F& pts, const cv::Mat& Kinv);
+        cv::Mat m_K0inv;
+        cv::Mat m_K1inv;
+
     };
 
     class SigmaFilter : public FeatureMatchFilter
