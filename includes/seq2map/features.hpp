@@ -236,6 +236,7 @@ namespace seq2map
         ImageFeatureMap MatchFeatures(const ImageFeatureSet& src, const ImageFeatureSet& dst);
         String Report() const;
     protected:
+        static cv::Mat NormaliseDescriptors(const cv::Mat& desc);
         FeatureMatches MatchDescriptors(const cv::Mat& src, const cv::Mat& dst, int metric);
 
         std::vector<FeatureMatchFilter*> m_filters;
@@ -269,7 +270,7 @@ namespace seq2map
     {
     public:
         /* ctor */ EssentialMatrixFilter(double epsilon = 1, double confidence = 0.99f, bool ransac = true, bool poseRecovery = false,
-                   const cv::Mat& K0 = cv::Mat::eye(3, 3, CV_32F), const cv::Mat&K1 = cv::Mat::eye(3, 3, CV_32F))
+                   const cv::Mat& K0 = cv::Mat::eye(3, 3, CV_64F), const cv::Mat&K1 = cv::Mat::eye(3, 3, CV_64F))
                    : m_epsilon(epsilon), m_confidence(confidence), m_ransac(ransac), m_poseRecovery(poseRecovery) { SetCameraMatrices(K0, K1); }
         /* dtor */ virtual ~EssentialMatrixFilter() {}
         virtual bool Filter(ImageFeatureMap& map, Indices& inliers);
@@ -286,7 +287,7 @@ namespace seq2map
         cv::Mat m_rmat;
         cv::Mat m_tvec;
     private:
-        static void BackprojectPoints(Points2F& pts, const cv::Mat& Kinv);
+        static void BackprojectPoints(Points2D& pts, const cv::Mat& Kinv);
         cv::Mat m_K0inv;
         cv::Mat m_K1inv;
 

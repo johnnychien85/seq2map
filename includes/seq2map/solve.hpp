@@ -17,7 +17,6 @@ namespace seq2map
         virtual cv::Mat Evaluate(const cv::Mat& x) const = 0;
         virtual cv::Mat ComputeJacobian(const cv::Mat& x, cv::Mat& y = cv::Mat()) const;
         virtual bool SetSolution(const cv::Mat& x) = 0;
-        static size_t GetHardwareConcurrency();
     protected:
         size_t m_conds;
         size_t m_vars;
@@ -33,6 +32,7 @@ namespace seq2map
         };
 
         typedef std::vector<JacobianSlice> JacobianSlices;
+        static size_t GetHardwareConcurrency();
         static void DiffThread(const LeastSquaresProblem* lsq, JacobianSlices& slices);
     };
 
@@ -42,17 +42,16 @@ namespace seq2map
     class LevenbergMarquardtAlgorithm
     {
     public:
-        LevenbergMarquardtAlgorithm(
-            const cv::TermCriteria& term = cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 100, 1e-3),
-            double eta = 10.0f,
-            bool verbose = false)
-            : m_term(term), m_eta(eta), m_verbose(verbose) {}
-        void SetVervbose(bool verbose) { m_verbose = verbose; }
+        LevenbergMarquardtAlgorithm(double eta = 10.0f, double lambda = 0.0f, bool verbose = false, 
+            const cv::TermCriteria& term = cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 100, 1e-6))
+            : m_eta(eta), m_lambda(lambda), m_verbose(verbose), m_term(term) {}
+        inline void SetVervbose(bool verbose) { m_verbose = verbose; }
         bool Solve(LeastSquaresProblem& problem, const cv::Mat& x0);
     protected:
-        cv::TermCriteria m_term;
         double m_eta;
+        double m_lambda;
         bool m_verbose;
+        cv::TermCriteria m_term;
     };
 }
 #endif // SOLVE_HPP

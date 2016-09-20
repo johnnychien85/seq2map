@@ -468,8 +468,12 @@ ImageFeatureMap FeatureMatcher::MatchFeatures(const ImageFeatureSet& src, const 
 
     int metric = src.GetNormType();
 
+    bool normalisation = metric != NORM_HAMMING && metric != NORM_HAMMING2;
+    cv::Mat srcDescriptors = normalisation ? NormaliseDescriptors(src.GetDescriptors()) : src.GetDescriptors();
+    cv::Mat dstDescriptors = normalisation ? NormaliseDescriptors(dst.GetDescriptors()) : dst.GetDescriptors();
+
     // Perform descriptor matching in feature space
-    map.m_matches = MatchDescriptors(src.GetDescriptors(), dst.GetDescriptors(), metric);
+    map.m_matches = MatchDescriptors(srcDescriptors, dstDescriptors, metric);
 
     if (map.m_matches.empty()) return map;
 
@@ -477,7 +481,7 @@ ImageFeatureMap FeatureMatcher::MatchFeatures(const ImageFeatureSet& src, const 
     if (m_symmetric)
     {
         FeatureMatches& forward = map.m_matches;
-        FeatureMatches backward = MatchDescriptors(dst.GetDescriptors(), src.GetDescriptors(), metric);
+        FeatureMatches backward = MatchDescriptors(dstDescriptors, srcDescriptors, metric);
 
         AutoSpeedometreMeasure measure(m_symmetryTestMetre, map.m_matches.size());
         RunSymmetryTest(forward, backward);
@@ -516,6 +520,17 @@ FeatureMatcher& FeatureMatcher::AddFilter(FeatureMatchFilter& filter)
     m_filters.push_back(&filter);
     return *this;
 };
+
+cv::Mat FeatureMatcher::NormaliseDescriptors(const cv::Mat& desc)
+{
+    cv::Mat normalised = cv::Mat(desc.rows, desc.cols, desc.type());
+    for (size_t i = 0; i < desc.rows; i++)
+    {
+        cv::normalize(desc.row(i), normalised.row(i));
+    }
+
+    return normalised;
+}
 
 FeatureMatches FeatureMatcher::MatchDescriptors(const Mat& src, const Mat& dst, int metric)
 {
@@ -607,7 +622,7 @@ bool FundamentalMatrixFilter::Filter(ImageFeatureMap& map, Indices& inliers)
         return false;
     }
 
-    Points2F pts0, pts1;
+    Points2D pts0, pts1;
     const KeyPoints& src = map.From().GetKeyPoints();
     const KeyPoints& dst = map.To().GetKeyPoints();
     size_t inliersSize = inliers.size();
@@ -678,7 +693,7 @@ bool EssentialMatrixFilter::Filter(ImageFeatureMap& map, Indices& inliers)
         return false;
     }
 
-    Points2F pts0, pts1;
+    Points2D pts0, pts1;
     const KeyPoints& src = map.From().GetKeyPoints();
     const KeyPoints& dst = map.To().  GetKeyPoints();
     size_t inliersSize = inliers.size();
@@ -700,7 +715,7 @@ bool EssentialMatrixFilter::Filter(ImageFeatureMap& map, Indices& inliers)
     BackprojectPoints(pts0, m_K0inv);
     BackprojectPoints(pts1, m_K1inv);
 
-    int method = m_ransac ? CV_FM_RANSAC : CV_FM_LMEDS;
+    int method = m_ransac ? RANSAC : LMEDS;
     m_emat = findEssentialMat(pts0, pts1, I, method, m_confidence, m_epsilon, mask);
 
     if (m_emat.empty())
@@ -733,7 +748,7 @@ bool EssentialMatrixFilter::Filter(ImageFeatureMap& map, Indices& inliers)
     return true;
 }
 
-void EssentialMatrixFilter::BackprojectPoints(Points2F& pts, const cv::Mat& Kinv)
+void EssentialMatrixFilter::BackprojectPoints(Points2D& pts, const cv::Mat& Kinv)
 {
     const double* Ki = Kinv.ptr<double>();
     
@@ -741,11 +756,11 @@ void EssentialMatrixFilter::BackprojectPoints(Points2F& pts, const cv::Mat& Kinv
     // Ki = | ki3 ki4 ki5 |
     //      \ ki6 ki7 ki8 /
 
-    BOOST_FOREACH (cv::Point2f& pt, pts)
+    BOOST_FOREACH (Point2D& pt, pts)
     {
-        float x = pt.x * Ki[0] + pt.y * Ki[1] + Ki[2];
-        float y = pt.x * Ki[3] + pt.y * Ki[4] + Ki[5];
-        float z = pt.x * Ki[6] + pt.y * Ki[7] + Ki[8];
+        double x = pt.x * Ki[0] + pt.y * Ki[1] + Ki[2];
+        double y = pt.x * Ki[3] + pt.y * Ki[4] + Ki[5];
+        double z = pt.x * Ki[6] + pt.y * Ki[7] + Ki[8];
 
         pt.x = x / z;
         pt.y = y / z;
@@ -774,11 +789,12 @@ bool SigmaFilter::Filter(ImageFeatureMap& map, Indices& inliers)
 
     // calculate k-sigma
     float ksigma = m_k * m_stdev;
+    float cutoff = m_mean + ksigma;
 
     Indices::iterator itr = inliers.begin();
     while (itr != inliers.end())
     {
-        bool outlier = std::abs(map[*itr].distance - m_mean) > ksigma;
+        bool outlier = map[*itr].distance > cutoff;
 
         if (outlier)
         {

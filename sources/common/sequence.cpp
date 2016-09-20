@@ -7,15 +7,15 @@ Camera::IntrinsicsFactory::IntrinsicsFactory()
     Register<BouguetModel>("BOUGUET");
 }
 
-void Camera::World2Image(const Points3F& worldPts, Points2F& imagePts) const
+void Camera::World2Image(const Points3D& worldPts, Points2D& imagePts) const
 {
-    Points3F cameraPts;
+    Points3D cameraPts;
 
     World2Camera(worldPts, cameraPts);
     Camera2Image(cameraPts, imagePts);
 }
 
-void Camera::Camera2Image(const Points3F& cameraPts, Points2F& imagePts) const
+void Camera::Camera2Image(const Points3D& cameraPts, Points2D& imagePts) const
 {
     if (!m_intrinsics)
     {

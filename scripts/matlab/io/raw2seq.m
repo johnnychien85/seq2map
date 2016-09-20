@@ -1,4 +1,4 @@
-function seq = loadSequence(seqPath)
+function seq = raw2seq(seqPath)
     if nargin < 1, seqPath = uigetdir(); end
 
     fprintf('Loading VO + LiDAR sequence [%s]..\n', seqPath);

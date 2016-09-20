@@ -2,8 +2,86 @@
 
 using namespace seq2map;
 
-const EuclideanTransform EuclideanTransform::Identity(cv::Mat::eye(3, 3, CV_32F), cv::Mat::zeros(3, 1, CV_32F));
-const BouguetModel BouguetModel::s_canonical(cv::Mat::eye(3, 3, CV_32F), cv::Mat::zeros(5, 1, CV_32F));
+const EuclideanTransform EuclideanTransform::Identity(cv::Mat::eye(3, 3, CV_64F), cv::Mat::zeros(3, 1, CV_64F));
+const BouguetModel BouguetModel::s_canonical(cv::Mat::eye(3, 3, CV_64F), cv::Mat::zeros(5, 1, CV_64F));
+
+namespace seq2map
+{
+    cv::Mat eucl2homo(const cv::Mat& x, bool rowMajor)
+    {
+        assert(x.channels() == 1);
+        cv::Mat y;
+
+        if (rowMajor)
+        {
+            y = cv::Mat(x.rows, x.cols + 1, x.type());
+            x.copyTo(y.colRange(0, x.cols));
+            y.col(x.cols).setTo(1);
+        }
+        else
+        {
+            y = cv::Mat(x.rows + 1, x.cols, x.type());
+            x.copyTo(y.rowRange(0, x.rows));
+            y.row(x.rows).setTo(1);
+        }
+
+        return y;
+    }
+
+    cv::Mat homo2eucl(const cv::Mat& x, bool rowMajor)
+    {
+        assert(x.channels() == 1);
+        cv::Mat y;
+
+        if (rowMajor)
+        {
+            assert(x.cols > 1);
+            size_t n = x.cols;
+            y = cv::Mat::zeros(x.rows, n - 1, x.type());
+
+            for (size_t j = 0; j < y.cols; j++)
+            {
+                y.col(j) = x.col(j) / x.col(n - 1);
+            }
+        }
+        else
+        {
+            assert(x.rows > 1);
+            size_t n = x.rows;
+            y = cv::Mat::zeros(x.rows, n - 1, x.type());
+            
+            for (size_t i = 0; i < y.rows; i++)
+            {
+                y.row(i) = x.row(i) / x.row(n - 1);
+            }
+        }
+
+        return y;
+    }
+
+    cv::Mat skewsymat(const cv::Mat& x)
+    {
+        assert(x.total() == 3);
+
+        cv::Mat x64f;
+        x.convertTo(x64f, CV_64F);
+
+        // normalisation to make sure ||x|| = 1
+        x64f /= norm(x64f);
+
+        double* v = x64f.ptr<double>();
+
+        cv::Mat y64f = (cv::Mat_<double>(3, 3) <<
+             0.0f, -v[2],  v[1],
+             v[2],  0.0f, -v[0],
+            -v[1],  v[0],  0.0f);
+
+        cv::Mat y;
+        y64f.convertTo(y, x.type());
+
+        return y;
+    }
+}
 
 EuclideanTransform::EuclideanTransform(const cv::Mat& rotation, const cv::Mat& tvec) : EuclideanTransform()
 {
@@ -29,18 +107,18 @@ EuclideanTransform EuclideanTransform::operator>>(const EuclideanTransform& tfor
     return tform << *this;
 }
 
-void EuclideanTransform::Apply(Point3F& pt) const
+void EuclideanTransform::Apply(Point3D& pt) const
 {
-    const float* m = m_matrix.ptr<float>();
+    const double* m = m_matrix.ptr<double>();
 
-    pt = Point3F(
+    pt = Point3D(
         m[0] * pt.x + m[1] * pt.y + m[2]  * pt.z + m[3],
         m[4] * pt.x + m[5] * pt.y + m[6]  * pt.z + m[7],
         m[8] * pt.x + m[9] * pt.y + m[10] * pt.z + m[11]
     );
 }
 
-void EuclideanTransform::Apply(Points3F& pts) const
+void EuclideanTransform::Apply(Points3D& pts) const
 {
     cv::Mat G;
     cv::convertPointsToHomogeneous(pts, G);
@@ -70,10 +148,10 @@ bool EuclideanTransform::SetRotationVector(const cv::Mat& rvec)
         return false;
     }
 
-    cv::Mat rvec32f, rmat;
-    rvec.convertTo(rvec32f, CV_32F);
+    cv::Mat _rvec, rmat;
+    rvec.convertTo(_rvec, m_rvec.type());
 
-    cv::Rodrigues(m_rvec = rvec32f, rmat);
+    cv::Rodrigues(m_rvec = _rvec, rmat);
     rmat.copyTo(m_rmat);
 
     return true;
@@ -87,9 +165,9 @@ bool EuclideanTransform::SetTranslation(const cv::Mat& tvec)
         return false;
     }
 
-    cv::Mat tvec32f;
-    tvec.convertTo(tvec32f, CV_32F);
-    tvec32f.reshape(0, 3).copyTo(m_tvec);
+    cv::Mat _tvec;
+    tvec.convertTo(_tvec, m_tvec.type());
+    _tvec.reshape(0, 3).copyTo(m_tvec);
 
     return true;
 }
@@ -130,6 +208,11 @@ cv::Mat EuclideanTransform::GetTransformMatrix(bool sqrMat, bool preMult) const
     return preMult ? matrix : matrix.t();
 }
 
+cv::Mat EuclideanTransform::GetEssentialMatrix() const
+{
+    return skewsymat(m_tvec) * m_rmat;
+}
+
 EuclideanTransform EuclideanTransform::GetInverse() const
 {
     cv::Mat Rt = m_rmat.t();
@@ -168,29 +251,99 @@ size_t Motion::Update(const EuclideanTransform& tform)
     return m_tforms.size();
 }
 
-EuclideanTransform Motion::GetGlobalTransform(size_t to) const
+bool Motion::Store(Path& path) const
 {
-    return m_tforms[to];
+    std::ofstream of(path.string(), std::ios::out);
+    BOOST_FOREACH (const EuclideanTransform& tform, m_tforms)
+    {
+        cv::Mat M = tform.GetTransformMatrix();
+        double* m = M.ptr<double>();
+
+        for (size_t i = 0; i < 12; i++) of << m[i] << (i < 11 ? " " : "");
+        of << std::endl;
+    }
+
+    return true;
 }
 
-EuclideanTransform Motion::GetLocalTransform(size_t from, size_t to) const
+bool Motion::Restore(const Path& path)
 {
-    return m_tforms[from].GetInverse() >> m_tforms[to];
-}
+    m_tforms.clear();
 
+    std::ifstream rf(path.string(), std::ios::in);
+
+    if (!rf.is_open())
+    {
+        E_ERROR << "error reading " << path;
+        return false;
+    }
+
+    for (String line; std::getline(rf, line); /**/)
+    {
+        std::stringstream ss(line);
+        std::vector<double> m(
+            (std::istream_iterator<double>(ss)), // begin
+            (std::istream_iterator<double>()));  // end
+
+        if (m.size() != 12)
+        {
+            E_ERROR << "error parsing " << path;
+            E_ERROR << "line " << (m_tforms.size() + 1) << ": " << line;
+
+            return false;
+        }
+
+        EuclideanTransform tform;
+        tform.SetTransformMatrix(cv::Mat(m).reshape(1, 3));
+
+        m_tforms.push_back(tform);
+    }
+
+    return true;
+}
 
 cv::Mat MotionEstimation::Initialise()
 {
-    m_conds = m_pnp.GetSize();
+    if (0 /*m_pnp.GetSize() > m_epi.GetSize()*/)
+    {
+        cv::Mat rvec, tvec;
+        cv::solvePnP(m_pnp.From(), m_pnp.To(), m_cameraMatrix, cv::Mat(), rvec, tvec, false, CV_EPNP);
+        m_transform.SetRotationVector(rvec);
+        m_transform.SetTranslation(tvec);
+    }
+    else
+    {
+        cv::Mat E = cv::findEssentialMat(m_epi.From(), m_epi.To(), m_cameraMatrix);
+        cv::Mat rmat, tvec;
+        cv::recoverPose(E, m_epi.From(), m_epi.To(), m_cameraMatrix, rmat, tvec);
+        m_transform.SetRotationMatrix(rmat);
+        m_transform.SetTranslation(tvec);
+    }
 
-    cv::Mat x0 = cv::Mat::zeros(6, 1, CV_32F);
+    cv::Mat x0 = cv::Mat::zeros(6, 1, CV_64F);
     m_transform.GetRotationVector().copyTo(x0.rowRange(0, 3));
     m_transform.GetTranslation().copyTo(x0.rowRange(3, 6));
 
-    cv::Mat x64f;
-    x0.convertTo(x64f, CV_64F);
+    m_invCameraMatrix = m_cameraMatrix.inv();
+    m_conds = GetEvaluationSize();
 
-    return x64f;
+    //cv::Mat W_pnp = cv::Mat(m_wpnp);
+    //cv::Mat(W_pnp / cv::sum(W_pnp)[0] * m_wpnp.size()).copyTo(W_pnp);
+
+    //cv::Mat x64f;
+    //x0.convertTo(x64f, CV_64F);
+
+    return x0; //x64f;
+}
+
+size_t MotionEstimation::GetEvaluationSize() const
+{
+    size_t m = 0;
+
+    if (m_alpha < 1) m += m_separatedRpe ? m_pnp.GetSize() * 2 : m_pnp.GetSize();
+    if (m_alpha > 0) m += m_sampsonError ? m_epi.GetSize() : m_epi.GetSize() * 2;
+
+    return m;
 }
 
 cv::Mat MotionEstimation::Evaluate(const cv::Mat& x) const
@@ -199,22 +352,91 @@ cv::Mat MotionEstimation::Evaluate(const cv::Mat& x) const
     transform.SetRotationVector(x.rowRange(0, 3));
     transform.SetTranslation(x.rowRange(3, 6));
 
-    Points3F pts3d = m_pnp.From();
-    Points2F pts2d(m_pnp.GetSize());
+    double a_rpe = 1 - m_alpha;
+    double a_epi = m_alpha;
 
-    //transform.Apply(pts3d);
+    a_rpe = a_rpe; ///** (m_pnp.GetSize() + m_epi.GetSize())*/ / m_pnp.GetSize();
+    a_epi = a_epi; ///** (m_pnp.GetSize() + m_epi.GetSize())*/ / m_epi.GetSize();
+
+    assert(a_rpe >= 0 && a_epi >= 0);
+
+    cv::Mat rpe = a_rpe > 0 ? a_rpe * EvalReprojectionConds(transform) : cv::Mat();
+    cv::Mat epi = a_epi > 0 ? a_epi * EvalEpipolarConds(transform)     : cv::Mat();
+
+    if (rpe.empty()) return epi;
+    if (epi.empty()) return rpe;
+
+    cv::Mat y;
+    cv::vconcat(rpe, epi, y);
+
+    return y;
+}
+
+cv::Mat MotionEstimation::EvalEpipolarConds(const EuclideanTransform& transform) const
+{
+    cv::Mat x0 = cv::Mat(m_epi.From()).reshape(1);
+    cv::Mat x1 = cv::Mat(m_epi.To()).reshape(1);
+
+    cv::Mat K_inv = m_invCameraMatrix;
+    cv::Mat F = K_inv.t() * transform.GetEssentialMatrix() * K_inv;
+    cv::Mat Fx0 = eucl2homo(x0) * F.t();
+    cv::Mat Fx1 = eucl2homo(x1) * F;
+    cv::Mat nn0 = Fx0.col(0).mul(Fx0.col(0)) + Fx0.col(1).mul(Fx0.col(1));
+    cv::Mat nn1 = Fx1.col(0).mul(Fx1.col(0)) + Fx1.col(1).mul(Fx1.col(1));
+    cv::Mat xFx = Fx0.col(0).mul(x1.col(0)) + Fx0.col(1).mul(x1.col(1)) + Fx0.col(2);
+
+    if (m_sampsonError)
+    {
+        // Sampson Approximation:
+        //
+        //              x0' * F * x1
+        // ---------------------------------------
+        // sqrt(Fx00^2 + Fx01^2 + Fx10^2 + Fx11^2)
+
+        cv::Mat nn; cv::sqrt(nn0 + nn1, nn);
+
+        return xFx.mul(1 / nn);
+    }
+    else
+    {
+        // Symmetric Geometric Error
+        //
+        //        x0' * F * x1              x0' * F * x1
+        // ( ---------------------- , ---------------------- )
+        //    sqrt(Fx00^2 + Fx01^2)    sqrt(Fx10^2 + Fx11^2)
+
+        cv::Mat gerr = cv::Mat(xFx.rows, 2, xFx.type());
+        cv::sqrt(nn0, nn0);
+        cv::sqrt(nn1, nn1);
+
+        gerr.col(0) = xFx.mul(1 / nn0);
+        gerr.col(1) = xFx.mul(1 / nn1);
+        
+        return gerr.reshape(1, gerr.total());
+    }
+}
+
+cv::Mat MotionEstimation::EvalReprojectionConds(const EuclideanTransform& transform) const
+{
+    Points3D pts3d = m_pnp.From();
+    Points2D pts2d(m_pnp.GetSize());
+
     cv::projectPoints(pts3d, transform.GetRotationVector(), transform.GetTranslation(), m_cameraMatrix, cv::Mat(), pts2d);
 
     cv::Mat rpe = cv::Mat(cv::Mat(pts2d) - cv::Mat(m_pnp.To())).reshape(1);
+
+    rpe.col(0) = rpe.col(0).mul(cv::Mat(m_wpnp));
+    rpe.col(1) = rpe.col(1).mul(cv::Mat(m_wpnp));
+
+    if (m_separatedRpe)
+    {
+        return rpe.reshape(1, rpe.total());
+    }
+
     cv::multiply(rpe, rpe, rpe);
     cv::sqrt(cv::Mat(rpe.col(0) + rpe.col(1)), rpe);
 
-    //x3dj = cv::Mat(x3dj.rowRange(0, 3).t()).reshape(3);
-    //Points2F x2dj2(x2dj.size());
-    //cv::projectPoints(x3dj, Mij.GetRotationVector(), Mij.GetTranslation(), K, cv::Mat(), x2dj2);
-    //x3dj = x3dj.reshape(1);
-
-    rpe.convertTo(rpe, CV_64F);
+    //rpe.convertTo(rpe, CV_64F);
 
     return rpe;
 }
@@ -223,8 +445,8 @@ bool MotionEstimation::SetSolution(const cv::Mat& x)
 {
     if (x.rows != 6 || x.cols != 1) return false;
 
-    cv::Mat x32f;
-    x.convertTo(x32f, CV_32F);
+    //cv::Mat x32f;
+    //x.convertTo(x32f, CV_32F);
 
     m_transform.SetRotationVector(x.rowRange(0, 3));
     m_transform.SetTranslation(x.rowRange(3, 6));
@@ -232,10 +454,33 @@ bool MotionEstimation::SetSolution(const cv::Mat& x)
     return true;
 }
 
-void OptimalTriangulator::Triangulate(const PointMap2Dto2D& map, Points3F& pts)
+bool MotionEstimation::Store(Path& path) const
 {
+    std::ofstream of(path.string(), std::ios::out);
+
+    of << mat2string(m_cameraMatrix, "egomo.K") << std::endl;
+    of << mat2string(m_invCameraMatrix, "egomo.K_inv") << std::endl;
+    of << mat2string(cv::Mat(m_pnp.From()).reshape(1), "egomo.pnp.src") << std::endl;
+    of << mat2string(cv::Mat(m_pnp.To()  ).reshape(1), "egomo.pnp.dst") << std::endl;
+    of << mat2string(cv::Mat(m_wpnp      ).reshape(1), "egomo.pnp.w")   << std::endl;
+    of << mat2string(cv::Mat(m_upnp      ).reshape(1), "egomo.pnp.uid") << std::endl;
+    of << mat2string(cv::Mat(m_epi.From()).reshape(1), "egomo.epi.src") << std::endl;
+    of << mat2string(cv::Mat(m_epi.To()  ).reshape(1), "egomo.epi.dst") << std::endl;
+    of << mat2string(cv::Mat(m_uepi      ).reshape(1), "egomo.epi.uid") << std::endl;
+    of << mat2string(m_transform.GetTransformMatrix(), "egomo.M") << std::endl;
+
+    return true;
+}
+
+void OptimalTriangulator::Triangulate(const PointMap2Dto2D& map, Points3D& pts, std::vector<double>& err)
+{
+    size_t n = map.GetSize();
+
     pts.clear();
-    pts.resize(map.GetSize());
+    pts.resize(n);
+
+    err.clear();
+    err.resize(n);
 
     cv::Mat x4h, x3d(pts);
     cv::triangulatePoints(m_projMatrix0, m_projMatrix1, map.From(), map.To(), x4h);
@@ -243,15 +488,93 @@ void OptimalTriangulator::Triangulate(const PointMap2Dto2D& map, Points3F& pts)
     x3d = x3d.reshape(1);
 
     // convert homogeneous coordinates to Euclidean
-    x3d.col(0) = (x4h.row(0) / x4h.row(3)).t();
-    x3d.col(1) = (x4h.row(1) / x4h.row(3)).t();
-    x3d.col(2) = (x4h.row(2) / x4h.row(3)).t();
+    homo2eucl(x4h.t()).copyTo(x3d);
+
+    for (size_t i = 0; i < n; i++)
+    {
+        err[i] = 0.0f;
+    }
+}
+
+void MidPointTriangulator::DecomposeProjMatrix(const cv::Mat& P, cv::Mat& KRinv, cv::Mat& c)
+{
+    cv::Mat KR = P.rowRange(0, 3).colRange(0, 3);
+    KRinv = KR.inv();
+    c = -KRinv * P.rowRange(0, 3).col(3);
+}
+
+void MidPointTriangulator::Triangulate(const PointMap2Dto2D& map, Points3D& pts, std::vector<double>& err)
+{
+    size_t n = map.GetSize();
+
+    pts.clear();
+    pts.resize(n);
+
+    err.clear();
+    err.resize(n);
+
+    cv::Mat x3d = cv::Mat(pts).reshape(1);
+
+    cv::Mat KRinv0, c0;
+    cv::Mat KRinv1, c1;
+    
+    DecomposeProjMatrix(m_projMatrix0, KRinv0, c0);
+    DecomposeProjMatrix(m_projMatrix1, KRinv1, c1);
+    
+    //std::ofstream of("tri.m");
+    //of << mat2string(cv::Mat(map.From()).reshape(1), "x0") << std::endl;
+    //of << mat2string(cv::Mat(map.To())  .reshape(1), "x1") << std::endl;
+
+    cv::Mat t = c1 - c0;
+    cv::Mat m = c0 + c1;
+    cv::Mat x0 = eucl2homo(cv::Mat(map.From()).reshape(1)) * KRinv0.t();
+    cv::Mat x1 = eucl2homo(cv::Mat(map.To()  ).reshape(1)) * KRinv1.t();
+
+    //x0.convertTo(x0, CV_64F);
+    //x1.convertTo(x1, CV_64F);
+    //t.convertTo(t, CV_64F);
+    //m.convertTo(m, CV_64F);
+   
+    //of << mat2string(m_projMatrix0, "P0") << std::endl;
+    //of << mat2string(m_projMatrix1, "P1") << std::endl;
+    //of << mat2string(x0, "x0_h") << std::endl;
+    //of << mat2string(x1, "x1_h") << std::endl;
+
+    for (size_t i = 0; i < map.GetSize(); i++)
+    {
+        cv::Mat Bt = cv::Mat(2, 3, x0.type());
+        x0.row(i).copyTo(Bt.row(0));
+        x1.row(i).copyTo(Bt.row(1));
+
+        cv::Mat At = Bt.clone();
+        At.row(1) = -Bt.row(1);
+
+        cv::Mat A = At.t();
+        cv::Mat B = Bt.t();
+        cv::Mat k = (At * A).inv() * At * t;
+        cv::Mat g = (B * k + m) * 0.5f;
+        cv::Mat d = (A * k - t);
+
+        //g.convertTo(g, CV_32F);
+
+        //if (i == 0)
+        //{
+        //    of << mat2string(A, "A0") << std::endl;
+        //    of << mat2string((At*A).inv(), "A0Ai") << std::endl;
+        //    of << mat2string(k, "k0") << std::endl;
+        //}
+
+        x3d.row(i) = g.t();
+        err[i] = cv::norm(d);
+    }
+
+    //of << mat2string(x3d, "g") << std::endl;
 }
 
 BouguetModel::BouguetModel(const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs)
 {
     if (!SetCameraMatrix(cameraMatrix)) E_ERROR << "error setting camera matrix";
-    if (!SetDistCoeffs(distCoeffs))     E_ERROR << "error setting distortion coefficients";
+    if (!SetDistCoeffs  (distCoeffs  )) E_ERROR << "error setting distortion coefficients";
 }
 
 bool BouguetModel::SetCameraMatrix(const cv::Mat& cameraMatrix)
@@ -261,7 +584,9 @@ bool BouguetModel::SetCameraMatrix(const cv::Mat& cameraMatrix)
         E_ERROR << "given matrix has wrong size of " << size2string(cameraMatrix.size()) << " rather than 3x3";
         return false;
     }
-    m_cameraMatrix = cameraMatrix.clone();
+
+    cameraMatrix.convertTo(m_cameraMatrix, m_cameraMatrix.empty() ? cameraMatrix.type() : m_cameraMatrix.type());
+
     return true;
 }
 
@@ -272,7 +597,7 @@ bool BouguetModel::SetDistCoeffs(const cv::Mat& distCoeffs)
     case 4:
     case 5:
     case 8:
-        m_distCoeffs = distCoeffs.clone();
+        distCoeffs.convertTo(m_distCoeffs, m_distCoeffs.empty() ? distCoeffs.type() : m_distCoeffs.type());
         return true;
     default:
         m_distCoeffs = s_canonical.m_distCoeffs.clone();
@@ -284,9 +609,8 @@ cv::Mat BouguetModel::MakeProjectionMatrix(const EuclideanTransform& pose) const
 {
     cv::Mat P = cv::Mat::eye(3, 4, m_cameraMatrix.type());
     m_cameraMatrix.copyTo(P.rowRange(0, 3).colRange(0, 3));
-    P = P * pose.GetTransformMatrix(true, true);
 
-    return P;
+    return cv::Mat(P * pose.GetTransformMatrix(true, true));
 }
 
 bool BouguetModel::Store(cv::FileStorage & fs) const
@@ -307,7 +631,7 @@ bool BouguetModel::Restore(const cv::FileNode & fn)
     return SetCameraMatrix(cameraMatrix) && SetDistCoeffs(distCoeffs);
 }
 
-void BouguetModel::Project(const Points3F& pts3d, Points2F& pts2d) const
+void BouguetModel::Project(const Points3D& pts3d, Points2D& pts2d) const
 {
     cv::projectPoints(pts3d, cv::Mat(), cv::Mat(), m_cameraMatrix, m_distCoeffs, pts2d);
 }

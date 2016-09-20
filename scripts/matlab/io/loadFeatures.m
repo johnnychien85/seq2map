@@ -43,7 +43,7 @@ function F = loadFeatures(cam,frame)
 	% load feature descriptors
 	precision = [descriptorType '=>' descriptorType];
 	F.V = fread(f,[descriptorSize,numFeatures],precision)';
-	
+
 	fclose(f);
 end
 

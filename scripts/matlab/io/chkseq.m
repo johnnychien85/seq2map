@@ -1,4 +1,4 @@
-function playSequence(seq,varargin)
+function chkseq(seq,varargin)
     po = parseArgs(seq,varargin{:});
     cam = seq.cam(po.Camera);
 

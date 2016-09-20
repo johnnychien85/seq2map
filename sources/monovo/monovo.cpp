@@ -49,39 +49,57 @@ int main(int argc, char* argv[])
         
         float fu = K.at<float>(0, 0);
         float fv = K.at<float>(1, 1);
-        float epsilon = 0.1f / ((fu + fv) * 0.5f);
+        float epsilon = 0.2f / ((fu + fv) * 0.5f);
 
         FeatureMatcher matcher;
-        EssentialMatrixFilter ematFilter(epsilon, 0.995f, true, true, K, K);
-        //FundamentalMatrixFilter fmatFilter;
-        SigmaFilter sigmaFilter;
-        //matcher.AddFilter(fmatFilter).AddFilter(sigmaFilter);
-        matcher.AddFilter(ematFilter).AddFilter(sigmaFilter);
+        EssentialMatrixFilter ematFilter(epsilon, 0.995, true, true, K, K);
+        //FundamentalMatrixFilter fmatFilter(epsilon, 0.995, false);
+        SigmaFilter sigmaFilter(0.5f);
 
-        size_t t0 = 0;
+        matcher.AddFilter(ematFilter).AddFilter(sigmaFilter);
+        //matcher.AddFilter(sigmaFilter).AddFilter(fmatFilter);
+
+        size_t t0 = 2;
         size_t tn = cam.GetFrames() - 1;
         size_t frames = tn - t0 + 1;
 
         Motion motion;
         motion.Update(EuclideanTransform::Identity); // initialise t0 as the referenced frame
 
+        Motion ground;
+        ground.Restore("ground.txt");
+
         Points3F Gi, Gj;
+        std::vector<double> Wi, Wj;
+        std::vector<int>    Ui, Uj;
+        int uid = 0;
 
         for (size_t t = t0; t < tn; t++)
         {
             size_t ti = t;
             size_t tj = t + 1;
-
             Frame Fi = cam[ti];
             Frame Fj = cam[tj];
+            MotionEstimation egomo(K, 0.5f, true, false);
+            EuclideanTransform Mij;
+
+            //E_INFO << ti << " -> " << tj << " : " << matcher.Report();
 
             if (Fi.features.IsEmpty() || Fj.features.IsEmpty())
             {
                 E_ERROR << "error reading features for frames " << ti << " -> " << tj;
             }
 
-            if (t == t0) Gi = Points3F(Fi.features.GetSize(), cv::Point3f(0, 0, 0));
+            if (ti == t0)
+            {
+                Gi = Points3F(Fi.features.GetSize(), cv::Point3f(0, 0, 0));
+                Wi = std::vector<double>(Gi.size(), 0.0f);
+                Ui = std::vector<int>(Gi.size(), 0);
+            }
+
             Gj = Points3F(Fj.features.GetSize(), cv::Point3f(0, 0, 0));
+            Wj = std::vector<double>(Gj.size(), 0.0f);
+            Uj = std::vector<int>(Gj.size(), 0);
 
             ImageFeatureMap fmap = matcher.MatchFeatures(Fi.features, Fj.features);
 
@@ -91,92 +109,91 @@ int main(int argc, char* argv[])
                 cv::waitKey(1);
             }
 
-            E_INFO << ti << " -> " << tj << " : " << matcher.Report();
-
-            MotionEstimation egomo(K);
-            EuclideanTransform Mij;
-            
-            FeatureMatches knowns;
-
             BOOST_FOREACH (FeatureMatch& match, fmap.GetMatches())
             {
                 if (!(match.state & FeatureMatch::Flag::INLIER)) continue;
 
                 Point3F x3di = Gi[match.srcIdx];
+                double  w3di = Wi[match.srcIdx];
                 Point2F x2di = Fi.features[match.srcIdx].keypoint.pt;
                 Point2F x2dj = Fj.features[match.dstIdx].keypoint.pt;
+                size_t  uidi = Ui[match.srcIdx];
+                size_t  uidj = uidi > 0 ? uidi : ++uid;
 
-                egomo.AddObservation(x2di, x2dj);
+                Uj[match.dstIdx] = uidj;
 
-                if (x3di.z > 0 && x3di.z < 50)
+                egomo.AddObservation(uidj, x2di, x2dj);
+
+                if (x3di.z > 0 /*&& x3di.z < 50*/)
                 {
-                    egomo.AddObservation(x3di, x2dj);
-                    knowns.push_back(match);
+                    egomo.AddObservation(uidj, x3di, x2dj, w3di);
                 }
             }
 
             if (t == t0)
             {
-                cv::Mat rmat, tvec;
-                ematFilter.GetPose(rmat, tvec);
+                if (ground.IsEmpty())
+                {
+                    cv::Mat rmat, tvec;
+                    ematFilter.GetPose(rmat, tvec);
 
-                Mij.SetRotationMatrix(rmat);
-                Mij.SetTranslation(tvec);
+                    Mij.SetRotationMatrix(rmat);
+                    Mij.SetTranslation(tvec);
+                }
+                else
+                {
+                    Mij = ground.GetLocalTransform(ti, tj);
+                }
 
                 ematFilter.SetPoseRecovery(false);
             }
             else
             {
-                LevenbergMarquardtAlgorithm levmar;
-                levmar.SetVervbose(true);
-                bool solved = levmar.Solve(egomo, egomo.Initialise());
+                LevenbergMarquardtAlgorithm levmar(10.0f, 0.0f, false);
 
-                if (!solved)
+                if (!levmar.Solve(egomo, egomo.Initialise()))
                 {
-                    E_ERROR << "egomotion estimation failed";
+                    E_ERROR << "ego-motion estimation failed";
                     return false;
                 }
 
                 Mij = egomo.GetTransform();
-
-                //cv::Mat rvec, tvec;
-                //cv::solvePnP(pts3, pts2, K, cv::Mat(), rvec, tvec, false, CV_EPNP);
-
-                //Mij.SetRotationVector(rvec);
-                //Mij.SetTranslation(tvec);
             }
 
-            OptimalTriangulator triangulator(
+            E_INFO << ti << " -> " << tj << " : " << " #PnP=" << egomo.GetReprojectionConds().GetSize() << " #epi=" << egomo.GetEpipolarConds().GetSize();
+
+            //OptimalTriangulator
+            //MidPointTriangulator
+            MidPointTriangulator triangulator(
                 intrinsics->MakeProjectionMatrix(EuclideanTransform::Identity),
                 intrinsics->MakeProjectionMatrix(Mij));
 
-            Points3F x3dj;
-            triangulator.Triangulate(egomo.GetEpipolarConds(), x3dj);
-            
-            /*
-            if (t == 6)
-            {
-                std::ofstream of("check.m", std::ofstream::out);
-                of << mat2string(Mij.GetTransformMatrix(), "M") << std::endl;
-                of << mat2string(K, "K") << std::endl;
+            Points3D x3dj;
+            std::vector<double> e3dj;
+            triangulator.Triangulate(egomo.GetEpipolarConds(), x3dj, e3dj);
 
-                of << mat2string(cv::Mat(x3di).reshape(1), "x0") << std::endl;
-                of << mat2string(cv::Mat(x2di).reshape(1), "y0") << std::endl;
-                of << mat2string(cv::Mat(x2dj).reshape(1), "y1") << std::endl;
-                of << mat2string(cv::Mat(x2dj2).reshape(1), "r1") << std::endl;
-
-                //of << mat2string(cv::Mat(Gi).reshape(1), "Gi") << std::endl;
-                //of << mat2string(Mij.GetTransformMatrix(), "M") << std::endl;
-                //Mij.Apply(Gi);
-                //of << mat2string(cv::Mat(Gi).reshape(1), "Gj") << std::endl;
-            }
-            else
-            {
-                //Mij.Apply(Gi);
-            }
-            */
+            std::stringstream ss;
+            ss << "egomo_t" << ti << ".m";
+            egomo.Store(Path(ss.str()));
             
-            E_INFO << mat2string(Mij.GetTransformMatrix().t(), "", 2);
+            E_INFO << mat2string(Mij.GetTransformMatrix().t(), "M", 3);
+            
+            if (!ground.IsEmpty())
+            {
+                EuclideanTransform M0ij = ground.GetLocalTransform(ti, tj);
+                EuclideanTransform diff = M0ij - Mij;
+
+                double drift = (100.0f * cv::norm(diff.GetTranslation()) / cv::norm(M0ij.GetTranslation()));
+
+                E_INFO << mat2string(M0ij.GetTransformMatrix().t(), "G", 3);
+                E_INFO << "drift: " << drift << "% over " << cv::norm(M0ij.GetTranslation()) << "cm";
+
+                if (drift > 2.5f)
+                {
+                    //E_FATAL << "GAME OVER";
+                    //return -1;
+                }
+            }
 
             //cv::triangulatePoints(Pi, Pj, x2di, x2dj, x3dj);
             size_t i = 0;
@@ -184,28 +201,31 @@ int main(int argc, char* argv[])
             {
                 if (!(match.state & FeatureMatch::Flag::INLIER)) continue;
 
-                cv::Point3f gi = Gi[match.srcIdx];
-                cv::Point3f gj = x3dj[i];
+                Point3D gi = Gi[match.srcIdx];
+                double  wi = Wi[match.srcIdx];
 
-                bool initialised = gi.z > 0 && gi.z < 50;
-                
-                if (initialised) Mij.Apply(gi);
-                
-                Gj[match.dstIdx] = initialised ? cv::Point3f(
-                    (gi.x + gj.x) * 0.5f,
-                    (gi.y + gj.y) * 0.5f,
-                    (gi.z + gj.z) * 0.5f) : gj;
+                Point3D gj = x3dj[i];
+                double  wj = 1 / (1 + e3dj[i]);
 
-                //if (initialised) E_INFO << (gi.z - gj.z);
+                //double wj = wi == 0 ? 1 : (1 / (1 + cv::norm(cv::Mat(gi) - cv::Mat(gj))));
 
-                //E_INFO << "[" << x2dj[i].x << "," << x2dj[i].y << "] -> [" << x2dj2[i].x << "," << x2dj2[i].y << "]";
-                //if (initialised) E_INFO << "[" << gi.x << "," << gi.y << "," << gi.z << "] -> [" << x3dj.at<float>(i, 0) << "," << x3dj.at<float>(i, 1) << "," << x3dj.at<float>(i, 2) << "]";
+                Wj[match.dstIdx] = wi + wj;
+
+                Mij.Apply(gi);
+                Mij.Apply(gj);
+
+                Gj[match.dstIdx] = Point3D(
+                    (wi * gi.x + wj * gj.x) / Wj[match.dstIdx],
+                    (wi * gi.y + wj * gj.y) / Wj[match.dstIdx],
+                    (wi * gi.z + wj * gj.z) / Wj[match.dstIdx]);
 
                 i++;
             }
 
             motion.Update(Mij);
             Gi = Gj;
+            Wi = Wj;
+            Ui = Uj;
         }
     }
     catch (std::exception& ex)

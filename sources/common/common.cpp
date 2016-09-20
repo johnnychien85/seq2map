@@ -313,7 +313,7 @@ namespace seq2map
         boost::timer::cpu_times elapsed = m_timer.elapsed();
 
         return (double) boost::chrono::duration_cast<boost::chrono::seconds>(
-            boost::chrono::nanoseconds(elapsed.system + elapsed.user)).count();
+            boost::chrono::nanoseconds(elapsed.wall)).count();
     }
 
     String Speedometre::ToString() const

@@ -63,7 +63,7 @@ bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& problem, const cv::
 {
     assert(m_eta > 1.0f);
 
-    double lambda = 0;
+    double lambda = m_lambda;
     bool converged = false;
     std::vector<double> derr;
 
@@ -72,6 +72,12 @@ bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& problem, const cv::
     double  e_best = rms(y_best);
 
     size_t updates = 0; // iteration number
+    
+    if (m_verbose)
+    {
+        E_INFO << std::setw(6) << std::right << "Update" << std::setw(12) << std::right << "RMSE" << std::setw(16) << std::right << "lambda" << std::setw(16) << std::right << "Rel. Step Size" << std::setw(16) << std::right << "Rel. Error Drop";
+        E_INFO << std::setw(6) << std::right << updates << std::setw(12) << std::right << e_best << std::setw(16) << std::right << lambda;
+    }
 
     try
     {
@@ -83,54 +89,63 @@ bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& problem, const cv::
 
             lambda = lambda == 0 ? 1e-3 * cv::mean(H.diag())[0] : lambda;
 
-            // augmented normal equations
-            cv::Mat A = H + lambda * cv::Mat::diag(H.diag()); // or A = N + lambda*eye(d);
-            cv::Mat x_delta = A.inv() * -D; // x_delta =  A \ -D;
+            bool better = false;
+            double derrRatio, stepRatio;
 
-            cv::Mat x_try = x_best + x_delta;
-            cv::Mat y_try = problem.Evaluate(x_try);
-            double  e_try = rms(y_try);
-
-            double de = e_best - e_try;
-            bool better = de > 0;
-
-            if (better) // accept the update
+            while (!better && !converged)
             {
-                lambda /= m_eta;
+                // augmented normal equations
+                cv::Mat A = H + lambda * cv::Mat::diag(H.diag()); // or A = N + lambda*eye(d);
+                cv::Mat x_delta = A.inv() * -D; // x_delta =  A \ -D;
 
-                x_best = x_try;
-                y_best = y_try;
-                e_best = e_try;
+                cv::Mat x_try = x_best + x_delta;
+                cv::Mat y_try = problem.Evaluate(x_try);
+                double  e_try = rms(y_try);
 
-                derr.push_back(de);
-                updates++;
+                double de = e_best - e_try;
+                better = de > 0;
+
+                if (better) // accept the update
+                {
+                    lambda /= m_eta;
+
+                    x_best = x_try;
+                    y_best = y_try;
+                    e_best = e_try;
+
+                    derr.push_back(de);
+                    updates++;
+                }
+                else // reject the update
+                {
+                    lambda *= m_eta;
+                }
+
+                // convergence control
+                derrRatio = derr.size() > 1 ? (derr[derr.size() - 1] / derr[derr.size() - 2]) : 1.0f;
+                stepRatio = norm(x_delta) / norm(x_best);
+
+                converged |= (updates >= m_term.maxCount); // # iterations check
+                converged |= (updates > 1) && (derrRatio < m_term.epsilon); // error differential check
+                converged |= (updates > 1) && (stepRatio < m_term.epsilon); // step ratio check
             }
-            else // reject the update
-            {
-                lambda *= m_eta;
-                continue;
-            }
 
-            // convergence control
-            double derrRatio = derr.size() > 1 ? (derr[derr.size() - 1] / derr[derr.size() - 2]) : 1.0f;
-            double stepRatio = norm(x_delta) / norm(x_best);
-
-            converged |= (updates >= m_term.maxCount); // # iterations check
-            converged |= (updates > 1) && (derrRatio < m_term.epsilon); // error differential check
-            converged |= (updates > 1) && (stepRatio < m_term.epsilon); // step ratio check
-
-            // progress reporting
             if (m_verbose)
             {
-                E_INFO << updates << ": " << e_best << ", lambda=" << lambda << ", relStepSize=" << stepRatio << ", relErrorDrop=" << derrRatio;
+                E_INFO << std::setw(6) << std::right << updates << std::setw(12) << std::right << e_best << std::setw(16) << std::right << lambda << std::setw(16) << std::right << stepRatio << std::setw(16) << std::right << derrRatio;
             }
+
+            // progress reporting
+            //if (m_verbose)
+            //{
+            //    E_INFO << updates << ": " << e_best << ", lambda=" << lambda << ", relStepSize=" << stepRatio << ", relErrorDrop=" << derrRatio;
+            //}
         }
     }
     catch (std::exception& ex)
     {
         E_ERROR << "exception caught in optimisation loop";
         E_ERROR << ex.what();
-
         return false;
     }
 

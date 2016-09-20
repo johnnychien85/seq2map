@@ -35,9 +35,9 @@ namespace seq2map
         inline FeatureStorage& GetFeatureStorage() { return m_featureStore; }
         Frame GetFrame(size_t idx) const;
         inline Frame operator[](size_t idx) const { return GetFrame(idx); }
-        inline void World2Camera(const Points3F& worldPts, Points3F& cameraPts) const { m_extrinsics.Apply(cameraPts = worldPts); };
-        virtual void Camera2Image(const Points3F& cameraPts, Points2F& imagePts) const;
-        void World2Image(const Points3F& worldPts, Points2F& imagePts) const;
+        inline void World2Camera(const Points3D& worldPts, Points3D& cameraPts) const { m_extrinsics.Apply(cameraPts = worldPts); };
+        virtual void Camera2Image(const Points3D& cameraPts, Points2D& imagePts) const;
+        void World2Image(const Points3D& worldPts, Points2D& imagePts) const;
 
         class IntrinsicsFactory : public Factory<String, ProjectionModel>
         {
@@ -69,6 +69,7 @@ namespace seq2map
         inline void SetName(const String& name) { m_seqName = name; }
         inline void SetGrabber(const String& grabber) { m_grabberName = grabber; }
         inline void SetFeatureDetextractor(const FeatureDetextractorPtr& dxtor) { m_featureDxtor = dxtor;  }
+        inline FeatureDetextractorPtr GetFeatureDetextractor() const { return m_featureDxtor; }
         void Clear();
         inline const Camera& GetCamera(size_t idx)  const { return m_cameras[idx]; }
         inline const Camera& operator[](size_t idx) const { return GetCamera(idx); }

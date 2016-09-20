@@ -31,6 +31,11 @@ namespace seq2map
     typedef std::vector<Point2F> Points2F;
     typedef std::vector<Point3F> Points3F;
 
+    typedef cv::Point2d Point2D;
+    typedef cv::Point3d Point3D;
+    typedef std::vector<Point2D> Points2D;
+    typedef std::vector<Point3D> Points3D;
+
     typedef std::list<size_t> Indices;
     const size_t INVALID_INDEX = (size_t)-1;
 
