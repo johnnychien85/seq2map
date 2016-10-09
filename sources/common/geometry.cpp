@@ -237,6 +237,32 @@ bool EuclideanTransform::Restore(const cv::FileNode& fn)
     return SetRotationVector(rvec) && SetTranslation(tvec);
 }
 
+VectorisableD::Vec EuclideanTransform::ToVector() const
+{
+    Vec v(6);
+    size_t i = 0;
+
+    for (size_t j = 0; j < 3; j++) v[i++] = m_rvec.at<double>(j);
+    for (size_t j = 0; j < 3; j++) v[i++] = m_tvec.at<double>(j);
+
+    return v;
+}
+
+bool EuclideanTransform::FromVector(const Vec& v)
+{
+    if (v.size() != GetDimension()) return false;
+
+    cv::Mat rvec(3, 1, CV_64F);
+    cv::Mat tvec(3, 1, CV_64F);
+
+    size_t i = 0;
+
+    for (size_t j = 0; j < 3; j++) rvec.at<double>(j) = v[i++];
+    for (size_t j = 0; j < 3; j++) tvec.at<double>(j) = v[i++];
+
+    return SetRotationVector(rvec) && SetTranslation(tvec);
+}
+
 size_t Motion::Update(const EuclideanTransform& tform)
 {
     if (m_tforms.empty())
@@ -302,7 +328,7 @@ bool Motion::Restore(const Path& path)
     return true;
 }
 
-cv::Mat MotionEstimation::Initialise()
+VectorisableD::Vec MotionEstimation::Initialise()
 {
     if (0 /*m_pnp.GetSize() > m_epi.GetSize()*/)
     {
@@ -320,9 +346,9 @@ cv::Mat MotionEstimation::Initialise()
         m_transform.SetTranslation(tvec);
     }
 
-    cv::Mat x0 = cv::Mat::zeros(6, 1, CV_64F);
-    m_transform.GetRotationVector().copyTo(x0.rowRange(0, 3));
-    m_transform.GetTranslation().copyTo(x0.rowRange(3, 6));
+    //cv::Mat x0 = cv::Mat::zeros(6, 1, CV_64F);
+    //m_transform.GetRotationVector().copyTo(x0.rowRange(0, 3));
+    //m_transform.GetTranslation().copyTo(x0.rowRange(3, 6));
 
     m_invCameraMatrix = m_cameraMatrix.inv();
     m_conds = GetEvaluationSize();
@@ -333,7 +359,7 @@ cv::Mat MotionEstimation::Initialise()
     //cv::Mat x64f;
     //x0.convertTo(x64f, CV_64F);
 
-    return x0; //x64f;
+    return m_transform.ToVector(); //x64f;
 }
 
 size_t MotionEstimation::GetEvaluationSize() const
@@ -346,11 +372,14 @@ size_t MotionEstimation::GetEvaluationSize() const
     return m;
 }
 
-cv::Mat MotionEstimation::Evaluate(const cv::Mat& x) const
+VectorisableD::Vec MotionEstimation::Evaluate(const VectorisableD::Vec& x) const
 {
     EuclideanTransform transform;
-    transform.SetRotationVector(x.rowRange(0, 3));
-    transform.SetTranslation(x.rowRange(3, 6));
+
+    transform.FromVector(x);
+
+    //transform.SetRotationVector(x.rowRange(0, 3));
+    //transform.SetTranslation(x.rowRange(3, 6));
 
     double a_rpe = 1 - m_alpha;
     double a_epi = m_alpha;
@@ -441,18 +470,19 @@ cv::Mat MotionEstimation::EvalReprojectionConds(const EuclideanTransform& transf
     return rpe;
 }
 
-bool MotionEstimation::SetSolution(const cv::Mat& x)
+/*
+bool MotionEstimation::SetSolution(const VectorisableD::Vec& x)
 {
-    if (x.rows != 6 || x.cols != 1) return false;
+    //if (x.rows != 6 || x.cols != 1) return false;
 
     //cv::Mat x32f;
     //x.convertTo(x32f, CV_32F);
 
-    m_transform.SetRotationVector(x.rowRange(0, 3));
-    m_transform.SetTranslation(x.rowRange(3, 6));
+    //m_transform.SetRotationVector(x.rowRange(0, 3));
+    //m_transform.SetTranslation(x.rowRange(3, 6));
     
-    return true;
-}
+    return x; // x32f
+}*/
 
 bool MotionEstimation::Store(Path& path) const
 {
@@ -605,6 +635,32 @@ bool BouguetModel::SetDistCoeffs(const cv::Mat& distCoeffs)
     }
 }
 
+void BouguetModel::SetValues(double fu, double fv, double uc, double vc, double k1, double k2, double p1, double p2, double k3)
+{
+    m_cameraMatrix.at<double>(0, 0) = fu;
+    m_cameraMatrix.at<double>(1, 1) = fv;
+    m_cameraMatrix.at<double>(0, 2) = uc;
+    m_cameraMatrix.at<double>(1, 2) = vc;
+    m_distCoeffs.at<double>(0) = k1;
+    m_distCoeffs.at<double>(1) = k2;
+    m_distCoeffs.at<double>(2) = p1;
+    m_distCoeffs.at<double>(3) = p2;
+    m_distCoeffs.at<double>(4) = k3;
+}
+
+void BouguetModel::GetValues(double& fu, double& fv, double& uc, double& vc, double& k1, double& k2, double& p1, double& p2, double& k3) const
+{
+    fu = m_cameraMatrix.at<double>(0, 0);
+    fv = m_cameraMatrix.at<double>(1, 1);
+    uc = m_cameraMatrix.at<double>(0, 2);
+    vc = m_cameraMatrix.at<double>(1, 2);
+    k1 = m_distCoeffs.at<double>(0);
+    k2 = m_distCoeffs.at<double>(1);
+    p1 = m_distCoeffs.at<double>(2);
+    p2 = m_distCoeffs.at<double>(3);
+    k3 = m_distCoeffs.at<double>(4);
+}
+
 cv::Mat BouguetModel::MakeProjectionMatrix(const EuclideanTransform& pose) const
 {
     cv::Mat P = cv::Mat::eye(3, 4, m_cameraMatrix.type());
@@ -616,7 +672,7 @@ cv::Mat BouguetModel::MakeProjectionMatrix(const EuclideanTransform& pose) const
 bool BouguetModel::Store(cv::FileStorage & fs) const
 {
     fs << "cameraMatrix" << m_cameraMatrix;
-    fs << "distCoeffs" << m_distCoeffs;
+    fs << "distCoeffs"   << m_distCoeffs;
 
     return true;
 }
@@ -633,5 +689,24 @@ bool BouguetModel::Restore(const cv::FileNode & fn)
 
 void BouguetModel::Project(const Points3D& pts3d, Points2D& pts2d) const
 {
-    cv::projectPoints(pts3d, cv::Mat(), cv::Mat(), m_cameraMatrix, m_distCoeffs, pts2d);
+    cv::projectPoints(pts3d,
+        EuclideanTransform::Identity.GetRotationMatrix(),
+        EuclideanTransform::Identity.GetTranslation(),
+        m_cameraMatrix, m_distCoeffs, pts2d);
+}
+
+VectorisableD::Vec BouguetModel::ToVector() const
+{
+    Vec v(9);
+    GetValues(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8]);
+
+    return v;
+}
+
+bool BouguetModel::FromVector(const Vec& v)
+{
+    assert(v.size() == GetDimension());
+    SetValues(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8]);
+
+    return true;
 }

@@ -1,4 +1,4 @@
-function [x2d, inRange, idx, im] = points2image(x3d, cam, im, varargin)
+function [x2d, inRange, idx, im] = pts2image(x3d, cam, im, varargin)
     po = parseArgs(varargin{:});
 
     if nargin < 3

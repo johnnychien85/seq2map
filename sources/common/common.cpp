@@ -11,6 +11,17 @@ namespace logging = boost::log;
 
 namespace seq2map
 {
+    Indices makeIndices(size_t start, size_t end)
+    {
+        Indices idx;
+        for (size_t i = start; i < end + 1; i++)
+        {
+            idx.push_back(i);
+        }
+
+        return idx;
+    }
+
     double rad2deg(double radian)
     {
         return radian * 180.0f / CV_PI;
@@ -61,6 +72,35 @@ namespace seq2map
         ss << "];";
 
         return ss.str();
+    }
+
+
+    bool mat2raw(const cv::Mat& im, const Path& path)
+    {
+        if (im.channels() > 1)
+        {
+            E_ERROR << "multi-channel images not supported (#ch=" << im.channels() << ")";
+            return false;
+        }
+
+        if (im.dims > 2)
+        {
+            E_ERROR << "writing of " << im.dims << "-d matrix not supported";
+            return false;
+        }
+
+        std::ofstream f(path.string(), std::ios::out | std::ios::binary);
+
+        if (!f.is_open())
+        {
+            E_ERROR << "error opening output stream";
+            return false;
+        }
+
+        f.write((char*)im.data, im.elemSize() * im.total());
+        f.close();
+
+        return true;
     }
 
     bool checkCameraMatrix(const cv::Mat& K)
@@ -201,6 +241,19 @@ namespace seq2map
         return toks;
     }
     
+    String indices2string(const Indices& indices)
+    {
+        std::stringstream ss;
+        Indices::const_iterator idx, last = indices.end();
+
+        for (idx = indices.begin(); idx != last; idx++)
+        {
+            ss << (*idx) << ((std::next(idx) != last) ? ", " : "");
+        }
+
+        return ss.str();
+    }
+
     String size2string(const cv::Size& size)
     {
         std::stringstream ss;
@@ -226,6 +279,16 @@ namespace seq2map
         }
 
         return cv::Mat(data).reshape(0, matSize.height).clone();
+    }
+
+    bool replace(String& subject, const String& from, const String& to)
+    {
+        size_t start_pos = subject.find(from);
+
+        if(start_pos == String::npos) return false;
+        subject.replace(start_pos, from.length(), to);
+
+        return true;
     }
 
     cv::Mat rgb2gray(const cv::Mat& rgb)
@@ -289,7 +352,7 @@ namespace seq2map
         m_timer.resume();
     }
 
-    void Speedometre::Stop(size_t amount)
+    void Speedometre::Update(size_t amount)
     {
         if (!m_activated || m_timer.is_stopped())
         {
@@ -297,14 +360,21 @@ namespace seq2map
             return;
         }
 
-        m_timer.stop();
         m_accumulated += amount;
+        m_freq++;
+    }
+
+    void Speedometre::Stop(size_t amount)
+    {
+        Update(amount);
+        m_timer.stop();
     }
 
     void Speedometre::Reset()
     {
         m_activated = false;
         m_accumulated = 0;
+        m_freq = 0;
         m_timer.stop();
     }
 

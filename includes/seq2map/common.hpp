@@ -13,6 +13,7 @@
 #endif
 
 #define E_LOG(lvl)	BOOST_LOG_TRIVIAL(lvl) << __func__  << " : "
+#define E_TRACE     E_LOG(trace)
 #define E_INFO		E_LOG(info)
 #define E_WARNING	E_LOG(warning)
 #define E_ERROR		E_LOG(error)
@@ -37,12 +38,14 @@ namespace seq2map
     typedef std::vector<Point3D> Points3D;
 
     typedef std::list<size_t> Indices;
-    const size_t INVALID_INDEX = (size_t)-1;
+    const size_t INVALID_INDEX = (size_t) -1;
+    Indices makeIndices(size_t start, size_t end);
 
     double rad2deg(double radian);
     double deg2rad(double degree);
     double rms(const cv::Mat& e);
     String mat2string(const cv::Mat& x, const String& name = "", size_t precision = 6);
+    bool mat2raw(const cv::Mat& im, const Path& path);
     bool checkCameraMatrix(const cv::Mat& K);
 
     // file system
@@ -61,13 +64,29 @@ namespace seq2map
     // string processing
     String makeNameList(Strings names);
     Strings explode(const String& string, char delimiter);
+    String indices2string(const Indices& idx);
     String size2string(const cv::Size& size);
     cv::Mat strings2mat(const Strings& strings, const cv::Size& matSize);
+    bool replace(String& subject, const String& from, const String& to);
 
     // image processing
     cv::Mat rgb2gray(const cv::Mat& rgb);
     cv::Mat gray2rgb(const cv::Mat& gray);
     cv::Mat imfuse(const cv::Mat& im0, const cv::Mat& im1);
+
+    /**
+     * Indexed item
+     */
+    class Indexed
+    {
+    public:
+        Indexed(size_t index = INVALID_INDEX) : m_index(index) {}
+        virtual ~Indexed() {}
+        inline void SetIndex(size_t index) { m_index = index; }
+        inline size_t GetIndex() const {return m_index;}
+    private:
+        size_t m_index;
+    };
 
     /**
      * A common interface for parameterised objects.
@@ -209,16 +228,19 @@ namespace seq2map
             : m_displayName(name), m_displayUnit(unit) { Reset(); }
         void Start();
         void Stop(size_t amount);
+        void Update(size_t amount);
         void Reset();
         String GetUnit() const { return m_displayUnit; }
         double GetElapsedSeconds() const;
         inline double GetSpeed() const {return (double)m_accumulated / GetElapsedSeconds(); }
+        inline double GetFrequency() const { return (double)m_freq / GetElapsedSeconds(); }
         String ToString() const;
     protected:
         String m_displayName;
         String m_displayUnit;
         bool   m_activated;
         size_t m_accumulated;
+        size_t m_freq;
         boost::timer::cpu_timer m_timer;
     };
 

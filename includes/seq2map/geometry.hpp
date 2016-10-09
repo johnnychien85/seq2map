@@ -1,8 +1,8 @@
 #ifndef GEOMETRY_HPP
 #define GEOMETRY_HPP
 
-#include <seq2map\common.hpp>
-#include <seq2map\solve.hpp>
+#include <seq2map/common.hpp>
+#include <seq2map/solve.hpp>
 
 namespace seq2map
 {
@@ -10,7 +10,7 @@ namespace seq2map
     cv::Mat homo2eucl(const cv::Mat& x, bool rowMajor = true);
     cv::Mat skewsymat(const cv::Mat& x);
 
-    class EuclideanTransform : public Persistent<cv::FileStorage, cv::FileNode>
+    class EuclideanTransform : public Persistent<cv::FileStorage, cv::FileNode>, public VectorisableD
     {
     public:
         EuclideanTransform() :
@@ -20,8 +20,8 @@ namespace seq2map
             m_tvec(m_matrix.rowRange(0, 3).colRange(3, 4)) {}
         EuclideanTransform(const cv::Mat& rotation, const cv::Mat& tvec);
         inline EuclideanTransform operator<<(const EuclideanTransform& tform) const;
-        EuclideanTransform operator>> (const EuclideanTransform& tform) const;
-        EuclideanTransform operator-  (const EuclideanTransform& tform) const { return tform.GetInverse() >> (*this); }
+        EuclideanTransform operator>>(const EuclideanTransform& tform) const;
+        EuclideanTransform operator- (const EuclideanTransform& tform) const { return tform.GetInverse() >> (*this); }
         //void Apply(Point3F& pt) const;
         //void Apply(Points3F& pts) const;
         void Apply(Point3D& pt) const;
@@ -38,6 +38,9 @@ namespace seq2map
         EuclideanTransform GetInverse() const;
         virtual bool Store(cv::FileStorage& fs) const;
         virtual bool Restore(const cv::FileNode& fn);
+        virtual Vec ToVector() const;
+        virtual bool FromVector(const Vec& v);
+        virtual size_t GetDimension() const { return 6; }
 
         static const EuclideanTransform Identity;
     protected:
@@ -46,6 +49,8 @@ namespace seq2map
         cv::Mat m_rvec;
         cv::Mat m_tvec;
     };
+
+    typedef std::vector<EuclideanTransform> EuclideanTransforms;
 
     class Motion : public Persistent<Path>
     {
@@ -59,7 +64,7 @@ namespace seq2map
         virtual bool Store(Path& path) const;
         virtual bool Restore(const Path& path);
     protected:
-        std::vector<EuclideanTransform> m_tforms;
+        EuclideanTransforms m_tforms;
     };
 
     class ProjectionModel : public Persistent<cv::FileStorage, cv::FileNode>
@@ -105,9 +110,9 @@ namespace seq2map
         inline size_t AddObservation(int uid, const Point3D& pts3di, const Point2D& pts2dj, double w) { m_upnp.push_back(uid); m_wpnp.push_back(w); return m_pnp.Add(pts3di, pts2dj); }
         inline PointMap2Dto2D GetEpipolarConds() const { return m_epi; }
         inline PointMap3Dto2D GetReprojectionConds() const { return m_pnp; }
-        virtual cv::Mat Initialise();
-        virtual cv::Mat Evaluate(const cv::Mat& x0) const;
-        virtual bool SetSolution(const cv::Mat& x);
+        virtual VectorisableD::Vec Initialise();
+        virtual VectorisableD::Vec Evaluate(const VectorisableD::Vec& x0) const;
+        virtual bool SetSolution(const VectorisableD::Vec& x) { return m_transform.FromVector(x); }
         size_t GetEvaluationSize() const;
         inline EuclideanTransform GetTransform() const { return m_transform; }
         virtual bool Store(Path& path) const;
@@ -155,7 +160,7 @@ namespace seq2map
         static void DecomposeProjMatrix(const cv::Mat& P, cv::Mat& KRinv, cv::Mat& c);
     };
 
-    class BouguetModel : public ProjectionModel
+    class BouguetModel : public ProjectionModel, public VectorisableD
     {
     public:
         typedef boost::shared_ptr<BouguetModel> Ptr;
@@ -164,11 +169,17 @@ namespace seq2map
         virtual void Project(const Points3D& pts3d, Points2D& pts2d) const;
         bool SetCameraMatrix(const cv::Mat& cameraMatrix);
         bool SetDistCoeffs(const cv::Mat& distCoeffs);
+        void SetValues(double fu, double fv, double uc, double vc, double k1, double k2, double p1, double p2, double k3);
         inline cv::Mat GetCameraMatrix() const { return m_cameraMatrix.clone(); }
+        inline cv::Mat GetDistCoeffs() const { return m_distCoeffs; }
+        void GetValues(double& fu, double& fv, double& uc, double& vc, double& k1, double& k2, double& p1, double& p2, double& k3) const;
         cv::Mat MakeProjectionMatrix(const EuclideanTransform& pose) const;
         virtual bool Store(cv::FileStorage& fs) const;
         virtual bool Restore(const cv::FileNode& fn);
-        virtual String GetModelName() const { return "BOUGUET";  }
+        virtual String GetModelName() const { return "BOUGUET"; }
+        virtual Vec ToVector() const;
+        virtual bool FromVector(const Vec& v);
+        virtual size_t GetDimension() const { return 9; }
     protected:
         static const BouguetModel s_canonical;
         cv::Mat m_cameraMatrix;
