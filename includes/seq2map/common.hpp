@@ -281,7 +281,7 @@ namespace seq2map
         std::vector<Key> GetRegisteredKeys() const
         {
             std::vector<Key> keys;
-            BOOST_FOREACH(Registry::value_type v, m_ctors)
+            BOOST_FOREACH(typename Registry::value_type v, m_ctors)
             {
                 keys.push_back(v.first);
             }
@@ -310,6 +310,24 @@ namespace seq2map
     private:
         typedef std::map<Key, CtorType> Registry;
         Registry m_ctors;
+    };
+
+    /**
+     * Templated singleton class to create the only one static instance of class.
+     */
+    template<class T> class Singleton
+    {
+    public:
+        typedef boost::shared_ptr<T> Ptr;
+
+        static T  GetInstancePtr() { return m_instance ? m_instance : (m_instance = Ptr(new T)); }
+        static T& GetInstance()    { return *GetInstancePtr(); }
+
+    protected:
+
+
+    private:
+        static Ptr m_instance;
     };
 }
 

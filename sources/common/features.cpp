@@ -22,12 +22,12 @@ FeatureDetectorFactory::FeatureDetectorFactory()
     Factory::Register<BRISKFeatureDetextractor>("BRISK");
     Factory::Register<KAZEFeatureDetextractor> ("KAZE" );
     Factory::Register<AKAZEFeatureDetextractor>("AKAZE");
-#ifdef HAVE_XFEATURES2D // non-free feature detectors .....
+#ifdef WITH_XFEATURES2D // non-free feature detectors .....
     Factory::Register<StarFeatureDetector>     ("STAR" );
     Factory::Register<MSDFeatureDetector>      ("MSD"  );
     Factory::Register<SIFTFeatureDetextractor> ("SIFT" );
     Factory::Register<SURFFeatureDetextractor> ("SURF" );
-#endif // HAVE_XFEATURES2D ................................
+#endif // WITH_XFEATURES2D ................................
 }
 
 FeatureExtractorFactory::FeatureExtractorFactory()
@@ -36,7 +36,7 @@ FeatureExtractorFactory::FeatureExtractorFactory()
     Factory::Register<BRISKFeatureDetextractor>("BRISK");
     Factory::Register<KAZEFeatureDetextractor> ("KAZE" );
     Factory::Register<AKAZEFeatureDetextractor>("AKAZE");
-#ifdef HAVE_XFEATURES2D // non-free descriptor extractors..
+#ifdef WITH_XFEATURES2D // non-free descriptor extractors..
     Factory::Register<SIFTFeatureDetextractor> ("SIFT" );
     Factory::Register<SURFFeatureDetextractor> ("SURF" );
     Factory::Register<BRIEFFeatureExtractor>   ("BRIEF");
@@ -44,7 +44,7 @@ FeatureExtractorFactory::FeatureExtractorFactory()
     Factory::Register<FREAKFeatureExtractor>   ("FREAK");
     Factory::Register<LATCHFeatureExtractor>   ("LATCH");
     Factory::Register<LUCIDFeatureExtractor>   ("LUCID");
-#endif // HAVE_XFEATURES2D ................................
+#endif // WITH_XFEATURES2D ................................
 }
 
 FeatureDetextractorFactory::FeatureDetextractorFactory()
@@ -53,10 +53,10 @@ FeatureDetextractorFactory::FeatureDetextractorFactory()
     Factory::Register<BRISKFeatureDetextractor>("BRISK");
     Factory::Register<KAZEFeatureDetextractor> ("KAZE" );
     Factory::Register<AKAZEFeatureDetextractor>("AKAZE");
-#ifdef HAVE_XFEATURES2D // non-free feature detextractors..
+#ifdef WITH_XFEATURES2D // non-free feature detextractors..
     Factory::Register<SIFTFeatureDetextractor> ("SIFT" );
     Factory::Register<SURFFeatureDetextractor> ("SURF" );
-#endif // HAVE_XFEATURES2D ................................
+#endif // WITH_XFEATURES2D ................................
 }
 
 ImageFeature ImageFeatureSet::GetFeature(const size_t idx)
@@ -140,7 +140,7 @@ int seq2map::ImageFeatureSet::String2NormType(const seq2map::String& type)
 
 bool seq2map::ImageFeatureSet::Store(Path& path) const
 {
-    std::ofstream os(path.string(), std::ios::out | std::ios::binary);
+    std::ofstream os(path.string().c_str(), std::ios::out | std::ios::binary);
 
     if (!os.is_open())
     {
@@ -181,7 +181,7 @@ bool seq2map::ImageFeatureSet::Store(Path& path) const
 
 bool ImageFeatureSet::Restore(const Path& path)
 {
-    std::ifstream is(path.string(), std::ios::in | std::ios::binary);
+    std::ifstream is(path.string().c_str(), std::ios::in | std::ios::binary);
 
     if (!is.is_open())
     {
@@ -371,8 +371,8 @@ void HetergeneousDetextractor::ApplyParams()
 
 Parameterised::Options HetergeneousDetextractor::GetOptions(int flag)
 {
-    if (flag & FeatureOptionType::DETECTION_OPTIONS ) return m_detector ->GetOptions(flag);
-    if (flag & FeatureOptionType::EXTRACTION_OPTIONS) return m_extractor->GetOptions(flag);
+    if (flag & DETECTION_OPTIONS ) return m_detector ->GetOptions(flag);
+    if (flag & EXTRACTION_OPTIONS) return m_extractor->GetOptions(flag);
 
     return Options();
 }
@@ -380,7 +380,8 @@ Parameterised::Options HetergeneousDetextractor::GetOptions(int flag)
 ImageFeatureSet HetergeneousDetextractor::DetectAndExtractFeatures(const Mat& im) const
 {
     assert(m_detector && m_extractor);
-    return m_extractor->ExtractFeatures(im, m_detector->DetectFeatures(im));
+    KeyPoints keypoints = m_detector->DetectFeatures(im);
+    return m_extractor->ExtractFeatures(im, keypoints);
 }
 
 KeyPoints CvFeatureDetectorAdaptor::DetectFeatures(const cv::Mat& im) const
@@ -437,9 +438,9 @@ void ImageFeatureMap::Draw(Mat& canvas)
 
     BOOST_FOREACH(const FeatureMatch& match, m_matches)
     {
-        if (match.state & FeatureMatch::Flag::RATIO_TEST_FAILED) continue;
+        if (match.state & FeatureMatch::RATIO_TEST_FAILED) continue;
 
-        bool inlier = match.state & FeatureMatch::Flag::INLIER;
+        bool inlier = match.state & FeatureMatch::INLIER;
         cv::line(canvas, src[match.srcIdx].pt, dst[match.dstIdx].pt, inlier ? inlierColour : outlierColour);
     }
 }
@@ -487,7 +488,7 @@ ImageFeatureMap FeatureMatcher::MatchFeatures(const ImageFeatureSet& src, const 
         RunSymmetryTest(forward, backward);
     }
 
-    Indices inliers = map.Select(FeatureMatch::Flag::INLIER);
+    Indices inliers = map.Select(FeatureMatch::INLIER);
 
     BOOST_FOREACH(FeatureMatchFilter* filter, m_filters)
     {
@@ -538,7 +539,7 @@ FeatureMatches FeatureMatcher::MatchDescriptors(const Mat& src, const Mat& dst, 
 
     const bool ratioTest = m_maxRatio > 0.0f && m_maxRatio < 1.0f;
     const int k = ratioTest ? 2 : 1;
-    std::vector<std::vector<DMatch>> knn;
+    std::vector<std::vector<DMatch> > knn;
 
     Ptr<cv::DescriptorMatcher> matcher = m_exhaustive ?
         Ptr<DescriptorMatcher>(new BFMatcher(metric)) : Ptr<DescriptorMatcher>(new FlannBasedMatcher());
@@ -556,7 +557,7 @@ FeatureMatches FeatureMatcher::MatchDescriptors(const Mat& src, const Mat& dst, 
         BOOST_FOREACH(const std::vector<DMatch>& match, knn)
         {
             float ratio = match[0].distance / match[1].distance;
-            int flag = ratio < m_maxRatio ? FeatureMatch::Flag::INLIER : FeatureMatch::Flag::RATIO_TEST_FAILED;
+            int flag = ratio < m_maxRatio ? FeatureMatch::INLIER : FeatureMatch::RATIO_TEST_FAILED;
 
             matches.push_back(FeatureMatch(match[0].queryIdx, match[0].trainIdx, match[0].distance, flag));
         }
@@ -596,7 +597,7 @@ void FeatureMatcher::RunSymmetryTest(FeatureMatches& forward, const FeatureMatch
     {
         if (good[match.srcIdx] == false)
         {
-            match.Reject(FeatureMatch::Flag::UNIQUENESS_FAILED);
+            match.Reject(FeatureMatch::UNIQUENESS_FAILED);
         }
     }
 }
@@ -650,7 +651,7 @@ bool FundamentalMatrixFilter::Filter(ImageFeatureMap& map, Indices& inliers)
 
         if (outlier)
         {
-            map[*itr].Reject(FeatureMatch::Flag::GEOMETRIC_TEST_FAILED);
+            map[*itr].Reject(FeatureMatch::GEOMETRIC_TEST_FAILED);
             inliers.erase(itr++);
         }
         else
@@ -731,7 +732,7 @@ bool EssentialMatrixFilter::Filter(ImageFeatureMap& map, Indices& inliers)
 
         if (outlier)
         {
-            map[*itr].Reject(FeatureMatch::Flag::GEOMETRIC_TEST_FAILED);
+            map[*itr].Reject(FeatureMatch::GEOMETRIC_TEST_FAILED);
             inliers.erase(itr++);
         }
         else
@@ -798,7 +799,7 @@ bool SigmaFilter::Filter(ImageFeatureMap& map, Indices& inliers)
 
         if (outlier)
         {
-            map[*itr].Reject(FeatureMatch::Flag::SIGMA_TEST_FAILED);
+            map[*itr].Reject(FeatureMatch::SIGMA_TEST_FAILED);
             inliers.erase(itr++);
         }
         else
@@ -858,7 +859,7 @@ void GFTTFeatureDetector::ApplyParams()
 Parameterised::Options GFTTFeatureDetector::GetOptions(int flag)
 {
     Options o("GFTT (Good Features To Track) Feature Detection Options");
-    if (flag & FeatureOptionType::DETECTION_OPTIONS)
+    if (flag & DETECTION_OPTIONS)
     {
         o.add_options()
             ("max-features",  po::value<int>   (&m_maxFeatures) ->default_value(m_gftt->getMaxFeatures()),    "Maximum number of corners to return. If there are more corners than are found, the strongest of them is returned.")
@@ -912,7 +913,7 @@ Parameterised::Options FASTFeatureDetector::GetOptions(int flag)
 
     Options o("FAST (Features from Accelerated Segment Test) Feature Detection Options");
 
-    if (flag & FeatureOptionType::DETECTION_OPTIONS)
+    if (flag & DETECTION_OPTIONS)
     {
         o.add_options()
             ("threshold",  po::value<int> (&m_threshold)->default_value(thresh), "Threshold on difference between intensity of the central pixel and pixels of a circle around this pixel.")
@@ -991,7 +992,7 @@ Parameterised::Options AGASTFeatureDetector::GetOptions(int flag)
 
     Options o("AGAST (Adaptive and Generic Corner Detection Based on the Accelerated Segment Test) Feature Detection Options");
 
-    if (flag & FeatureOptionType::DETECTION_OPTIONS)
+    if (flag & DETECTION_OPTIONS)
     {
         o.add_options()
             ("threshold",  po::value<int>   (&m_threshold)->default_value(thresh), "Threshold on difference between intensity of the central pixel and pixels of a circle around this pixel.")
@@ -1079,7 +1080,7 @@ Parameterised::Options ORBFeatureDetextractor::GetOptions(int flag)
 {
     Options a;
 
-    if (flag & FeatureOptionType::DETECTION_OPTIONS)
+    if (flag & DETECTION_OPTIONS)
     {
         String scoreType = ScoreType2String(m_cvDxtor->getScoreType());
         Options o("ORB (Oriented BRIEF) Feature Detection Options");
@@ -1094,7 +1095,7 @@ Parameterised::Options ORBFeatureDetextractor::GetOptions(int flag)
         a.add(o);
     }
 
-    if (flag & FeatureOptionType::EXTRACTION_OPTIONS)
+    if (flag & EXTRACTION_OPTIONS)
     {
         Options o("ORB (Oriented BRIEF) Feature Extraction Option");
         o.add_options()
@@ -1165,7 +1166,7 @@ Parameterised::Options BRISKFeatureDetextractor::GetOptions(int flag)
 {
     Options a;
 
-    if (flag & FeatureOptionType::DETECTION_OPTIONS)
+    if (flag & DETECTION_OPTIONS)
     {
         Options o("BRISK (Binary Robust Invariant Scalable Keypoints) Feature Detection Options");
         o.add_options()
@@ -1224,7 +1225,7 @@ Parameterised::Options KAZEFeatureDetextractor::GetOptions(int flag)
 {
     Options a;
 
-    if (flag & FeatureOptionType::DETECTION_OPTIONS)
+    if (flag & DETECTION_OPTIONS)
     {
         String diffuse = DiffuseType2String(m_cvDxtor->getDiffusivity());
 
@@ -1237,7 +1238,7 @@ Parameterised::Options KAZEFeatureDetextractor::GetOptions(int flag)
         a.add(o);
     }
 
-    if (flag & FeatureOptionType::EXTRACTION_OPTIONS)
+    if (flag & EXTRACTION_OPTIONS)
     {
         Options o("KAZE Feature Extraction Options");
         o.add_options()
@@ -1323,7 +1324,7 @@ Parameterised::Options AKAZEFeatureDetextractor::GetOptions(int flag)
 {
     Options a;
 
-    if (flag & FeatureOptionType::DETECTION_OPTIONS)
+    if (flag & DETECTION_OPTIONS)
     {
         String diffuse = KAZEFeatureDetextractor::DiffuseType2String(m_cvDxtor->getDiffusivity());
 
@@ -1336,7 +1337,7 @@ Parameterised::Options AKAZEFeatureDetextractor::GetOptions(int flag)
         a.add(o);
     }
 
-    if (flag & FeatureOptionType::EXTRACTION_OPTIONS)
+    if (flag & EXTRACTION_OPTIONS)
     {
         String desc = DescriptorType2String(m_cvDxtor->getDescriptorType());
         Options o("AKAZE (Accelerated KAZE) Feature Extraction Options");
@@ -1376,7 +1377,7 @@ seq2map::String AKAZEFeatureDetextractor::DescriptorType2String(int type)
 
     return DescriptorType2String(AKAZE::DESCRIPTOR_KAZE);
 }
-#ifdef HAVE_XFEATURES2D
+#ifdef WITH_XFEATURES2D
 //
 // Begin of OpenCV Extended Feature-Specific Implementations
 //
@@ -1424,7 +1425,7 @@ Parameterised::Options StarFeatureDetector::GetOptions(int flag)
 {
     Options a;
 
-    if (flag & FeatureOptionType::DETECTION_OPTIONS)
+    if (flag & DETECTION_OPTIONS)
     {
         Options o("Star Feature (based on CenSurE, or Center Surrounded Extrema) Detection Options");
         o.add_options()
@@ -1494,7 +1495,7 @@ Parameterised::Options MSDFeatureDetector::GetOptions(int flag)
 {
     Options a;
 
-    if (flag & FeatureOptionType::DETECTION_OPTIONS)
+    if (flag & DETECTION_OPTIONS)
     {
         Options o("MSD (Maximal Self-Dissimilarity) Feature Detection Options");
         o.add_options()
@@ -1556,7 +1557,7 @@ Parameterised::Options SIFTFeatureDetextractor::GetOptions(int flag)
 {
     Options a;
 
-    if (flag & FeatureOptionType::DETECTION_OPTIONS)
+    if (flag & DETECTION_OPTIONS)
     {
         Options o("SIFT (Scale-Invariant Feature Transform) Feature Detection Options");
         o.add_options()
@@ -1612,7 +1613,7 @@ Parameterised::Options SURFFeatureDetextractor::GetOptions(int flag)
 {
     Options a;
 
-    if (flag & FeatureOptionType::DETECTION_OPTIONS)
+    if (flag & DETECTION_OPTIONS)
     {
         Options o("SURF (Speeded-Up Robust Features) Feature Detection Options");
         o.add_options()
@@ -1623,7 +1624,7 @@ Parameterised::Options SURFFeatureDetextractor::GetOptions(int flag)
         a.add(o);
     }
 
-    if (flag & FeatureOptionType::EXTRACTION_OPTIONS)
+    if (flag & EXTRACTION_OPTIONS)
     {
         Options o("SURF (Speeded-Up Robust Features) Feature Extraction Option");
         o.add_options()
@@ -1669,7 +1670,7 @@ Parameterised::Options BRIEFFeatureExtractor::GetOptions(int flag)
 {
     Options a;
 
-    if (flag & FeatureOptionType::EXTRACTION_OPTIONS)
+    if (flag & EXTRACTION_OPTIONS)
     {
         Options o("BRIEF (Binary Robust Independent Elementary Features) Feature Extraction Options");
         o.add_options()
@@ -1731,7 +1732,7 @@ Parameterised::Options DAISYFeatureExtractor::GetOptions(int flag)
 {
     Options a;
 
-    if (flag & FeatureOptionType::EXTRACTION_OPTIONS)
+    if (flag & EXTRACTION_OPTIONS)
     {
         Options o("DAISY Feature Extraction Options");
         o.add_options()
@@ -1815,7 +1816,7 @@ Parameterised::Options FREAKFeatureExtractor::GetOptions(int flag)
 {
     Options a;
 
-    if (flag & FeatureOptionType::EXTRACTION_OPTIONS)
+    if (flag & EXTRACTION_OPTIONS)
     {
         Options o("FREAK (Fast REtinA Keypoint) Feature Extraction Options");
         o.add_options()
@@ -1866,7 +1867,7 @@ Parameterised::Options LATCHFeatureExtractor::GetOptions(int flag)
 {
     Options a;
 
-    if (flag & FeatureOptionType::EXTRACTION_OPTIONS)
+    if (flag & EXTRACTION_OPTIONS)
     {
         Options o("LATCH () Feature Extraction Options");
         o.add_options()
@@ -1913,7 +1914,7 @@ Parameterised::Options LUCIDFeatureExtractor::GetOptions(int flag)
 {
     Options a;
 
-    if (flag & FeatureOptionType::DETECTION_OPTIONS)
+    if (flag & DETECTION_OPTIONS)
     {
         Options o("LUCID (Locally Uniform Comparison Image Descriptor) Feature Extraction Options");
         o.add_options()
@@ -1924,5 +1925,5 @@ Parameterised::Options LUCIDFeatureExtractor::GetOptions(int flag)
 
     return a; 
 }
-#endif
+#endif // WITH_XFEATURES2D
 

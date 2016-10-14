@@ -69,8 +69,8 @@ void CalibGraphBuilder::TargetDef::GetObjectPoints(Points3F& pts, Indices& corne
 
     // swap last two corners so they are arranged clockwise
     assert(corners.size() == 4);
-    Indices::iterator last = std::prev(corners.end());
-    std::iter_swap(last, std::prev(last));
+    Indices::iterator last = boost::prior(corners.end());
+    std::iter_swap(last, boost::prior(last));
 }
 
 bool CalibGraphBuilder::ImageFileList::CheckPattern(const String& pattern)
@@ -123,7 +123,7 @@ bool CalibGraphBuilder::ImageFileList::FromPattern(const String& pattern, size_t
 
 bool CalibGraphBuilder::ImageFileList::FromFile(const Path& path, size_t cams, size_t imgs)
 {
-    std::ifstream f(path.string());
+    std::ifstream f(path.string().c_str());
     String line;
 
     if (!f.is_open())

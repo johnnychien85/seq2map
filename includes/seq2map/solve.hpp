@@ -1,7 +1,7 @@
 #ifndef SOLVE_HPP
 #define SOLVE_HPP
 
-#include <seq2map\common.hpp>
+#include <seq2map/common.hpp>
 
 namespace seq2map
 {
@@ -30,7 +30,7 @@ namespace seq2map
         virtual VectorisableD::Vec Initialise() = 0;
         virtual VectorisableD::Vec Evaluate(const VectorisableD::Vec& x) const = 0;
         virtual VectorisableD::Vec Evaluate(const VectorisableD& vec) { return Evaluate(vec.ToVector()); }
-        virtual cv::Mat ComputeJacobian(const VectorisableD::Vec& x, VectorisableD::Vec& y = VectorisableD::Vec()) const;
+        virtual cv::Mat ComputeJacobian(const VectorisableD::Vec& x, VectorisableD::Vec& y) const;
         virtual bool SetSolution(const VectorisableD::Vec& x) = 0;
         bool SetActiveVars(const Indices& varIdx);
         cv::Mat ApplyUpdate(const VectorisableD::Vec& x, const VectorisableD::Vec& delta);

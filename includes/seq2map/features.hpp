@@ -1,11 +1,10 @@
 #ifndef FEATURES_HPP
 #define FEATURES_HPP
-#define HAVE_XFEATURES2D
 #include <list>
-#ifdef HAVE_XFEATURES2D
-#include <opencv2\xfeatures2d.hpp>
-#endif // HAVE_XFEATURES2D
-#include <seq2map\common.hpp>
+#ifdef WITH_XFEATURES2D
+#include <opencv2/xfeatures2d.hpp>
+#endif // WITH_XFEATURES2D
+#include <seq2map/common.hpp>
 
 namespace seq2map
 {
@@ -48,9 +47,9 @@ namespace seq2map
         static String NormType2String(int type);
         static int    String2NormType(const String& type);
 
-        /* ctor */ ImageFeatureSet(const KeyPoints& keypoints, const cv::Mat& descriptors, int normType = cv::NormTypes::NORM_L2)
+        /* ctor */ ImageFeatureSet(const KeyPoints& keypoints, const cv::Mat& descriptors, int normType = cv::NORM_L2)
             : m_keypoints(keypoints), m_descriptors(descriptors), m_normType(normType) {}
-        /* ctor */ ImageFeatureSet() : m_normType(cv::NormTypes::NORM_L2) {}
+        /* ctor */ ImageFeatureSet() : m_normType(cv::NORM_L2) {}
         /* dtor */ virtual ~ImageFeatureSet() {}
         ImageFeature GetFeature(const size_t idx);
         //inline ImageFeature GetFeature(const size_t idx) const;
@@ -180,14 +179,14 @@ namespace seq2map
             INLIER_RECOVERED       = 1 << 8 | INLIER
         };
 
-        /* ctor */ FeatureMatch(size_t srcIdx, size_t dstIdx, float distance, int state = Flag::INLIER)
+        /* ctor */ FeatureMatch(size_t srcIdx = INVALID_INDEX, size_t dstIdx = INVALID_INDEX, float distance = -1, int state = INLIER)
             : srcIdx(srcIdx), dstIdx(dstIdx), distance(distance), state(state) {}
         inline void Reject(int flag) { state = (state ^ INLIER) | flag; }
 
-        size_t srcIdx = INVALID_INDEX;
-        size_t dstIdx = INVALID_INDEX;
-        float  distance = -1;
-        int    state = 0;
+        size_t srcIdx;
+        size_t dstIdx;
+        float  distance;
+        int    state;
     };
 
     typedef std::vector<FeatureMatch> FeatureMatches;
@@ -207,8 +206,8 @@ namespace seq2map
         inline const FeatureMatches& GetMatches() const { return m_matches; }
         inline FeatureMatches& GetMatches() { return m_matches; }
     protected:
-        /* ctor */ ImageFeatureMap(const ImageFeatureSet& src, const ImageFeatureSet& dst)
-            : m_src(src), m_dst(dst) {};
+        ImageFeatureMap(const ImageFeatureSet& src, const ImageFeatureSet& dst)
+        : m_src(src), m_dst(dst) {};
         const ImageFeatureSet& m_src;
         const ImageFeatureSet& m_dst;
         FeatureMatches m_matches;
@@ -554,7 +553,7 @@ namespace seq2map
         int     m_octaveLayers;
         String  m_diffusivityType;
     };
-#ifdef HAVE_XFEATURES2D
+#ifdef WITH_XFEATURES2D
 
     class StarFeatureDetector :
         public CvFeatureDetectorAdaptor
@@ -777,6 +776,6 @@ namespace seq2map
         int m_lucidKernel;
         int m_blurKernel;
     };
-#endif // HAVE_XFEATURES2D
+#endif // WITH_XFEATURES2D
 }
 #endif // FEATURES_HPP

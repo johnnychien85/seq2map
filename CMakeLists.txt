@@ -34,11 +34,19 @@ add_executable(raw2seq     sources/raw2seq/scanner.hpp           # Structured ra
                            sources/raw2seq/scanner.cpp           # 
                            sources/raw2seq/raw2seq.cpp)          # 
 add_executable(monovo      sources/monovo/monovo.cpp)            # Monocular visual odometry
-add_executable(vggrab      sources/vggrab/vggrab.cpp             # Multi-camera frame grabber
+add_executable(vggrab      sources/vggrab/recorder.hpp           # Software synchronised multi-camera frame grabber
+                           sources/vggrab/recorder.cpp           # 
                            sources/vggrab/grabber.hpp            # 
                            sources/vggrab/grabber.cpp            # 
+                           sources/vggrab/grabber_dummy_impl.hpp # 
+                           sources/vggrab/grabber_ebus_impl.hpp  # 
                            sources/vggrab/storage.hpp            # 
-                           sources/vggrab/storage.cpp)           # 
+                           sources/vggrab/storage.cpp            # 
+                           sources/vggrab/syncbuf.hpp            # 
+                           sources/vggrab/syncbuf.cpp            # 
+                           sources/vggrab/uirenderer.hpp         # 
+                           sources/vggrab/uirenderer.cpp         # 
+                           sources/vggrab/vggrab.cpp)            # 
 add_executable(dpmap2pts   sources/miscs/dpmap2pts.cpp)          # Converion from disparity map to point clouds
 add_executable(imrect      sources/miscs/imrect.cpp)             # Image rectification utility
 add_executable(imcvt       sources/miscs/imcvt.cpp)              # Image conversion utility
@@ -70,7 +78,8 @@ endif()
 
 # Thirty-party Libraries
 mark_as_advanced(FORCE OPENCV_FOUND OpenCV_FOUND)
-find_package(OpenCV REQUIRED core highgui calib3d features2d xfeatures2d)
+find_package(OpenCV REQUIRED COMPONENTS core highgui calib3d features2d)
+find_package(OpenCV COMPONENTS xfeatures2d)
 
 if(OpenCV_VERSION AND NOT OpenCV_VERSION_MAJOR LESS 3)
 	include_directories(${OpenCV_INCLUDE_DIRS})
@@ -85,11 +94,18 @@ if(OpenCV_VERSION AND NOT OpenCV_VERSION_MAJOR LESS 3)
 	target_link_libraries(imrect      ${OpenCV_LIBS})
 	target_link_libraries(imcvt       ${OpenCV_LIBS})
 	target_link_libraries(seqchk      ${OpenCV_LIBS})
+
+    if(OPENCV_XFEATURES2D_FOUND)
+        ADD_DEFINITIONS(-DWITH_XFEATURES2D)
+    else()
+        message(STATUS "extended features2d module not found")
+        message(STATUS "it might be located in the build of opencv-contrib")
+    endif()
 else()
 	message(SEND_ERROR "OpenCV not found")
 endif()
 
-find_package(Boost REQUIRED COMPONENTS chrono date_time filesystem thread timer log log_setup program_options system)
+find_package(Boost REQUIRED COMPONENTS log_setup log filesystem thread timer date_time chrono program_options system)
 mark_as_advanced(CLEAR BOOST_INCLUDEDIR BOOST_LIBRARYDIR)
 if(Boost_FOUND)
 	include_directories(${Boost_INCLUDE_DIRS})

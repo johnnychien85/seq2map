@@ -1,5 +1,5 @@
-#include <boost\thread.hpp>
-#include <seq2map\solve.hpp>
+#include <boost/thread.hpp>
+#include <seq2map/solve.hpp>
 
 using namespace seq2map;
 
@@ -12,7 +12,8 @@ cv::Mat LeastSquaresProblem::ComputeJacobian(const VectorisableD::Vec& x, Vector
 {
     cv::Mat J = cv::Mat::zeros(static_cast<int>(m_conds), static_cast<int>(m_varIdx.size()), CV_64F);
     bool masking = !m_jacobianPattern.empty();
-    std::vector<boost::thread> threads;
+    //std::vector<boost::thread> threads;
+    boost::thread_group threads;
 
     y = y.empty() ? Evaluate(x) : y;
 
@@ -39,38 +40,20 @@ cv::Mat LeastSquaresProblem::ComputeJacobian(const VectorisableD::Vec& x, Vector
     // lunch the threads
     for (size_t k = 0; k < slices.size(); k++)
     {
-        threads.push_back(boost::thread(LeastSquaresProblem::DiffThread, this, slices[k]));
+        //threads.push_back(boost::thread(
+        threads.add_thread(new boost::thread(
+            LeastSquaresProblem::DiffThread,
+            (const LeastSquaresProblem*) this,
+            slices[k])
+        );
     }
-
-    // assign Jacobian column(s) to each differentiation thread
-    /*
-    Indices::const_iterator& var0 = m_varIdx.begin();
-    for (size_t threadIdx = 0; threadIdx < m_diffThreads; threadIdx++)
-    {
-        JacobianSlices slices;
-
-        //for (size_t var = threadIdx; var < m_vars; var += m_diffThreads)
-        for (Indices::const_iterator& var = var0; var != m_varIdx.end(); var = var + m_diffThreads)
-        {
-            JacobianSlice slice;
-
-            slice.x    = x;
-            slice.y    = y;
-            slice.var  = var;
-            
-            slices.push_back(slice);
-        }
-
-        // lunch the thread
-        threads.push_back(boost::thread(LeastSquaresProblem::DiffThread, this, slices));
-    }
-    */
 
     // wait for completions
-    BOOST_FOREACH(boost::thread& thread, threads)
-    {
-        thread.join();
-    }
+    //BOOST_FOREACH(boost::thread& thread, threads)
+    //{
+    //    thread.join();
+    //}
+    threads.join_all();
 
     return J;
 }

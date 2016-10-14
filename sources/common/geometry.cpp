@@ -279,7 +279,7 @@ size_t Motion::Update(const EuclideanTransform& tform)
 
 bool Motion::Store(Path& path) const
 {
-    std::ofstream of(path.string(), std::ios::out);
+    std::ofstream of(path.string().c_str(), std::ios::out);
     BOOST_FOREACH (const EuclideanTransform& tform, m_tforms)
     {
         cv::Mat M = tform.GetTransformMatrix();
@@ -296,7 +296,7 @@ bool Motion::Restore(const Path& path)
 {
     m_tforms.clear();
 
-    std::ifstream rf(path.string(), std::ios::in);
+    std::ifstream rf(path.string().c_str(), std::ios::in);
 
     if (!rf.is_open())
     {
@@ -486,7 +486,7 @@ bool MotionEstimation::SetSolution(const VectorisableD::Vec& x)
 
 bool MotionEstimation::Store(Path& path) const
 {
-    std::ofstream of(path.string(), std::ios::out);
+    std::ofstream of(path.string().c_str(), std::ios::out);
 
     of << mat2string(m_cameraMatrix, "egomo.K") << std::endl;
     of << mat2string(m_invCameraMatrix, "egomo.K_inv") << std::endl;

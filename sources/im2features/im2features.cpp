@@ -146,7 +146,7 @@ bool init(int argc, char* argv[], Args& args, FeatureDetextractorPtr& dxtor)
         po::store(parsed, vm);
         po::notify(vm);
 
-        unknownToks = po::collect_unrecognized(parsed.options, po::collect_unrecognized_mode::exclude_positional);
+        unknownToks = po::collect_unrecognized(parsed.options, po::exclude_positional);
         args.help = vm.count("help") > 0;
     }
     catch (po::error& pe)
@@ -180,7 +180,7 @@ bool init(int argc, char* argv[], Args& args, FeatureDetextractorPtr& dxtor)
 
                 return false;
             }
-            o.add(detector->GetOptions(FeatureOptionType::DETECTION_OPTIONS));
+            o.add(detector->GetOptions(DETECTION_OPTIONS));
         }
 
         if (!args.xtractorName.empty())
@@ -194,7 +194,7 @@ bool init(int argc, char* argv[], Args& args, FeatureDetextractorPtr& dxtor)
 
                 return false;
             }
-            o.add(extractor->GetOptions(FeatureOptionType::EXTRACTION_OPTIONS));
+            o.add(extractor->GetOptions(EXTRACTION_OPTIONS));
         }
 
         std::cout << "Usage: " << argv[0] << " <image_in_dir> <feature_out_dir> [options]" << std::endl;
@@ -239,8 +239,8 @@ bool init(int argc, char* argv[], Args& args, FeatureDetextractorPtr& dxtor)
     // parse options for the detector and extractor!
     try
     {
-        Parameterised::Options detectorOptions = dxtor->GetOptions(FeatureOptionType::DETECTION_OPTIONS);
-        Parameterised::Options xtractorOptions = dxtor->GetOptions(FeatureOptionType::EXTRACTION_OPTIONS);
+        Parameterised::Options detectorOptions = dxtor->GetOptions(DETECTION_OPTIONS);
+        Parameterised::Options xtractorOptions = dxtor->GetOptions(EXTRACTION_OPTIONS);
         Parameterised::Options allOptions;
 
         allOptions.add(detectorOptions).add(xtractorOptions);

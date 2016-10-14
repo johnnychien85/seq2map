@@ -1,7 +1,7 @@
 #ifndef DISPARITY_HPP
 #define DISPARITY_HPP
-#include <opencv2\calib3d\calib3d.hpp>
-#include <seq2map\common.hpp>
+#include <opencv2/calib3d/calib3d.hpp>
+#include <seq2map/common.hpp>
 
 namespace seq2map
 {

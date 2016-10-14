@@ -89,7 +89,7 @@ namespace seq2map
             return false;
         }
 
-        std::ofstream f(path.string(), std::ios::out | std::ios::binary);
+        std::ofstream f(path.string().c_str(), std::ios::out | std::ios::binary);
 
         if (!f.is_open())
         {
@@ -248,7 +248,7 @@ namespace seq2map
 
         for (idx = indices.begin(); idx != last; idx++)
         {
-            ss << (*idx) << ((std::next(idx) != last) ? ", " : "");
+            ss << (*idx) << ((boost::next(idx) != last) ? ", " : "");
         }
 
         return ss.str();

@@ -10,11 +10,11 @@ class MinimumSpanningTree
 public:
     struct Edge
     {
-        Edge(size_t p, size_t q, float cost);
+        Edge(size_t p = INVALID_INDEX, size_t q = INVALID_INDEX, float cost = -1);
 
-        size_t p = INVALID_INDEX;
-        size_t q = INVALID_INDEX;
-        float  cost = -1;
+        size_t p;
+        size_t q;
+        float  cost;
     };
 
     struct CompareEdges
@@ -457,7 +457,7 @@ bool CalibGraph::WriteParams(const Path& calPath) const
 
 bool CalibGraph::WriteMFile(const Path& mfilePath) const
 {
-    std::ofstream of(mfilePath.string());
+    std::ofstream of(mfilePath.string().c_str());
 
     if (!of.is_open())
     {

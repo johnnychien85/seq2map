@@ -1,9 +1,9 @@
 #ifndef SEQUENCE_HPP
 #define SEQUENCE_HPP
 
-#include <seq2map\common.hpp>
-#include <seq2map\features.hpp>
-#include <seq2map\geometry.hpp>
+#include <seq2map/common.hpp>
+#include <seq2map/features.hpp>
+#include <seq2map/geometry.hpp>
 
 namespace seq2map
 {
