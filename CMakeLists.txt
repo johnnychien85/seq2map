@@ -2,7 +2,42 @@ cmake_minimum_required(VERSION 2.6)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/")
 
 # Build Option(s)
-set(MONOLITHIC TRUE CACHE BOOL "Build big standalone executables statically linked against thirt-party libraries")
+set(MONOLITHIC TRUE  CACHE BOOL "Build big standalone executables statically linked against thirt-party libraries")
+set(WITH_EBUS  FALSE CACHE BOOL "Build the grabber with the support of Pleora's cameras")
+set(WITH_PYLON FALSE CACHE BOOL "Build the grabber with the support of Basler's cameras")
+
+# Basler's Pylon library
+if(WITH_EBUS)
+    set(eBUS_INCLUDE_DIR ${eBUS_INCLUDE_DIR} CACHE PATH "The directory containing eBUS header files." FORCE)
+    set(eBUS_LIBRARY_DIR ${eBUS_LIBRARY_DIR} CACHE PATH "The directory containing eBUS libraries."    FORCE)
+    
+    if(NOT EXISTS "${eBUS_INCLUDE_DIR}/PvBase.h")
+        message(SEND_ERROR "eBUS includes missing")
+    elseif(NOT EXISTS "${eBUS_LIBRARY_DIR}")
+        message(SEND_ERROR "eBUS library folder missing")
+    else()
+        include_directories(${eBUS_INCLUDE_DIR})
+        link_directories   (${eBUS_LIBRARY_DIR})
+        add_definitions    (-DWITH_EBUS)
+        add_definitions    (-DPV_GUI_NOT_AVAILABLE) # disable GUI functions
+    endif()
+endif()
+
+# Basler's Pylon library
+if(WITH_PYLON)
+    set(Pylon_INCLUDE_DIR ${Pylon_INCLUDE_DIR} CACHE PATH "The directory containing Pylon header files." FORCE)
+    set(Pylon_LIBRARY_DIR ${Pylon_LIBRARY_DIR} CACHE PATH "The directory containing Pylon libraries."    FORCE)
+    
+    if(NOT EXISTS "${Pylon_INCLUDE_DIR}/pylon/PylonIncludes.h")
+        message(SEND_ERROR "Pylon includes missing")
+    elseif(NOT EXISTS "${Pylon_LIBRARY_DIR}")
+        message(SEND_ERROR "Pylon library folder missing")
+    else()
+        include_directories(${Pylon_INCLUDE_DIR})
+        link_directories   (${Pylon_LIBRARY_DIR})
+        add_definitions    (-DWITH_PYLON)
+    endif()
+endif()
 
 # Executables Configuration
 project(seq2map CXX)
@@ -30,7 +65,7 @@ add_executable(calibn      sources/calibn/args.hpp               # Multi-camera 
 add_executable(im2dpmap    sources/im2dpmap/im2dpmap.cpp)        # Stereo matcher-based disparity map computatiion
 add_executable(im2flow     sources/im2flow/im2flow.cpp)          # Optical flow computation
 add_executable(im2features sources/im2features/im2features.cpp)  # Image feature detection and extraction
-add_executable(raw2seq     sources/raw2seq/scanner.hpp           # Structured raw data folder to sequence profile
+add_executable(raw2seq     sources/raw2seq/scanner.hpp           # Process raw data to the structured sequence profile
                            sources/raw2seq/scanner.cpp           # 
                            sources/raw2seq/raw2seq.cpp)          # 
 add_executable(monovo      sources/monovo/monovo.cpp)            # Monocular visual odometry
@@ -40,6 +75,7 @@ add_executable(vggrab      sources/vggrab/recorder.hpp           # Software sync
                            sources/vggrab/grabber.cpp            # 
                            sources/vggrab/grabber_dummy_impl.hpp # 
                            sources/vggrab/grabber_ebus_impl.hpp  # 
+                           sources/vggrab/grabber_pylon_impl.hpp # 
                            sources/vggrab/storage.hpp            # 
                            sources/vggrab/storage.cpp            # 
                            sources/vggrab/syncbuf.hpp            # 
@@ -96,7 +132,7 @@ if(OpenCV_VERSION AND NOT OpenCV_VERSION_MAJOR LESS 3)
 	target_link_libraries(seqchk      ${OpenCV_LIBS})
 
     if(OPENCV_XFEATURES2D_FOUND)
-        ADD_DEFINITIONS(-DWITH_XFEATURES2D)
+        add_definitions(-DWITH_XFEATURES2D)
     else()
         message(STATUS "extended features2d module not found")
         message(STATUS "it might be located in the build of opencv-contrib")
@@ -125,6 +161,7 @@ else()
 	set(BOOST_LIBRARYDIR ${Boost_LIBRARY_DIRS} CACHE PATH "The directory containing boost libraries." FORCE)
 	message(SEND_ERROR "boost not found")
 endif()
+
 
 # MUST use static standard c runtime for monolithic build
 if(MONOLITHIC AND MSVC)

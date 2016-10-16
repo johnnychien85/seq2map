@@ -36,7 +36,7 @@ public:
     inline bool IsEmpty()    const { return m_numWrites == 0; }
     inline bool IsSynced()   const { return m_synced;         }
     inline void Dispose()          { m_clear = true;          }
-    inline long GetDelta(const Time& time) const { return (time - m_time).total_milliseconds(); }
+    inline long GetDelta(const Time& time) const { return static_cast<long>((time - m_time).total_milliseconds()); }
 
 protected:
     friend class SyncBuffer;
@@ -67,9 +67,9 @@ public:
     typedef boost::shared_ptr<SyncBuffer> Ptr;
 
     SyncBuffer(size_t numWriters, size_t numReaders, size_t bufferSize, double fps, double epsilon)
-        : m_numWriters(numWriters), m_numReaders(numReaders), m_bufferSize(bufferSize),
-        m_interval(1000.0f / fps), m_halfInterval(m_interval * 0.5f), m_sigma(m_halfInterval * epsilon),
-        m_data(new BufferData[bufferSize]), m_timestamp(UNow()), m_seqHead(0), m_seqTail(0)
+    : m_numWriters(numWriters),  m_numReaders(numReaders), m_bufferSize(bufferSize),
+      m_interval(1000.0f / fps), m_halfInterval(m_interval * 0.5f), m_sigma(m_halfInterval * epsilon),
+      m_data(new BufferData[bufferSize]), m_timestamp(UNow()), m_seqHead(0), m_seqTail(0)
     { assert(fps > 0 && epsilon > 0.0f && epsilon < 1.0f); }
     virtual ~SyncBuffer()             { delete[] m_data;   }
     unsigned long GetInterval() const { return m_interval; }

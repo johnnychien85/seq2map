@@ -52,6 +52,7 @@ int main(int argc, char* argv[])
 
     ImageGrabberBuilderFactory factory;
     ImageGrabberBuilder::Ptr builder = factory.Create(args.grabber);
+    ImageGrabber::Ptrs grabbers;
 
     if (!builder)
     {
@@ -59,15 +60,19 @@ int main(int argc, char* argv[])
         return EXIT_FAILURE;
     }
 
-    if (args.cameras >= builder->GetDevices())
+    Strings devices = builder->GetDeviceIdList();
+    for (size_t i = 0; i < devices.size(); i++)
+    {
+        E_INFO << devices[i];
+    }
+
+    if (args.cameras > builder->GetDevices())
     {
         E_ERROR << "insufficient resources";
         E_ERROR << "the grabber builder is able to build " << builder->GetDevices() << " grabber(s), however " << args.cameras << " requested";
 
         return EXIT_FAILURE;
     }
-
-    ImageGrabber::Ptrs grabbers;
 
     for (size_t i = 0; i < args.cameras; i++)
     {
@@ -82,19 +87,19 @@ int main(int argc, char* argv[])
         grabbers.push_back(grabber);
     }
 
-    /*
-    DummyImageGrabber cam0(buffer), cam1(buffer);
     BufferRecorder recorder(buffer, "seq");
 
-    // UI stuff
+    ImageGrabber& cam0 = *grabbers[0];
+    ImageGrabber& cam1 = *grabbers[1];
+
     cv::Mat canvas;
     StereoImageRenderer imageRenderer(cam0, cam1);
     std::vector<BufferWriterStatsRenderer> statsRenderers;
     BufferUsageIndicator usageIndicator(buffer);
     BufferRecorderStatsRenderer recRenderer(recorder);
 
-    statsRenderers.push_back(BufferWriterStatsRenderer(cam0, 1000 / WAIT_DELAY * 3));
-    statsRenderers.push_back(BufferWriterStatsRenderer(cam1, 1000 / WAIT_DELAY * 3));
+    statsRenderers.push_back(BufferWriterStatsRenderer(grabbers[0], 1000 / WAIT_DELAY * 3));
+    statsRenderers.push_back(BufferWriterStatsRenderer(grabbers[1], 1000 / WAIT_DELAY * 3));
     statsRenderers[0].Rectangle = cv::Rect(32, 32, 320, 90);
     statsRenderers[1].Rectangle = cv::Rect(32, 138, 320, 90);
 
@@ -105,12 +110,12 @@ int main(int argc, char* argv[])
     recRenderer.Origin = cv::Point(-400, 64);
 
     cv::namedWindow(WINDOW_TITLE, cv::WINDOW_AUTOSIZE);
- 
+
     if (!cam0.Start() || !cam1.Start() || !recorder.Start()) return -1;
 
     for (int key = 0; key != KEY_QUIT; key = cv::waitKey(WAIT_DELAY))
     {
-        switch (key) 
+        switch (key)
         {
         case KEY_VIEW_PREV:
             imageRenderer.SetMode(StereoImageRenderer::ListedModes[--viewIdx % numViews]);
@@ -128,9 +133,9 @@ int main(int argc, char* argv[])
         case KEY_QUIT: //
             break;
         default:
-            /////;
+            ;
         }
-        
+
         if (!imageRenderer.Draw(canvas))
         {
             E_ERROR << "error rendering camera views";
@@ -148,11 +153,25 @@ int main(int argc, char* argv[])
 
         cv::imshow(WINDOW_TITLE, canvas);
     }
-
+    /*
+    while (getchar() != '\n')
+    {
+        cv::Mat im = cam0.GetImage();
+        if (im.empty())
+        {
+            E_INFO << "shit";
+        }
+        else
+        {
+            cv::imshow("hahaha", im);
+            cv::waitKey(10);
+        }
+    }
+    */
     cam0.Stop();
     cam1.Stop();
     recorder.Stop();
-    */
+
     return EXIT_SUCCESS;
 }
 

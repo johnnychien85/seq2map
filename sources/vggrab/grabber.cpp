@@ -1,22 +1,6 @@
 #include <sstream>
 #include <boost/assign/list_of.hpp>
 #include "grabber.hpp"
-#include "grabber_dummy_impl.hpp"
-
-#ifdef WITH_STCAM
-#include "grabber_stcam_impl.hpp"
-#endif // WITH_STCAM
-#ifdef WITH_EBUS
-#include "grabber_ebus_impl.hpp"
-#endif // WITH_EBUS
-
-ImageGrabberBuilderFactory::ImageGrabberBuilderFactory()
-{
-    Factory::Register<DummyImageGrabberBuilder>("DUMMY");
-#ifdef WITH_EBUS
-    Factory::Register<EBusImageGrabberBuilder> ("EBUS");
-#endif // WITH_EBUS
-}
 
 bool ImageGrabber::GrabNextData()
 {
@@ -62,4 +46,26 @@ cv::Mat ImageGrabber::GetImage()
 {
     boost::lock_guard<boost::mutex> locker(m_mtx);
     return m_image.clone();
+}
+
+#include "grabber_dummy_impl.hpp"
+#ifdef WITH_EBUS
+#include "grabber_ebus_impl.hpp"
+#endif
+#ifdef WITH_PYLON
+#include "grabber_pylon_impl.hpp"
+#endif
+#ifdef WITH_STCAM
+#include "grabber_stcam_impl.hpp"
+#endif
+
+ImageGrabberBuilderFactory::ImageGrabberBuilderFactory()
+{
+    Factory::Register<DummyImageGrabberBuilder>("DUMMY");
+#ifdef WITH_EBUS
+    Factory::Register<EbusImageGrabberBuilder> ("EBUS");
+#endif
+#ifdef WITH_PYLON
+    Factory::Register<PylonImageGrabberBuilder>("PYLON");
+#endif
 }
