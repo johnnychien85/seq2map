@@ -28,7 +28,7 @@ typedef TimedData<cv::Mat> TimedImage;
 class BufferData
 {
 public:
-    TimedImage images[2];
+    std::vector<TimedImage> images;
 
     inline void Create(size_t seq, const Time& timestamp);
     inline void Lock()             { m_mtx.lock();            }
@@ -70,14 +70,17 @@ public:
     : m_numWriters(numWriters),  m_numReaders(numReaders), m_bufferSize(bufferSize),
       m_interval(1000.0f / fps), m_halfInterval(m_interval * 0.5f), m_sigma(m_halfInterval * epsilon),
       m_data(new BufferData[bufferSize]), m_timestamp(UNow()), m_seqHead(0), m_seqTail(0)
-    { assert(fps > 0 && epsilon > 0.0f && epsilon < 1.0f); }
+    { assert(fps > 0 && epsilon > 0.0f && epsilon < 1.0f); InitDataBuffer(); }
     virtual ~SyncBuffer()             { delete[] m_data;   }
     unsigned long GetInterval() const { return m_interval; }
     double GetUsage();
+    inline size_t GetWritters() const { return m_numWriters;  }
 
 protected:
     friend class BufferWriter;
     friend class BufferReader;
+
+    void InitDataBuffer() { for (size_t i = 0; i < m_bufferSize; i++) m_data[i].images.resize(m_numWriters); }
     bool TryWrite(size_t& seq, unsigned long& bestDelta, BufferData*& data);
     bool TryRead(size_t seq, BufferData*& data);
     void CommitRead(size_t& seq);

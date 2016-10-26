@@ -72,8 +72,8 @@ private:
         bool m_active;
     };
 
-    inline Observation& GetObservation(size_t cam, size_t view) { return m_observations[cam + view * m_cameraVtx.size()]; }
-    inline const Observation& GetObservation(size_t cam, size_t view) const { return m_observations[cam + view * m_cameraVtx.size()]; }
+    inline Observation& GetObservation(size_t cam, size_t view)             { return m_observations[cam + view * m_camvtx.size()]; }
+    inline const Observation& GetObservation(size_t cam, size_t view) const { return m_observations[cam + view * m_camvtx.size()]; }
     cv::Mat GetVisibilityMatrix() const;
 
     typedef std::vector<Observation> Observations;
@@ -81,8 +81,8 @@ private:
 	size_t m_cams;
 	size_t m_views;
     size_t m_refCamIdx;
-    CameraVertex::Ptrs m_cameraVtx;
-    ViewVertex::Ptrs   m_viewVtx;
+    CameraVertex::Ptrs m_camvtx;
+    ViewVertex::Ptrs   m_viewvtx;
     Observations       m_observations;
 };
 

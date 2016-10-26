@@ -37,8 +37,8 @@ bool SyncBuffer::TryWrite(size_t& seq, unsigned long& bestDelta, BufferData*& da
             if (!data->m_clear)
             {
                 // the first write is not possible
-                E_WARNING << "buffer overflow!!";
-                E_TRACE   << "creation of frame " << seq << " failed, old frame " << data->m_seq << " is not clear";
+                //E_WARNING << "buffer overflow!!";
+                //E_TRACE   << "creation of frame " << seq << " failed, old frame " << data->m_seq << " is not clear";
 
                 return false;
             }
@@ -56,11 +56,11 @@ bool SyncBuffer::TryWrite(size_t& seq, unsigned long& bestDelta, BufferData*& da
 
         //E_TRACE << "seq=" << seq << " delta=" << delta << " ts=" << now;
 
-        //        out       in                                 
-        //   ||  /         /      ||                   ||      
-        // --||-----[   o   ]-----||-----[   o   ]-----||-----[
-        //   ||seq=0     \        ||seq=1              ||seq=2 
-        //                 timestamp                           
+        //        out       in
+        //   ||  /         /      ||                   ||
+        // --||-x---[   o x ]-----||-----[   o   ]-----||-----[
+        //   ||seq=0     \        ||seq=1              ||seq=2
+        //                 timestamp
         if (synced)
         {
             boost::lock_guard<boost::mutex> locker(m_mtx);
@@ -106,7 +106,7 @@ void SyncBuffer::CommitRead(size_t& seq)
     data.m_numReads++;
     seq++;
 
-    if (data.m_numReads == m_numReaders) 
+    if (data.m_numReads == m_numReaders)
     {
         boost::lock_guard<boost::mutex> locker(m_mtx);
         m_seqTail = seq;
@@ -172,7 +172,7 @@ void BufferWriter::Loop()
     BufferData* data;
     if (GrabNextData() && m_buffer->TryWrite(m_seq, m_bestDelta, data))
     {
-        size_t bytesWritten = Write(*data);  
+        size_t bytesWritten = Write(*data);
         m_speedometre.Update(bytesWritten);
         //E_TRACE << "frame " << _seq << " written with " << bytesWritten << " bytes, delta=" << _bestDelta;
     }

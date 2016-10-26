@@ -1,4 +1,4 @@
-#include <seq2map\sequence.hpp>
+#include <seq2map/sequence.hpp>
 
 namespace po = boost::program_options;
 

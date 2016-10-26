@@ -4,6 +4,18 @@
 #include "calibgraph.hpp"
 #include "calibgraphbundler.hpp"
 
+struct RectifiedParams
+{
+    cv::Mat K;
+    cv::Mat D;
+    cv::Mat R;
+    cv::Mat T;
+    cv::Mat R_rect;
+    cv::Mat P_rect;
+    cv::Size S;
+    cv::Size S_rect;
+};
+
 // a helper class to find the maximum spanning tree from a given cost matrix
 class MinimumSpanningTree
 {
@@ -160,11 +172,11 @@ bool CalibGraph::Create(size_t cams, size_t views, size_t refCamIdx)
         return false;
     }
 
-    m_cameraVtx = CameraVertex::Ptrs(cams);
-    m_viewVtx   = ViewVertex::Ptrs(views);
+    m_camvtx = CameraVertex::Ptrs(cams);
+    m_viewvtx   = ViewVertex::Ptrs(views);
 
-    for (size_t c = 0; c < cams;  c++) m_cameraVtx[c] = CameraVertex::Ptr(new CameraVertex(c));
-    for (size_t v = 0; v < views; v++) m_viewVtx[v]   = ViewVertex::Ptr  (new ViewVertex  (v));
+    for (size_t c = 0; c < cams;  c++) m_camvtx[c] = CameraVertex::Ptr(new CameraVertex(c));
+    for (size_t v = 0; v < views; v++) m_viewvtx[v]   = ViewVertex::Ptr  (new ViewVertex  (v));
 
     m_refCamIdx = refCamIdx;
     m_observations = Observations(cams * views);
@@ -185,7 +197,7 @@ bool CalibGraph::Calibrate(bool pairwiseOptim)
     E_INFO << "starting initialisation of intrinsics";
     for (size_t cam = 0; cam < m_cams; cam++)
     {
-        CameraVertex::Ptr vxcam = m_cameraVtx[cam];
+        CameraVertex::Ptr vxcam = m_camvtx[cam];
         std::vector<Points3F> objectPoints;
         std::vector<Points2F> imagePoints;
         std::vector<size_t> viewIdx;
@@ -199,7 +211,7 @@ bool CalibGraph::Calibrate(bool pairwiseOptim)
         for (size_t view = 0; view < m_views; view++)
         {
             Observation& o = GetObservation(cam, view);
-            ViewVertex::Ptr vxview = m_viewVtx[view];
+            ViewVertex::Ptr vxview = m_viewvtx[view];
 
             if (!o.IsActive()) continue; // observation suppressed or not available
 
@@ -274,7 +286,7 @@ bool CalibGraph::Calibrate(bool pairwiseOptim)
 
         for (size_t view = 0; view < m_views; view++)
         {
-            const ViewVertex::Ptr viewvtx = m_viewVtx[view];
+            const ViewVertex::Ptr viewvtx = m_viewvtx[view];
             const Observation& op = GetObservation(e.p, view);
             const Observation& oq = GetObservation(e.q, view);
 
@@ -287,8 +299,8 @@ bool CalibGraph::Calibrate(bool pairwiseOptim)
             viewvtx->connected = true;
         }
 
-        const CameraVertex::Ptr camvtx1 = m_cameraVtx[e.p];
-        const CameraVertex::Ptr camvtx2 = m_cameraVtx[e.q];
+        const CameraVertex::Ptr camvtx1 = m_camvtx[e.p];
+        const CameraVertex::Ptr camvtx2 = m_camvtx[e.q];
 
         if (camvtx1->imageSize != camvtx2->imageSize)
         {
@@ -327,7 +339,7 @@ bool CalibGraph::Calibrate(bool pairwiseOptim)
     E_INFO << "combining pair-wise transformations to initialise camera extrinsics";
     for (size_t cam = 0; cam < m_cams; cam++)
     {
-        CameraVertex::Ptr camvtx = m_cameraVtx[cam];
+        CameraVertex::Ptr camvtx = m_camvtx[cam];
         EuclideanTransform& extrinsics = camvtx->extrinsics;
         extrinsics = EuclideanTransform::Identity;
 
@@ -348,7 +360,7 @@ bool CalibGraph::Calibrate(bool pairwiseOptim)
     E_INFO << "estimating target pose(s)";
     for (size_t view = 0; view < m_views; view++)
     {
-        ViewVertex::Ptr viewvtx = m_viewVtx[view];
+        ViewVertex::Ptr viewvtx = m_viewvtx[view];
 
         // find the best observation
         const double NiL = -1;
@@ -372,7 +384,7 @@ bool CalibGraph::Calibrate(bool pairwiseOptim)
         }
 
         const Observation& o = GetObservation(bestCam, view);
-        CameraVertex::Ptr camvtx = m_cameraVtx[bestCam];
+        CameraVertex::Ptr camvtx = m_camvtx[bestCam];
         cv::Mat rvec = o.pose.GetRotationVector();
         cv::Mat tvec = o.pose.GetTranslation();
 
@@ -402,7 +414,7 @@ bool CalibGraph::Optimise(size_t iter, double eps, size_t threads)
     Indices camIdx, viewIdx;
 
     // find all the connected cameras
-    if (!m_cameraVtx[m_refCamIdx]->connected)
+    if (!m_camvtx[m_refCamIdx]->connected)
     {
         E_ERROR << "the referenced camera vertex is not connected";
         return false;
@@ -412,7 +424,7 @@ bool CalibGraph::Optimise(size_t iter, double eps, size_t threads)
 
     for (size_t cam = 0; cam < m_cams; cam++)
     {
-        if (m_cameraVtx[cam]->connected && cam != m_refCamIdx)
+        if (m_camvtx[cam]->connected && cam != m_refCamIdx)
         {
             camIdx.push_back(cam);
         }
@@ -421,13 +433,11 @@ bool CalibGraph::Optimise(size_t iter, double eps, size_t threads)
     // find all the connected views
     for (size_t view = 0; view < m_views; view++)
     {
-        if (m_viewVtx[view]->connected) viewIdx.push_back(view);
+        if (m_viewvtx[view]->connected) viewIdx.push_back(view);
     }
 
     CalibGraphBundler::Ptr bundler = CalibGraphBundler::Create(*this, camIdx, viewIdx);
-
     VectorisableD::Vec x = bundler->Initialise();
-    //E_INFO << "initial RMSE: " << rms(cv::Mat(y));
 
     // solve the bundle adjustment problem by LM algorithm
     LevenbergMarquardtAlgorithm solver;
@@ -445,12 +455,120 @@ bool CalibGraph::Optimise(size_t iter, double eps, size_t threads)
     return true;
 }
 
-bool CalibGraph::WriteReport(const Path& reportPath)
+bool CalibGraph::WriteParams(const Path& calPath) const
 {
-    return false;
+    if (m_camvtx.empty())
+    {
+        E_ERROR << "no cameras available";
+        return false;
+    }
+
+    if (!makeOutDir(calPath))
+    {
+        E_ERROR << "error creating directory " << calPath;
+        return false;
+    }
+
+    CameraVertex::Ptrs camvtx;
+    camvtx.push_back(m_camvtx[m_refCamIdx]);
+
+    // rectification parameters
+    std::vector<RectifiedParams> rect(m_cams);
+    double alpha = 0;
+    int flags = cv::CALIB_ZERO_DISPARITY;
+    cv::Size imageSize = camvtx[0]->imageSize;
+    cv::Mat Q;
+
+    for (size_t i = 0; i < m_cams; i++)
+    {
+        if (i != m_refCamIdx) camvtx.push_back(m_camvtx[i]);
+    }
+
+    for (size_t i = 0; i < m_cams; i++)
+    {
+        if (!camvtx[i]->connected || !camvtx[i]->initialised)
+        {
+            E_ERROR << "camera " << camvtx[i]->GetIndex() << " not connected nor initialised";
+            return false;
+        }
+
+        rect[i].K = camvtx[i]->intrinsics.GetCameraMatrix();
+        rect[i].D = camvtx[i]->intrinsics.GetDistCoeffs();
+        rect[i].R = camvtx[i]->extrinsics.GetRotationMatrix();
+        rect[i].T = camvtx[i]->extrinsics.GetTranslation();
+        rect[i].S = camvtx[i]->imageSize;
+        rect[i].S_rect = imageSize;
+    }
+
+    if (camvtx.size() == 1) // monocular case
+    {
+        rect[0].R_rect = cv::Mat::eye  (3, 3, CV_64F);
+        rect[0].P_rect = cv::Mat::zeros(3, 4, CV_64F);
+
+        camvtx[0]->intrinsics.GetCameraMatrix().copyTo(rect[0].P_rect.rowRange(0, 3).colRange(0, 3));
+    }
+    else if (camvtx.size() == 2) // binocular case
+    {
+        cv::stereoRectify(
+            rect[0].K, rect[0].D, rect[1].K, rect[1].D,
+            imageSize, rect[1].R, rect[1].T,
+            rect[0].R_rect, rect[1].R_rect, rect[0].P_rect, rect[1].P_rect,
+            Q, flags, alpha);
+
+    }
+    else // deploy a trinocular strategy to handle more than 2 cameras
+    {
+        for (size_t i = 2; i < m_cams; i++)
+        {
+            cv::rectify3Collinear(
+                rect[0].K, rect[0].D, rect[1].K, rect[1].D, rect[i].K, rect[i].D,
+                cv::Mat(), cv::Mat(), imageSize,
+                rect[1].R, rect[1].T, rect[i].R, rect[i].T,
+                rect[0].R_rect, rect[1].R_rect, rect[i].R_rect,
+                rect[0].P_rect, rect[1].P_rect, rect[i].P_rect,
+                Q, alpha, imageSize, NULL, NULL, flags);
+        }
+    }
+
+    // write parameters
+    for (size_t i = 0; i < m_cams; i++)
+    {
+        std::stringstream ss;
+        ss << "c" << i << ".yml";
+
+        Path ymlPath = calPath / ss.str();
+
+        try
+        {
+            cv::FileStorage fs(ymlPath.string().c_str(), cv::FileStorage::WRITE);
+
+            fs <<"index" << (int) camvtx[i]->GetIndex();
+            fs << "ref"  << (int) m_refCamIdx;
+            fs << "i" << (int) i;
+            fs << "K" << rect[i].K;
+            fs << "D" << rect[i].D;
+            fs << "R" << rect[i].R;
+            fs << "T" << rect[i].T;
+            fs << "S" << rect[i].S;
+            fs << "R_rect" << rect[i].R_rect;
+            fs << "P_rect" << rect[i].P_rect;
+            fs << "S_rect" << rect[i].S_rect;
+
+            E_INFO << "camera parameters written to " << ymlPath;
+        }
+        catch (std::exception& ex)
+        {
+            E_ERROR << "error writing camera parameters to " << ymlPath;
+            E_ERROR << ex.what();
+
+            return false;
+        }
+    }
+
+    return true;
 }
 
-bool CalibGraph::WriteParams(const Path& calPath) const
+bool CalibGraph::WriteReport(const Path& reportPath)
 {
     return false;
 }
@@ -464,9 +582,9 @@ bool CalibGraph::WriteMFile(const Path& mfilePath) const
         return false;
     }
 
-    for (size_t cam = 0; cam < m_cameraVtx.size(); cam++)
+    for (size_t cam = 0; cam < m_camvtx.size(); cam++)
     {
-        const CameraVertex::Ptr camvtx = m_cameraVtx[cam];
+        const CameraVertex::Ptr camvtx = m_camvtx[cam];
         of << "% camera " << cam << std::endl;
         of << "cam(" << (cam + 1) << ").index     = " << (camvtx->GetIndex() + 1) << ";" << std::endl;
         of << "cam(" << (cam + 1) << ").connected = " << (camvtx->connected ? "true" : "false") << ";" << std::endl;
@@ -477,9 +595,9 @@ bool CalibGraph::WriteMFile(const Path& mfilePath) const
         of << "cam(" << (cam + 1) << ").t         = " << mat2string(camvtx->extrinsics.GetTranslation()) << std::endl;
     }
     
-    for (size_t view = 0; view < m_viewVtx.size(); view++)
+    for (size_t view = 0; view < m_viewvtx.size(); view++)
     {
-        const ViewVertex::Ptr viewvtx = m_viewVtx[view];
+        const ViewVertex::Ptr viewvtx = m_viewvtx[view];
         of << "% view " << view << std::endl;
         of << "view(" << (view + 1) << ").index        = " << (viewvtx->GetIndex() + 1) << ";" << std::endl;
         of << "view(" << (view + 1) << ").connected    = " << (viewvtx->connected ? "true" : "false") << ";" << std::endl;
@@ -489,9 +607,9 @@ bool CalibGraph::WriteMFile(const Path& mfilePath) const
     }
 
     size_t i = 0;
-    for (size_t view = 0; view < m_viewVtx.size(); view++)
+    for (size_t view = 0; view < m_viewvtx.size(); view++)
     {
-        for (size_t cam = 0; cam < m_cameraVtx.size(); cam++)
+        for (size_t cam = 0; cam < m_camvtx.size(); cam++)
         {
             const Observation& o = GetObservation(cam, view);
 
@@ -516,7 +634,7 @@ void CalibGraph::Summary() const
 
     for (size_t cam = 0; cam < m_cams; cam++)
     {
-        CameraVertex::Ptr camvtx = m_cameraVtx[cam];
+        CameraVertex::Ptr camvtx = m_camvtx[cam];
         E_INFO << "camera " << cam;
         E_INFO << mat2string(cv::Mat(camvtx->intrinsics.ToVector()), "intrinsics");
         E_INFO << mat2string(cv::Mat(camvtx->extrinsics.ToVector()), "extrinsics");
@@ -524,7 +642,7 @@ void CalibGraph::Summary() const
 
     for (size_t view = 0; view < m_views; view++)
     {
-        ViewVertex::Ptr viewvtx = m_viewVtx[view];
+        ViewVertex::Ptr viewvtx = m_viewvtx[view];
         E_INFO << "view " << view;
         E_INFO << mat2string(cv::Mat(viewvtx->pose.ToVector()), "pose");
     }
@@ -532,12 +650,156 @@ void CalibGraph::Summary() const
 
 bool CalibGraph::Store(Path& path) const
 {
-    return false;
+    try
+    {
+        cv::FileStorage fs(path.string(), cv::FileStorage::WRITE);
+
+        fs << "cams" << (int)m_cams;
+        fs << "view" << (int)m_views;
+        fs << "refCamIdx" << (int)m_refCamIdx;
+        fs << "camvtx" << "[:";
+        BOOST_FOREACH(const CameraVertex::Ptr& camvtx, m_camvtx)
+        {
+            fs << "{:";
+            fs << "index"      << (int) camvtx->GetIndex();
+            fs << "connected"  << camvtx->connected;
+            fs << "imageSize"  << camvtx->imageSize;
+            fs << "intrinsics" << "{:"; camvtx->intrinsics.Store(fs); fs << "}";
+            fs << "extrinsics" << "{:"; camvtx->extrinsics.Store(fs); fs << "}";
+            fs << "}";
+        }
+        fs << "]";
+        fs << "viewvtx" << "[:";
+        BOOST_FOREACH(const ViewVertex::Ptr& viewvtx, m_viewvtx)
+        {
+            fs << "{:";
+            fs << "index"        << (int) viewvtx->GetIndex();
+            fs << "connected"    << viewvtx->connected;
+            fs << "pose"         << "{:"; viewvtx->pose.Store(fs); fs << "}";
+            fs << "objectPoints" << viewvtx->objectPoints;
+            fs << "}";
+        }
+        fs << "]";
+        fs << "observations" << "[:";
+        
+        for (size_t cam = 0; cam < m_cams; cam++)
+        {
+            for (size_t view = 0; view < m_views; view++)
+            {
+                const Observation& o = GetObservation(cam, view);
+                fs << "{:";
+                fs << "camera" << (int) cam;
+                fs << "view"   << (int) view;
+                fs << "active" << o.IsActive();
+                fs << "rpe"    << o.rpe;
+                fs << "source" << o.source.string();
+                fs << "imagePoints" << o.imagePoints;
+                fs << "pose" << "{:"; o.pose.Store(fs); fs << "}";
+                fs << "}";
+            }
+        }
+        fs << "]";
+    }
+    catch (std::exception& ex)
+    {
+        E_ERROR << "error writing to file storage " << path;
+        E_ERROR << ex.what();
+        return false;
+    }
+    
+    return true;
 }
 
 bool CalibGraph::Restore(const Path& path)
 {
-    return false;
+    try
+    {
+        cv::FileStorage fs(path.string(), cv::FileStorage::READ);
+        int cams, views, refCamIdx;
+
+        fs["cams"] >> cams;
+        fs["view"] >> views;
+        fs["refCamIdx"] >> refCamIdx;
+
+        Create((size_t) cams, (size_t) views, (size_t)refCamIdx);
+
+        cv::FileNode camvtxNode = fs["camvtx"];
+        for (cv::FileNodeIterator camvtx = camvtxNode.begin(); camvtx != camvtxNode.end(); camvtx++)
+        {
+            int index;
+
+            (*camvtx)["index"]     >> index;
+            (*camvtx)["connected"] >> m_camvtx[index]->connected;
+            (*camvtx)["imageSize"] >> m_camvtx[index]->imageSize;
+
+            if (!m_camvtx[index]->intrinsics.Restore((*camvtx)["intrinsics"]))
+            {
+                E_ERROR << "error restoring intrinsics of camera" << index;
+                return false;
+            }
+
+            if (!m_camvtx[index]->extrinsics.Restore((*camvtx)["extrinsics"]))
+            {
+                E_ERROR << "error restoring extrinsics of camera " << index;
+                return false;
+            }
+
+            m_camvtx[index]->initialised = true;
+        }
+
+        cv::FileNode viewvtxNode = fs["viewvtx"];
+        for (cv::FileNodeIterator viewvtx = viewvtxNode.begin(); viewvtx != viewvtxNode.end(); viewvtx++)
+        {
+            int index;
+
+            (*viewvtx)["index"]        >> index;
+            (*viewvtx)["connected"]    >> m_viewvtx[index]->connected;
+            (*viewvtx)["objectPoints"] >> m_viewvtx[index]->objectPoints;
+
+            if (!m_viewvtx[index]->pose.Restore((*viewvtx)["pose"]))
+            {
+                E_ERROR << "error restoring target pose of view " << index;
+                return false;
+            }
+
+            m_viewvtx[index]->initialised = true;
+        }
+        
+        cv::FileNode observationsNode = fs["observations"];
+        for (cv::FileNodeIterator observation = observationsNode.begin(); observation != observationsNode.end(); observation++)
+        {
+            int cam, view;
+            bool active;
+            String source;
+            
+            (*observation)["camera"] >> cam;
+            (*observation)["view"]   >> view;
+            (*observation)["active"] >> active;
+
+            Observation& o = GetObservation(cam, view);
+        
+            (*observation)["rpe"]         >> o.rpe;
+            (*observation)["source"]      >> source;
+            (*observation)["imagePoints"] >> o.imagePoints;
+
+            o.source = source;
+            o.SetActive(active);
+            
+            if (!o.pose.Restore((*observation)["pose"]))
+            {
+                E_ERROR << "error restoring pose of observation (" << cam << "," << view << ")";
+                return false;
+            }
+        }
+    }
+    catch (std::exception& ex)
+    {
+        E_ERROR << "error reading from file storage " << path;
+        E_ERROR << ex.what();
+        return false;
+    }
+
+    return true;
 }
 
 cv::Mat CalibGraph::GetVisibilityMatrix() const

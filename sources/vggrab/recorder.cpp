@@ -17,7 +17,7 @@ void BufferRecorder::StartRecording()
 {
     if (m_recording) return;
 
-    m_recStorage.Create(m_seqDirPath / GetDateCode() / GetTimeCode(), 2);
+    m_recStorage.Create(m_seqDirPath / GetDateCode() / GetTimeCode(), m_buffer->GetWritters());
     m_recording = true;
 
     m_dropped = m_written = 0;

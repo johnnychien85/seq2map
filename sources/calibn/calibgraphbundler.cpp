@@ -117,7 +117,7 @@ CalibGraphBundler::Ptr CalibGraphBundler::Create(const CalibGraph& graph, const 
         size_t c = 0;
         BOOST_FOREACH(size_t cam, camIdx)
         {
-            const CalibGraph::CameraVertex::Ptr camvtx = graph.m_cameraVtx[cam];
+            const CalibGraph::CameraVertex::Ptr camvtx = graph.m_camvtx[cam];
 
             assert(camvtx->connected);
 
@@ -132,11 +132,11 @@ CalibGraphBundler::Ptr CalibGraphBundler::Create(const CalibGraph& graph, const 
         size_t v = 0;
         BOOST_FOREACH(size_t view, viewIdx)
         {
-            const CalibGraph::ViewVertex::Ptr viewvtx = graph.m_viewVtx[view];
+            const CalibGraph::ViewVertex::Ptr viewvtx = graph.m_viewvtx[view];
             
             assert(viewvtx->connected);
 
-            params.poses[v] = graph.m_viewVtx[view]->pose;
+            params.poses[v] = graph.m_viewvtx[view]->pose;
             castTo64F<Points3F, Points3D>(viewvtx->objectPoints, dataset[v].objectPoints);
 
             size_t c = 0;
@@ -167,7 +167,7 @@ void CalibGraphBundler::Apply(CalibGraph& graph, const Indices& camIdx, const In
     size_t c = 0;
     BOOST_FOREACH(size_t cam, camIdx)
     {
-        const CalibGraph::CameraVertex::Ptr camvtx = graph.m_cameraVtx[cam];
+        const CalibGraph::CameraVertex::Ptr camvtx = graph.m_camvtx[cam];
         camvtx->intrinsics = m_params.intrinsics[c];
         camvtx->extrinsics = m_params.extrinsics[c];
         c++;
@@ -177,8 +177,8 @@ void CalibGraphBundler::Apply(CalibGraph& graph, const Indices& camIdx, const In
     size_t v = 0;
     BOOST_FOREACH(size_t view, viewIdx)
     {
-        const CalibGraph::ViewVertex::Ptr viewvtx = graph.m_viewVtx[view];
-        graph.m_viewVtx[view]->pose = m_params.poses[v];
+        const CalibGraph::ViewVertex::Ptr viewvtx = graph.m_viewvtx[view];
+        graph.m_viewvtx[view]->pose = m_params.poses[v];
         v++;
     }
 }

@@ -17,7 +17,7 @@ size_t KittiOdometryScanner::ParseIndex(const String& varname, size_t offset)
 
 KittiOdometryScanner::Calib::Calib(const Path& calPath)
 {
-    ifstream in(calPath.string(), std::ios::in);
+    ifstream in(calPath.string().c_str(), std::ios::in);
 
     if (!in.is_open())
     {
@@ -53,7 +53,7 @@ KittiOdometryScanner::Calib::Calib(const Path& calPath)
         if (var.front() == 'P')
         {
             size_t idx = ParseIndex(var, 1);
-            
+
             if (idx == INVALID_INDEX)
             {
                 E_ERROR << "error parsing \"" << calPath.string() << "\" line " << i;
@@ -129,7 +129,7 @@ bool KittiOdometryScanner::Scan(const Path& seqPath, const Path& calPath, const 
         String imageDirName = ss.str();
         Path imageDirPath = seqPath / imageDirName;
         const String imageFileExt = ".png";
-        
+
         cam.SetName(imageDirName);
 
         if (!dirExists(imageDirPath))
@@ -162,7 +162,7 @@ bool KittiOdometryScanner::Scan(const Path& seqPath, const Path& calPath, const 
 
 KittiRawDataScanner::Calib::Calib(const Path& calPath)
 {
-    ifstream in(calPath.string(), std::ios::in);
+    ifstream in(calPath.string().c_str(), std::ios::in);
 
     if (!in.is_open())
     {
@@ -281,7 +281,7 @@ bool KittiRawDataScanner::Scan(const Path& seqPath, const Path& calPath, const P
         {
             intrinsics->SetCameraMatrix(K);
         }
-        
+
         cam.SetIntrinsics(intrinsics);
 
         // extrinsic parameters..

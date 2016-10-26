@@ -256,12 +256,12 @@ bool CalibGraphBuilder::Build(CalibGraph& graph) const
     {
         std::cout << "View " << std::setw(vw) << (view + 1) << "/" << m_views << "..";
 
-        CalibGraph::ViewVertex::Ptr vxview = graph.m_viewVtx[view];
+        CalibGraph::ViewVertex::Ptr vxview = graph.m_viewvtx[view];
         size_t hits = 0;
 
         for (size_t cam = 0; cam < m_cams; cam++)
         {
-            CalibGraph::CameraVertex::Ptr vxcam = graph.m_cameraVtx[cam];
+            CalibGraph::CameraVertex::Ptr vxcam = graph.m_camvtx[cam];
             CalibGraph::Observation& o = graph.GetObservation(cam, view);
 
             o.source = m_imageFiles(cam, view);

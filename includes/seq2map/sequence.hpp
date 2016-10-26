@@ -78,9 +78,9 @@ namespace seq2map
         //static void WriteFileList(cv::FileStorage& fs, const String& node, const Path& root, const Strings& filenames);
         //static void ReadFileList
 
-        Path m_seqPath;
-        String m_seqName;
-        String m_grabberName;
+        Path    m_seqPath;
+        String  m_seqName;
+        String  m_grabberName;
         Cameras m_cameras;
         FeatureDetextractorPtr m_featureDxtor;
     };

@@ -114,7 +114,7 @@ namespace seq2map
         cv::Mat K64f;
         K.convertTo(K64f, CV_64F);
 
-        if (K64f.at<double>(1,0) != 0 || 
+        if (K64f.at<double>(1,0) != 0 ||
             K64f.at<double>(2,0) != 0 || K64f.at<double>(2,1) != 0 ||
             K64f.at<double>(2,2) != 1)
         {
@@ -202,12 +202,16 @@ namespace seq2map
         try
         {
             logging::core::get()->add_global_attribute("TimeStamp", logging::attributes::local_clock());
-            logging::add_file_log(path, logging::keywords::format = "[%TimeStamp%] %Message%");
-            logging::add_console_log(std::cout);
+            logging::add_console_log(std::cout, logging::keywords::format = "[%TimeStamp%] %Message%");
+
+            if (!path.empty())
+            {
+                logging::add_file_log(path, logging::keywords::format = "[%TimeStamp%] %Message%");
+            }
         }
         catch (std::exception& ex)
         {
-            std::cerr << "error logging to file \"" << path.string() << "\"" << std::endl;
+            std::cerr << "error logging to file " << path.string() << std::endl;
 		    std::cerr << ex.what() << std::endl;
 
             return false;
@@ -240,7 +244,7 @@ namespace seq2map
         while (getline(iss, tok, delimiter)) toks.push_back(tok);
         return toks;
     }
-    
+
     String indices2string(const Indices& indices)
     {
         std::stringstream ss;
@@ -382,15 +386,15 @@ namespace seq2map
     {
         boost::timer::cpu_times elapsed = m_timer.elapsed();
 
-        return (double) boost::chrono::duration_cast<boost::chrono::seconds>(
-            boost::chrono::nanoseconds(elapsed.wall)).count();
+        return (double) boost::chrono::duration_cast<boost::chrono::milliseconds>(
+            boost::chrono::nanoseconds(elapsed.wall)).count() / 1000.0f;
     }
 
     String Speedometre::ToString() const
     {
         std::stringstream ss;
         ss << m_displayName << ": " << std::fixed << std::setprecision(2) << GetSpeed() << " " << m_displayUnit;
-        
+
         return ss.str();
     }
 }

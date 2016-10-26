@@ -42,7 +42,7 @@ int main(int argc, char* argv[])
     if (freshstart)
     {
         E_INFO << "start building a " << args.cameras << "-camera " << args.images << "-view calibration graph";
-        
+
         CalibGraphBuilder builder(args.cameras, args.images);
         builder.SetAdaptiveThresholding(args.adaptiveThresh);
         builder.SetImageNormalisation(args.normaliseImage);
@@ -112,7 +112,7 @@ int main(int argc, char* argv[])
         E_WARNING << "error storing profile to " << args.profilePath;    
     }
 
-    graph.WriteMFile("graph.m");
+    //graph.WriteMFile("graph.m");
 
     // let's print something
     graph.Summary();

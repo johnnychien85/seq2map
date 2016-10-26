@@ -1,4 +1,3 @@
-#include <opencv2/opencv.hpp>
 #include <seq2map/common.hpp>
 
 using namespace std;
@@ -35,7 +34,7 @@ int main(int argc, char* argv[])
 
 			if (im.empty()) continue;
 
-			cout << srcPath.string() << " -> " << dstPath.string() << endl;
+			E_INFO << srcPath.string() << " -> " << dstPath.string();
 
 			remap(im, rect, map1, map2, INTER_CUBIC, BORDER_CONSTANT, Scalar());
 			imwrite(dstPath.string(), rect);
@@ -43,9 +42,10 @@ int main(int argc, char* argv[])
 	}
 	catch (exception& ex)
 	{
-		cerr << "Error rectifying image:" << endl;
-		cerr << ex.what() << endl;
-		return -1;
+		E_ERROR << "error rectifying image";
+        E_ERROR << ex.what();
+
+		return EXIT_FAILURE;
 	}
 
 	return 0;
@@ -55,7 +55,7 @@ bool parseArgs(int argc, char* argv[], string& params, string& in, string& out)
 {
 	if (argc != 4)
 	{
-		cout << "Usage: " << argv[0] << " <calib_params.xml> <source_dir> <dest_dir>" << endl;
+		cout << "Usage: " << argv[0] << " <params.{xml|yml}> <source_dir> <dest_dir>" << endl;
 		return false;
 	}
 
@@ -69,8 +69,8 @@ bool parseArgs(int argc, char* argv[], string& params, string& in, string& out)
 bool readParams(const string& path, Mat& map1, Mat& map2)
 {
 	FileStorage fs(path, FileStorage::READ);
-	Mat K, D, R, P;
-	Size imageSize;
+	Mat K, D, R_rect, P_rect;
+	Size S_rect;
 
 	if (!fs.isOpened())
 	{
@@ -80,30 +80,28 @@ bool readParams(const string& path, Mat& map1, Mat& map2)
 
 	try
 	{
-		fs["imageSize"] >> imageSize;
-		fs["K"] >> K;
-		fs["D"] >> D;
-		fs["R"] >> R;
-		fs["P"] >> P;
+        fs["K"] >> K;
+        fs["D"] >> D;
+		fs["S_rect"] >> S_rect;
+		fs["R_rect"] >> R_rect;
+		fs["P_rect"] >> P_rect;
 
 		// sanity check
-		if (imageSize.area() == 0 || K.empty() || D.empty() || R.empty() || P.empty())
+		if (S_rect.area() == 0 || K.empty() || D.empty() || R_rect.empty() || P_rect.empty())
 		{
-			throw new exception("One of more parameters including imageSize, K, D, R, and P are missing");
+			E_ERROR << "some of parameters including K, D, R_rect, P_rect and S_rect are missing";
+			return false;
 		}
-
-		//if (K.rows != 3 && K.cols != 3 && K.type != CV_32F) {
-		//}
-
 	}
-	catch (exception& ex)
+	catch (std::exception& ex)
 	{
-		cerr << "Error parsing profile " << path << ":" << endl;
-		cerr << ex.what() << endl;
+		E_ERROR << "error parsing camera parameters from " << path;
+		E_ERROR << ex.what();
+
 		return false;
 	}
 
-	initUndistortRectifyMap(K, D, R, P, imageSize, CV_16SC2, map1, map2);
+	initUndistortRectifyMap(K, D, R_rect, P_rect, S_rect, CV_16SC2, map1, map2);
 
 	return true;
 }
@@ -119,7 +117,7 @@ bool checkPaths(const string& in, const string& out)
 	if (inDirOkay && !outDirOkay)
 	{
 		outDirOkay = fs::create_directory(outDir);
-		cout << outDir.string() << " created" << endl;
+		E_INFO << outDir.string() << " created" << endl;
 	}
 
 	return inDirOkay && outDirOkay;

@@ -1,4 +1,4 @@
-#include <seq2map\geometry.hpp>
+#include <seq2map/geometry.hpp>
 
 using namespace seq2map;
 
@@ -49,7 +49,7 @@ namespace seq2map
             assert(x.rows > 1);
             size_t n = x.rows;
             y = cv::Mat::zeros(x.rows, n - 1, x.type());
-            
+
             for (size_t i = 0; i < y.rows; i++)
             {
                 y.row(i) = x.row(i) / x.row(n - 1);
@@ -95,16 +95,6 @@ EuclideanTransform::EuclideanTransform(const cv::Mat& rotation, const cv::Mat& t
     }
 
     SetTranslation(tvec);
-}
-
-EuclideanTransform EuclideanTransform::operator<<(const EuclideanTransform& tform) const
-{
-    return EuclideanTransform(tform.m_rmat * m_rmat, tform.GetRotationMatrix() * m_tvec + tform.m_tvec);
-}
-
-EuclideanTransform EuclideanTransform::operator>>(const EuclideanTransform& tform) const
-{
-    return tform << *this;
 }
 
 void EuclideanTransform::Apply(Point3D& pt) const
@@ -194,7 +184,7 @@ cv::Mat EuclideanTransform::GetTransformMatrix(bool sqrMat, bool preMult) const
     if (!sqrMat && preMult) return m_matrix;
 
     cv::Mat matrix;
-    
+
     if (sqrMat)
     {
         matrix = cv::Mat::eye(4, 4, m_matrix.type());
@@ -440,7 +430,7 @@ cv::Mat MotionEstimation::EvalEpipolarConds(const EuclideanTransform& transform)
 
         gerr.col(0) = xFx.mul(1 / nn0);
         gerr.col(1) = xFx.mul(1 / nn1);
-        
+
         return gerr.reshape(1, gerr.total());
     }
 }
@@ -480,7 +470,7 @@ bool MotionEstimation::SetSolution(const VectorisableD::Vec& x)
 
     //m_transform.SetRotationVector(x.rowRange(0, 3));
     //m_transform.SetTranslation(x.rowRange(3, 6));
-    
+
     return x; // x32f
 }*/
 
@@ -547,10 +537,10 @@ void MidPointTriangulator::Triangulate(const PointMap2Dto2D& map, Points3D& pts,
 
     cv::Mat KRinv0, c0;
     cv::Mat KRinv1, c1;
-    
+
     DecomposeProjMatrix(m_projMatrix0, KRinv0, c0);
     DecomposeProjMatrix(m_projMatrix1, KRinv1, c1);
-    
+
     //std::ofstream of("tri.m");
     //of << mat2string(cv::Mat(map.From()).reshape(1), "x0") << std::endl;
     //of << mat2string(cv::Mat(map.To())  .reshape(1), "x1") << std::endl;
@@ -564,7 +554,7 @@ void MidPointTriangulator::Triangulate(const PointMap2Dto2D& map, Points3D& pts,
     //x1.convertTo(x1, CV_64F);
     //t.convertTo(t, CV_64F);
     //m.convertTo(m, CV_64F);
-   
+
     //of << mat2string(m_projMatrix0, "P0") << std::endl;
     //of << mat2string(m_projMatrix1, "P1") << std::endl;
     //of << mat2string(x0, "x0_h") << std::endl;

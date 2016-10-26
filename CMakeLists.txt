@@ -112,6 +112,10 @@ else()
 	set(Boost_USE_STATIC_RUNTIME OFF)
 endif()
 
+if(WITH_EBUS AND ${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+    target_link_libraries(vggrab "PvBase" "PvDevice" "PvBuffer" "PvGenICam" "PvStream")
+endif()
+
 # Thirty-party Libraries
 mark_as_advanced(FORCE OPENCV_FOUND OpenCV_FOUND)
 find_package(OpenCV REQUIRED COMPONENTS core highgui calib3d features2d)

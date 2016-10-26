@@ -22,6 +22,9 @@ public:
     virtual Strings GetDeviceIdList() const;
 private:
     friend class Factory<String, ImageGrabberBuilder>;
+
+    static bool CompareDeviceInfo(const PvDeviceInfo* d0, const PvDeviceInfo* d1);
+
     EbusImageGrabberBuilder();
     bool EnumerateDevices();
 
@@ -99,8 +102,26 @@ bool EbusImageGrabberBuilder::EnumerateDevices()
         }
     }
 
+    std::sort(m_devicesInfo.begin(), m_devicesInfo.end(), CompareDeviceInfo);
+
     return true;
 }
+
+bool EbusImageGrabberBuilder::CompareDeviceInfo(const PvDeviceInfo* d0, const PvDeviceInfo* d1)
+{
+    String s0 = d0->GetUniqueID().GetAscii();
+    String s1 = d1->GetUniqueID().GetAscii();
+
+    size_t n = std::min(s0.length(), s1.length());
+
+    for (size_t i = 0; i < n; i++)
+    {
+        if (s0[i] != s1[i]) return s0[i] < s1[i];
+    }
+
+    return true;
+}
+
 
 // return a list of connected device IDs
 Strings EbusImageGrabberBuilder::GetDeviceIdList() const
@@ -151,8 +172,8 @@ EbusImageGrabber::EbusImageGrabber(PvDevice* device, const PvString& conn, const
     PvGenInteger* pWidth  = GetGenParam<PvGenInteger>(params, "Width" );
     PvGenInteger* pHeight = GetGenParam<PvGenInteger>(params, "Height");
 
-    //PvGenEnum* pTriggerMode = GetGenParam<PvGenEnum>(params, "TriggerMode");
-    //pTriggerMode->SetValue("On");
+    PvGenEnum* pTriggerMode = GetGenParam<PvGenEnum>(params, "TriggerMode");
+    pTriggerMode->SetValue("On");
 
     if (pWidth == NULL || pHeight == NULL)
     {
@@ -316,7 +337,7 @@ bool EbusImageGrabber::Grab(cv::Mat& im)
     PvBuffer* buffer = NULL;
     PvResult result;
 
-    if (!m_pipeline->RetrieveNextBuffer(&buffer, 100, &result).IsOK())
+    if (!m_pipeline->RetrieveNextBuffer(&buffer, 500, &result).IsOK())
     {
         E_ERROR << "error retrieving next buffer";
         return false;

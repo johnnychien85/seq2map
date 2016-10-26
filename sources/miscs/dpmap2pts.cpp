@@ -24,10 +24,11 @@
  *  zmax:		Far points clipping boundary.
  */
 
-#include <algorithm>
+//#include <algorithm>
 #include <boost/program_options.hpp>
 #include <boost/unordered_map.hpp>
 #include <boost/foreach.hpp>
+#include <boost/algorithm/string.hpp>
 
 #include <seq2map/disparity.hpp>
 
@@ -42,7 +43,8 @@ struct CalibPaths
 	Path leftCalib;
 	Path rightCalib;
 
-	Mat ReadQ();
+    // TODO: fix this as it's basically doing nothing now!!
+	Mat ReadQ() { return Mat(); }
 };
 
 struct FilterCritera
@@ -67,7 +69,9 @@ typedef void (*pointsWriter)(void);
 void pcdBinaryPointWriter();
 void pcdAsciiPointWriter();
 
-bool parseArgs(int, char*[], Args&, DisparityIO& dpio, pointsWriter&);
+// TODO: fix this as it's basically doing nothing now!!
+bool parseArgs(int, char*[], Args&, DisparityIO& dpio, pointsWriter&) { return false; } 
+
 FileNameMap makeFileNameMap(const Path& path);
 bool checkProjMat(const Mat&);
 bool checkProjMat(const Mat&, const Mat&);
@@ -214,7 +218,8 @@ bool parseArgs(
 
 		// writer factory...
 		//
-		transform(ext.begin(), ext.end(), ext.begin(), tolower);
+		//transform(ext.begin(), ext.end(), ext.begin(), tolower);
+		boost::to_upper(ext);
 		if (ext.compare("pcd") == 0)
 		{
 			writer = binary ? pcdBinaryPointWriter : pcdAsciiPointWriter;
@@ -289,7 +294,11 @@ bool readParams(
 			fs["P"] >> Pi;
 			fs.release();
 
-			if (!checkProjMat(Pi)) throw new exception("P seems to have wrong format");
+			if (!checkProjMat(Pi))
+			{
+			    E_ERROR << "projection matrix has wrong format";
+			    return false;
+			}
 		}
 		catch(exception ex)
 		{

@@ -8,7 +8,7 @@ class BufferRecorder : public BufferReader
 public:
     BufferRecorder(const SyncBuffer::Ptr& buffer, const Path& root)
         : BufferReader(buffer), m_seqDirPath(root), m_recording(false), m_snapshooting(false),
-        m_snapStorage(root / GetDateCode() / "snapshot", 2), m_dropped(0) {};
+        m_snapStorage(root / GetDateCode() / "snapshot", buffer->GetWritters()), m_dropped(0) {};
     inline bool IsRecording() const {return m_recording;};
     inline size_t GetDroppedFrames() const {return m_dropped;}
     void StartRecording();

@@ -180,7 +180,7 @@ namespace seq2map
         };
 
         /* ctor */ FeatureMatch(size_t srcIdx = INVALID_INDEX, size_t dstIdx = INVALID_INDEX, float distance = -1, int state = INLIER)
-            : srcIdx(srcIdx), dstIdx(dstIdx), distance(distance), state(state) {}
+        : srcIdx(srcIdx), dstIdx(dstIdx), distance(distance), state(state) {}
         inline void Reject(int flag) { state = (state ^ INLIER) | flag; }
 
         size_t srcIdx;
@@ -524,7 +524,7 @@ namespace seq2map
     };
 
     class AKAZEFeatureDetextractor :
-        public  CvSuperDetextractorAdaptor<cv::AKAZE>
+        public CvSuperDetextractorAdaptor<cv::AKAZE>
     {
     public:
         /* ctor */ AKAZEFeatureDetextractor(cv::Ptr<cv::AKAZE> akaze = cv::AKAZE::create())

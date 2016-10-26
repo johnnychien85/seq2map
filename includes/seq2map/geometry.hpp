@@ -19,9 +19,9 @@ namespace seq2map
             m_rmat(m_matrix.rowRange(0, 3).colRange(0, 3)),
             m_tvec(m_matrix.rowRange(0, 3).colRange(3, 4)) {}
         EuclideanTransform(const cv::Mat& rotation, const cv::Mat& tvec);
-        inline EuclideanTransform operator<<(const EuclideanTransform& tform) const;
-        EuclideanTransform operator>>(const EuclideanTransform& tform) const;
-        EuclideanTransform operator- (const EuclideanTransform& tform) const { return tform.GetInverse() >> (*this); }
+        inline EuclideanTransform operator<<(const EuclideanTransform& tform) const { return EuclideanTransform(tform.m_rmat * m_rmat, tform.GetRotationMatrix() * m_tvec + tform.m_tvec); }
+        inline EuclideanTransform operator>>(const EuclideanTransform& tform) const { return tform << *this;                }
+        inline EuclideanTransform operator- (const EuclideanTransform& tform) const { return tform.GetInverse() >> (*this); }
         //void Apply(Point3F& pt) const;
         //void Apply(Points3F& pts) const;
         void Apply(Point3D& pt) const;

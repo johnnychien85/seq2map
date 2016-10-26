@@ -25,6 +25,8 @@ bool ImageGrabber::GrabNextData()
 
 size_t ImageGrabber::Write(BufferData& data)
 {
+    boost::lock_guard<boost::mutex> locker(m_mtx);
+
     TimedImage& image = Pick(data);
     cv::Mat& im = image.payload;
 
@@ -44,8 +46,8 @@ size_t ImageGrabber::Write(BufferData& data)
 
 cv::Mat ImageGrabber::GetImage()
 {
-    boost::lock_guard<boost::mutex> locker(m_mtx);
-    return m_image.clone();
+    //boost::lock_guard<boost::mutex> locker(m_mtx);
+    return m_image.empty() ? cv::Mat() : m_image.clone();
 }
 
 #include "grabber_dummy_impl.hpp"

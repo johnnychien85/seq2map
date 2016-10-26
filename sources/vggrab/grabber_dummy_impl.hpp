@@ -19,7 +19,7 @@ private:
 class DummyImageGrabber : public ImageGrabber
 {
 public:
-    DummyImageGrabber(const SyncBuffer::Ptr& buffer) : ImageGrabber(buffer) {}
+    DummyImageGrabber(const SyncBuffer::Ptr& buffer) : ImageGrabber(buffer) { m_fpsLimiter.Start();  }
     virtual ~DummyImageGrabber() {}
     virtual std::string ToString() const;
 
@@ -28,13 +28,18 @@ protected:
     virtual bool Grab(cv::Mat& im);
     virtual bool IsOkay() const { return true; }
 
+private:
     static cv::Size s_imageSize;
     static cv::Size s_noiseSize;
+    static double s_interval;
+
+    Speedometre m_fpsLimiter;
 };
 
 size_t DummyImageGrabberBuilder::m_numGrabbers = 5;
 cv::Size DummyImageGrabber::s_imageSize = cv::Size(1024, 768);
 cv::Size DummyImageGrabber::s_noiseSize = cv::Size( 512, 384);
+double   DummyImageGrabber::s_interval  = 0.05f;
 
 DummyImageGrabberBuilder::DummyImageGrabberBuilder()
 {
@@ -75,9 +80,14 @@ String DummyImageGrabber::ToString() const
 
 bool DummyImageGrabber::Grab(cv::Mat& im)
 {
+    if (m_fpsLimiter.GetElapsedSeconds() < s_interval) return false;
+    
     cv::Mat noise = cv::Mat(s_noiseSize, CV_8UC3);
     cv::randu(noise, cv::Scalar::all(0), cv::Scalar::all(255));
     cv::resize(noise, im, im.size());
+
+    m_fpsLimiter.Reset();
+    m_fpsLimiter.Start();
 
     return true;
 }

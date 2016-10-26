@@ -111,7 +111,7 @@ int main(int argc, char* argv[])
 
             BOOST_FOREACH (FeatureMatch& match, fmap.GetMatches())
             {
-                if (!(match.state & FeatureMatch::Flag::INLIER)) continue;
+                if (!(match.state & FeatureMatch::INLIER)) continue;
 
                 Point3F x3di = Gi[match.srcIdx];
                 double  w3di = Wi[match.srcIdx];
@@ -174,7 +174,8 @@ int main(int argc, char* argv[])
 
             std::stringstream ss;
             ss << "egomo_t" << ti << ".m";
-            egomo.Store(Path(ss.str()));
+            Path saveto(ss.str());
+            egomo.Store(saveto);
             
             E_INFO << mat2string(Mij.GetTransformMatrix().t(), "M", 3);
             
@@ -199,7 +200,7 @@ int main(int argc, char* argv[])
             size_t i = 0;
             BOOST_FOREACH (FeatureMatch& match, fmap.GetMatches())
             {
-                if (!(match.state & FeatureMatch::Flag::INLIER)) continue;
+                if (!(match.state & FeatureMatch::INLIER)) continue;
 
                 Point3D gi = Gi[match.srcIdx];
                 double  wi = Wi[match.srcIdx];

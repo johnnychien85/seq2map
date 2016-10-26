@@ -1,6 +1,6 @@
 #ifndef SCANNER_HPP
 #define SCANNER_HPP
-#include <seq2map\sequence.hpp>
+#include <seq2map/sequence.hpp>
 
 using namespace seq2map;
 
