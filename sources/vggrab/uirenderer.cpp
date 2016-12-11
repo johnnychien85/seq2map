@@ -53,7 +53,7 @@ bool UIRenderer::Render(cv::Mat& canvas, const cv::Point& origin)
 
         if (!child->AlignToLeft) absOrigin.x += Rectangle.width  - child->Rectangle.width  - 2 * relOrigin.x;
         if (!child->AlignToTop ) absOrigin.y += Rectangle.height - child->Rectangle.height - 2 * relOrigin.y;
-        
+
         if (!child->Render(overlay, absOrigin))
         {
             return false;
@@ -622,7 +622,7 @@ BufferWriterStatsRenderer::BufferWriterStatsRenderer(const BufferWriter::Ptr& wr
 
     size_t textHeight = (size_t) m_seqLabel->Rectangle.height;
     size_t padding = 2;
-    
+
     m_plotRect.x = padding;
     m_plotRect.y = padding;
     m_plotRect.width  = Rectangle.width - 2 * padding;
@@ -647,7 +647,7 @@ BufferWriterStatsRenderer::BufferWriterStatsRenderer(const BufferWriter::Ptr& wr
     m_fpsLabel->Rectangle.y      = m_seqLabel->Rectangle.y;
     m_fpsLabel->BorderWidth      = 0;
     m_fpsLabel->HorizontalAlign  = Label::Left;
-    
+
     m_delayLabel->Rectangle.width  = Rectangle.width * 0.3f;
     m_delayLabel->Rectangle.height = m_fpsLabel->Rectangle.height;
     m_delayLabel->Rectangle.x      = m_fpsLabel->Rectangle.br().x;
@@ -792,7 +792,9 @@ RecorderStatsRenderer::RecorderStatsRenderer(BufferRecorder& rec)
     AddChild(m_recordingLabel = Label::Create("RECORDING"));
     AddChild(m_miscsLabel     = Label::Create("..."));
 
-    m_recordingLabel->SetForeColour(cv::Scalar(0, 0, 255));
+    cv::Scalar red(0, 0, 255);
+
+    m_recordingLabel->SetForeColour(red);
     m_recordingLabel->FontScale = 0.8;
     m_recordingLabel->FontWeight = 2;
     m_recordingLabel->BorderWidth = 5;
@@ -897,11 +899,11 @@ bool Label::Draw(cv::Mat& canvas, const cv::Point& origin)
     {
         cv::rectangle(canvas, inner, backColour, cv::FILLED);
     }
-    
+
     int baseline = 0;
     cv::Size  textSize = cv::getTextSize(Caption, FontFace, FontScale, FontWeight, &baseline);
     cv::Point textOrigin = inner.tl();
-    
+
     textOrigin.y += baseline + FontWeight;
 
     switch (HorizontalAlign)
@@ -909,7 +911,7 @@ bool Label::Draw(cv::Mat& canvas, const cv::Point& origin)
     case Centre: textOrigin.x += (inner.width - textSize.width) * 0.5f; break;
     case Right:  textOrigin.x += (inner.width - textSize.width);        break;
     }
-    
+
     switch (VerticalAlign)
     {
     case Middle: textOrigin.y += (inner.height - textSize.height) * 0.5f; break;

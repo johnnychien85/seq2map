@@ -43,7 +43,6 @@ void CalibGraphBuilder::TargetDef::GetObjectPoints(Points3F& pts, Indices& corne
     pts.reserve(patternSize.area());
 
     corners.clear();
-    corners.resize(4);
 
     // generating object points
     for (int i = 0; i < patternSize.height; i++)
@@ -247,7 +246,7 @@ bool CalibGraphBuilder::Build(CalibGraph& graph) const
     int vw = (int) std::ceil(std::log10(m_views));
     const cv::Size subpxZeroZone(-1, -1);
     bool subpixel = m_subpxWinSize.area() > 0;
- 
+
     Points3F objectPoints;
     Indices cornersIdx;
     m_targetDef.GetObjectPoints(objectPoints, cornersIdx);
@@ -271,7 +270,7 @@ bool CalibGraphBuilder::Build(CalibGraph& graph) const
             {
                 std::cout << "..x (cam=" << cam << "" << std::endl;
                 E_ERROR << "error loading image " << o.source;
-                
+
                 return false;
             }
 

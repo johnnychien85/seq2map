@@ -530,6 +530,9 @@ bool CalibGraph::WriteParams(const Path& calPath) const
         }
     }
 
+    Path camPath = calPath / "cam.m";
+    std::ofstream of(camPath.string());
+
     // write parameters
     for (size_t i = 0; i < m_cams; i++)
     {
@@ -553,6 +556,18 @@ bool CalibGraph::WriteParams(const Path& calPath) const
             fs << "R_rect" << rect[i].R_rect;
             fs << "P_rect" << rect[i].P_rect;
             fs << "S_rect" << rect[i].S_rect;
+
+            of << "i = " << i << ";";
+            of << "cam(i).idx = " << camvtx[i]->GetIndex() << std::endl;
+            of << "cam(i).ref = " << m_refCamIdx << std::endl;
+            of << mat2string(rect[i].K, "cam(i).K") << std::endl;
+            of << mat2string(rect[i].D, "cam(i).D") << std::endl;
+            of << mat2string(rect[i].R, "cam(i).R") << std::endl;
+            of << mat2string(rect[i].T, "cam(i).T") << std::endl;
+            of << "cam(i).S = [" << size2string(rect[i].S) << "];" << std::endl;
+            of << mat2string(rect[i].R_rect, "cam(i).R_rect") << std::endl;
+            of << mat2string(rect[i].P_rect, "cam(i).P_rect") << std::endl;
+            of << "cam(i).S_rect = [" << size2string(rect[i].S_rect) << "];" << std::endl;
 
             E_INFO << "camera parameters written to " << ymlPath;
         }

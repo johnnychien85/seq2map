@@ -78,7 +78,7 @@ EbusImageGrabberBuilder::~EbusImageGrabberBuilder()
 bool EbusImageGrabberBuilder::EnumerateDevices()
 {
     PvResult result;
-    
+
     m_devicesInfo.clear();
     m_system.SetDetectionTimeout(200);
     result = m_system.Find();
@@ -95,7 +95,7 @@ bool EbusImageGrabberBuilder::EnumerateDevices()
     {
         const PvInterface* interface = m_system.GetInterface(i);
         uint32_t deviceCount = interface->GetDeviceCount();
-        
+
         for (uint32_t j = 0; j < deviceCount; j++)
         {
             m_devicesInfo.push_back(interface->GetDeviceInfo(j));
@@ -175,6 +175,11 @@ EbusImageGrabber::EbusImageGrabber(PvDevice* device, const PvString& conn, const
     PvGenEnum* pTriggerMode = GetGenParam<PvGenEnum>(params, "TriggerMode");
     pTriggerMode->SetValue("On");
 
+    PvGenInteger* pOffsetY = GetGenParam<PvGenInteger>(params, "OffsetY");
+
+    pHeight->SetValue(512); // 720
+    pOffsetY->SetValue(272); // 64
+
     if (pWidth == NULL || pHeight == NULL)
     {
         E_ERROR << "error retrieving IGen parameters of image dimension";
@@ -183,7 +188,7 @@ EbusImageGrabber::EbusImageGrabber(PvDevice* device, const PvString& conn, const
     else
     {
         int64_t width, height;
-        
+
         if (!(pWidth ->GetValue(width)).IsOK() ||
             !(pHeight->GetValue(height)))
         {
@@ -250,7 +255,7 @@ EbusImageGrabber::EbusImageGrabber(PvDevice* device, const PvString& conn, const
         E_ERROR << "error starting pipeline";
         return;
     }
-    
+
     if (!m_device->StreamEnable().IsOK())
     {
         E_ERROR << "error enabling streaming";
