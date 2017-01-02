@@ -28,9 +28,9 @@ function chkseq(seq,varargin)
         end
 
 		if po.ShowLiDARPoints
-			[~,~,~,im] = points2image(x3d, cam, im, 'Figure', fig);
+			[~,~,~,im] = pts2image(x3d, cam, im, 'Figure', fig);
 		else
-			[~,~,~,im] = points2image(zeros(0,3), cam, im, 'Figure', fig);
+			[~,~,~,im] = pts2image(zeros(0,3), cam, im, 'Figure', fig);
 		end
 		
         if ishandle(fig), drawnow;

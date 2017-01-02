@@ -15,6 +15,13 @@ function seq = raw2seq(seqPath)
 		fprintf('Possible existence of feature files detected!\n');
 		seq = locateFeatures(seq,featuresPath);
 	end
+    
+    dpmapsPath = fullfile(seqPath,'dpm');
+    if exist(dpmapsPath,'dir') > 0
+        fprintf('Possible existence of disparity maps detected!\n');
+        dmax = input('Please specify dmax: ');
+        seq = locateDpmaps(seq,dpmapsPath,dmax);
+    end
 end
 
 %
@@ -240,6 +247,7 @@ function seq = loadSequenceKITTIRaw(seqPath)
     seq = struct(...
         'Grabber',  'KITTI-RAW',...
         'Paths',    paths,      ...
+        'Frames',   frames,     ...
         'cam',      cam,        ...
         'lid',      lid         ...
     );
@@ -251,13 +259,18 @@ end
 function seq = loadSequenceVG(seqPath)
     fprintf('..perhaps this sequence was grabbed by vggrab (fingers crossed..)\n');
 
+    imgRoot = fullfile(seqPath, 'rect');
+    rectified = exist(imgRoot,'dir') ~= 0;
+    
+    if ~rectified, imgRoot = fullfile(seqPath, 'raw'); end
+    
     paths = struct(                                          ...
         'seqPath', seqPath,                                  ...
-        'calPath', fullfile(seqPath, 'cal', 'cam.m'),        ...
+        'calPath', fullfile(seqPath, 'cal', 'camvtx.m'),     ...
         'ldbPath', fullfile(seqPath, 'cal', 'lidar-db.xml'), ...
         'extPath', fullfile(seqPath, 'cal', 'extrinsics.m'), ...
         'motPath', fullfile(seqPath, 'mot.mat'),             ...
-        'imgRoot', fullfile(seqPath, 'rect'),                ...
+        'imgRoot', imgRoot,                                  ...
         'lidRoot', fullfile(seqPath, 'lidar')                ...
     );
 
@@ -265,24 +278,29 @@ function seq = loadSequenceVG(seqPath)
     run(paths.calPath);
 
     % Do some sanity checks..
-    assert(exist('P','var') == 1 && exist('R','var') == 1 && exist('imageSize','var'));
-    assert(size(P,1) == 3 && size(P,2) == 4 && size(R,1) == 3 && size(R,2) == 3);
-    assert(size(P,3) == size(R,3));
-    cams = size(P,3);
+    cams = numel(vtx);
 
     % Fill in the parameters and locate image files for each camera
     for i = 1 : cams
         cam(i) = makeCameraStruct();
         cam(i).PixelClass = 'uint8';
-        cam(i).K = P(1:3,1:3,i);
-        cam(i).E = rect2extrinsics(P(:,:,i),R(:,:,i));
-        cam(i).P = cam(i).K * cam(i).E(1:3,:);
-        cam(i).ParamsObject = cam2obj(cam(i));
-		cam(i).ImageSize = imageSize(i,:);
+        
+        if ~rectified            
+            cam(i).K = vtx(i).K;
+            cam(i).P = vtx(i).P;
+            cam(i).E = [vtx(i).R, vtx(i).t; 0, 0, 0, 1];
+            cam(i).ImageSize = vtx(i).S;
+        else
+            cam(i).K = vtx(1).P_rect(1:3,1:3);
+            cam(i).P = vtx(i).P_rect;
+            cam(i).E = inv(cam(i).K) * cam(i).P;
+            cam(i).ImageSize = vtx(i).S_rect;
+        end
+        cam(i).ParamsObject = cam2obj(cam(i));  
     end
     fprintf('..camera intrinsics loaded, %d camera(s) found\n', cams);
 
-    [imgs,found] = findImages(paths.imgRoot,cams,'*.png');
+    [imgs,found] = findImages(paths.imgRoot,cams,'*.pgm');
     frames = size(imgs,2);
     for i = 1 : cams, cam(i).ImageFiles = imgs(i,:); end
     fprintf('..image data of %d camera(s) and %d frames located\n', found, frames);
@@ -322,6 +340,7 @@ function seq = loadSequenceVG(seqPath)
     seq = struct(...
         'Paths',    paths,      ...
         'Grabber',  'vggrab',   ...
+        'Frames',   frames,     ...
         'cam',      cam,        ...
         'lid',      lid         ...
     );
@@ -357,6 +376,31 @@ function seq = locateFeatures(seq,featuresPath)
 		
 		fprintf('..%d feature file(s) found for camera %d\n', numel(seq.cam(k).FeatureFiles),k);
 	end
+end
+
+function seq = locateDpmaps(seq,dpmapsPath,dmax)
+    cams = numel(seq.cam);
+    i = 0;
+
+    for c0 = 1 : cams
+        for c1 = 1 : cams
+            if c0 == c1, continue; end
+            
+            dpmapName = sprintf('d%d%d',c0-1,c1-1);
+            dpmapPath = fullfile(dpmapsPath,dpmapName);
+                       
+            if exist(dpmapPath,'dir') == 0, continue; end
+            
+            fprintf('..disparity maps (%d,%d) found!!\n',c0,c1);
+            i = i + 1;
+            
+            seq.dpm(i).Name = dpmapName;
+            seq.dpm(i).DisparityFiles = fdir(dpmapPath,'*.*');
+            seq.dpm(i).c0 = c0;
+            seq.dpm(i).c1 = c1;
+            seq.dpm(i).dmax = dmax;
+        end
+    end
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

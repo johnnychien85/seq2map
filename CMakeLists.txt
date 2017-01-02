@@ -84,8 +84,9 @@ add_executable(vggrab      sources/vggrab/recorder.hpp           # Software sync
                            sources/vggrab/uirenderer.cpp         # 
                            sources/vggrab/vggrab.cpp)            # 
 add_executable(dpmap2pts   sources/miscs/dpmap2pts.cpp)          # Converion from disparity map to point clouds
-add_executable(imrect      sources/miscs/imrect.cpp)             # Image rectification utility
 add_executable(imcvt       sources/miscs/imcvt.cpp)              # Image conversion utility
+add_executable(imfuse      sources/miscs/imfuse.cpp)             # Multi-camera image fusion utility
+add_executable(imrect      sources/miscs/imrect.cpp)             # Image rectification utility
 add_executable(seqchk      sources/miscs/seqchk.cpp)             # Sequence file examining utility
 
 target_link_libraries(calibn      common)
@@ -96,8 +97,9 @@ target_link_libraries(raw2seq     common)
 target_link_libraries(monovo      common)
 target_link_libraries(vggrab      common)
 target_link_libraries(dpmap2pts   common)
-target_link_libraries(imrect      common)
 target_link_libraries(imcvt       common)
+target_link_libraries(imfuse      common)
+target_link_libraries(imrect      common)
 target_link_libraries(seqchk      common)
 
 include_directories(includes)
@@ -131,8 +133,9 @@ if(OpenCV_VERSION AND NOT OpenCV_VERSION_MAJOR LESS 3)
 	target_link_libraries(monovo      ${OpenCV_LIBS})
 	target_link_libraries(vggrab      ${OpenCV_LIBS})
 	target_link_libraries(dpmap2pts   ${OpenCV_LIBS})
-	target_link_libraries(imrect      ${OpenCV_LIBS})
 	target_link_libraries(imcvt       ${OpenCV_LIBS})
+	target_link_libraries(imfuse      ${OpenCV_LIBS})
+	target_link_libraries(imrect      ${OpenCV_LIBS})
 	target_link_libraries(seqchk      ${OpenCV_LIBS})
 
     if(OPENCV_XFEATURES2D_FOUND)
@@ -157,8 +160,9 @@ if(Boost_FOUND)
 	target_link_libraries(monovo      ${Boost_LIBRARIES})
 	target_link_libraries(vggrab      ${Boost_LIBRARIES})
 	target_link_libraries(dpmap2pts   ${Boost_LIBRARIES})
-	target_link_libraries(imrect      ${Boost_LIBRARIES})
 	target_link_libraries(imcvt       ${Boost_LIBRARIES})
+	target_link_libraries(imfuse      ${Boost_LIBRARIES})
+	target_link_libraries(imrect      ${Boost_LIBRARIES})
 	target_link_libraries(seqchk      ${Boost_LIBRARIES})
 else()
 	set(BOOST_INCLUDEDIR ${Boost_INCLUDE_DIRS} CACHE PATH "The directory containing boost headers folder 'boost'." FORCE)

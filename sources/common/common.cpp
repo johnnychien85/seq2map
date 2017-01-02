@@ -194,7 +194,41 @@ namespace seq2map
 
     Path getRelativePath(const Path& path, const Path& base)
     {
+#if BOOST_VERSION >= 106000
+		// since Boost 1.60 we have a nice useful function
         return path.empty() ? path : fs::relative(fullpath(path), fullpath(base));
+#else
+		// for older Boost we have the code taken from a ticket
+		if (path.empty()) return path;
+
+		Path fullPath = fullpath(path);
+		Path fullBase = fullpath(base);
+		Path relPath;
+
+		fs::path::const_iterator pathItr = fullPath.begin(), pathEnd = fullPath.end();
+		fs::path::const_iterator baseItr = fullBase.begin(), baseEnd = fullBase.end();
+
+		// skip the common part
+		while (pathItr != pathEnd && baseItr != baseEnd && *pathItr != *baseItr)
+		{
+			pathItr++;
+			baseItr++;
+		}
+
+		while (baseItr != baseEnd)
+		{
+			relPath /= "..";
+			baseItr++;
+		}
+
+		while (pathItr != pathEnd)
+		{
+			relPath /= *pathItr;
+			pathItr++;
+		}
+
+		return relPath;
+#endif
     }
 
     bool initLogFile(const Path& path)
