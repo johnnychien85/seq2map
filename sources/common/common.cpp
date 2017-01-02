@@ -209,7 +209,7 @@ namespace seq2map
 		fs::path::const_iterator baseItr = fullBase.begin(), baseEnd = fullBase.end();
 
 		// skip the common part
-		while (pathItr != pathEnd && baseItr != baseEnd && *pathItr != *baseItr)
+		while (pathItr != pathEnd && baseItr != baseEnd && *pathItr == *baseItr)
 		{
 			pathItr++;
 			baseItr++;
@@ -217,7 +217,7 @@ namespace seq2map
 
 		while (baseItr != baseEnd)
 		{
-			relPath /= "..";
+			if (*baseItr != ".") relPath /= "..";
 			baseItr++;
 		}
 
