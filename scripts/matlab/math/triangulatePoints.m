@@ -33,9 +33,9 @@ function [g,e,k,rpe] = triangulatePoints(x0,x1,P0,P1)
 		y1 = homo2eucl(eucl2homo(g) * P1');
 		rpe = [blkproc(x0-y0,[1,3],'norm'),blkproc(x1-y1,[1,3],'norm')];
 	end
-	
-	function [KR,c] = pmat2krc(P)
-		KR = P(1:3,1:3);
-		c  = -inv(KR) * P(1:3,4);
-	end
+end
+
+function [KR,c] = pmat2krc(P)
+    KR = P(1:3,1:3);
+    c  = -inv(KR) * P(1:3,4);
 end

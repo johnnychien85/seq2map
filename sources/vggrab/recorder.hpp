@@ -22,7 +22,7 @@ protected:
     virtual bool IsOkay() const {return true;};
     virtual size_t Read(BufferData& data);
 
-    static String GetDateTimeString(const std::string& format, const Time& when = UNow());
+    static String GetDateTimeString(const std::string& format, const Time& when = unow());
     static String GetDateCode() {return GetDateTimeString("%Y%m%d");}
     static String GetTimeCode() {return GetDateTimeString("%H%M%S");}
 

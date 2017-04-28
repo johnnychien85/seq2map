@@ -3,8 +3,11 @@
 #include "scanner.hpp"
 
 using namespace std;
+namespace po = boost::program_options;
 
-size_t KittiOdometryScanner::ParseIndex(const String& varname, size_t offset)
+//==[ KittiOdometryBuilder ]====================================================
+
+size_t KittiOdometryBuilder::ParseIndex(const String& varname, size_t offset)
 {
     size_t idx;
     std::istringstream iss(String(varname.begin() + offset, varname.end()));
@@ -15,13 +18,14 @@ size_t KittiOdometryScanner::ParseIndex(const String& varname, size_t offset)
     return iss.eof() ? idx : INVALID_INDEX;
 }
 
-KittiOdometryScanner::Calib::Calib(const Path& calPath)
+KittiOdometryBuilder::Calib::Calib(const Path& from)
+: m_okay(false)
 {
-    ifstream in(calPath.string().c_str(), std::ios::in);
+    ifstream in(from.string().c_str(), std::ios::in);
 
     if (!in.is_open())
     {
-        E_ERROR << "error reading \"" << calPath.string() << "\"";
+        E_ERROR << "error reading " << from.string();
         return;
     }
 
@@ -37,7 +41,7 @@ KittiOdometryScanner::Calib::Calib(const Path& calPath)
 
         if (toks[0].back() != ':')
         {
-            E_WARNING << "error parsing \"" << calPath.string() << "\" line " << i;
+            E_WARNING << "error parsing " << from << " line " << i;
             E_WARNING << "the line begins with an invalid variable name \"" << toks[0] << "\"";
 
             continue;
@@ -56,7 +60,7 @@ KittiOdometryScanner::Calib::Calib(const Path& calPath)
 
             if (idx == INVALID_INDEX)
             {
-                E_ERROR << "error parsing \"" << calPath.string() << "\" line " << i;
+                E_ERROR << "error parsing " << from << " line " << i;
                 E_ERROR << "the matrix index cannot be determined from \"" << var << "\"";
 
                 continue;
@@ -76,16 +80,45 @@ KittiOdometryScanner::Calib::Calib(const Path& calPath)
         }
         else
         {
-            E_WARNING << "error parsing \"" << calPath.string() << "\" line " << i;
+            E_WARNING << "error parsing " << from << " line " << i;
             E_WARNING << "the line begins with an unknown variable name \"" << toks[0] << "\"";
         }
     }
 
-    E_INFO << "succesfully parsed \"" << calPath.string() << "\"";
+    m_okay = true;
+    E_INFO << "succesfully parsed " << from;
 }
 
-bool KittiOdometryScanner::Scan(const Path& seqPath, const Path& calPath, const Path& motPath, Sequence& seq)
+void KittiOdometryBuilder::WriteParams(cv::FileStorage& fs) const
 {
+    fs << "pose" << m_posePath;
+}
+
+bool KittiOdometryBuilder::ReadParams(const cv::FileNode& fn)
+{
+    fn["pose"] >> m_posePath;
+    return true;
+}
+
+Parameterised::Options KittiOdometryBuilder::GetOptions(int flag)
+{
+    Options o("KITTI odometry dataset builder option");
+    o.add_options()
+        ("pose", po::value<String>(&m_posePath)->default_value(""), "Path to sequence's pose file.");
+
+    return o;
+}
+
+bool KittiOdometryBuilder::BuildCamera(const Path& from, Cameras& cams, RectifiedStereoPairs& stereo) const
+{
+    Path calPath = from / "calib.txt";
+
+    if (!fileExists(calPath))
+    {
+        E_ERROR << "missing calibration file " << calPath;
+        return false;
+    }
+
     Calib calib(calPath);
 
     if (calib.P.empty())
@@ -95,9 +128,10 @@ bool KittiOdometryScanner::Scan(const Path& seqPath, const Path& calPath, const 
     }
 
     E_INFO << "found " << calib.P.size() << " camera(s)";
-    seq.Clear();
 
-    Cameras& cams = seq.GetCameras();
+    // KITTI odometry dataset should come with 2 cameras
+    assert(calib.P.size() == 2);
+
     const size_t ref = 0; // index of the referenced camera; KITTI uses the first camera (idx=0)
     const cv::Mat K = calib.P[ref].rowRange(0, 3).colRange(0, 3);
     const cv::Mat K_inv = K.inv();
@@ -127,46 +161,51 @@ bool KittiOdometryScanner::Scan(const Path& seqPath, const Path& calPath, const 
         // search for images
         stringstream ss; ss << "image_" << i;
         String imageDirName = ss.str();
-        Path imageDirPath = seqPath / imageDirName;
+        Path imageDirPath = from / imageDirName;
         const String imageFileExt = ".png";
 
         cam.SetName(imageDirName);
 
         if (!dirExists(imageDirPath))
         {
-            E_INFO << "skipped because image folder \"" << imageDirPath.string() << "\" not found";
+            E_INFO << "skipped missing image folder " << imageDirPath;
             continue;
         }
 
         Paths imageFiles = enumerateFiles(imageDirPath, imageFileExt);
-        Camera::ImageStorage& imageStore = cam.GetImageStorage();
-
-        imageStore.SetRootPath(imageDirPath);
-        imageStore.Allocate(imageFiles.size());
+        Strings filelist;
+        ImageStore& imageStore = cam.GetImageStore();
 
         BOOST_FOREACH(const Path& imageFile, imageFiles)
         {
-            imageStore.Add(imageFile.filename().string());
+            filelist.push_back(imageFile.filename().string());
         }
 
+        imageStore.Create(imageDirPath, filelist);
+
         // try to retrieve the first frame
-        Frame frame = cam[0];
+        PersistentImage frame = cam.GetImageStore()[0];
         cam.SetImageSize(frame.im.size());
 
-        E_INFO << imageStore.GetSize() << " image(s) located for camera " << i;
+        E_INFO << imageStore.GetItems() << " image(s) located for camera " << i;
     }
+
+    // create the left-right stereo pair
+    stereo.push_back(RectifiedStereo(cams[0], cams[1]));
 
     return true;
 }
 
+//==[ KittiRawDataBuilder ]=====================================================
 
-KittiRawDataScanner::Calib::Calib(const Path& calPath)
+KittiRawDataBuilder::CalibCam2Cam::CalibCam2Cam(const Path& from)
+: m_okay(false)
 {
-    ifstream in(calPath.string().c_str(), std::ios::in);
+    ifstream in(from.string().c_str(), std::ios::in);
 
     if (!in.is_open())
     {
-        E_ERROR << "error reading \"" << calPath.string() << "\"";
+        E_ERROR << "error reading " << from;
         return;
     }
 
@@ -182,7 +221,7 @@ KittiRawDataScanner::Calib::Calib(const Path& calPath)
 
         if (toks[0].back() != ':')
         {
-            E_WARNING << "error parsing \"" << calPath.string() << "\" line " << i;
+            E_WARNING << "error parsing " << from << " line " << i;
             E_WARNING << "the line begins with an invalid variable name \"" << toks[0] << "\"";
 
             continue;
@@ -200,7 +239,7 @@ KittiRawDataScanner::Calib::Calib(const Path& calPath)
         if (varToks.size() < 2 || varToks[0].size() != 1) continue; // skip an irrelevant variable name
 
         bool rect  = varToks.size() > 1 && boost::equals(varToks[1], "rect");
-        size_t idx = KittiOdometryScanner::ParseIndex(varToks.back(), 0);
+        size_t idx = KittiOdometryBuilder::ParseIndex(varToks.back(), 0);
 
         if (idx == INVALID_INDEX)
         {
@@ -236,16 +275,117 @@ KittiRawDataScanner::Calib::Calib(const Path& calPath)
         }
     }
 
-    E_INFO << "succesfully parsed \"" << calPath.string() << "\"";
+    m_okay = true;
+    E_INFO << "succesfully parsed " << from.string();
 }
 
-bool KittiRawDataScanner::Scan(const Path& seqPath, const Path& calPath, const Path& motPath, Sequence& seq)
+KittiRawDataBuilder::CalibRigid::CalibRigid(const Path& from)
+: m_okay(false)
 {
-    Calib calib(calPath);
-    size_t ncams = calib.data.size();
+    ifstream in(from.string().c_str(), std::ios::in);
 
-    Strings seqNameToks = explode(seqPath.filename().string(), '_');
-    bool rectified = boost::equals(seqNameToks.back(), "sync");
+    if (!in.is_open())
+    {
+        E_ERROR << "error reading " << from;
+        return;
+    }
+
+    String line;
+    size_t i = 0;
+
+    while (getline(in, line))
+    {
+        Strings toks = explode(line, ' ');
+        i++;
+
+        if (toks.empty()) continue; // skip an empty line
+
+        if (toks[0].back() != ':')
+        {
+            E_WARNING << "error parsing " << from << " line " << i;
+            E_WARNING << "the line begins with an invalid variable name \"" << toks[0] << "\"";
+
+            continue;
+        }
+
+        // strip the colon char
+        toks[0].pop_back();
+
+        // VAR: x0 x1 x2 ...
+        String var = toks.front();
+        Strings x = Strings(toks.begin() + 1, toks.end());
+
+        switch (var[0])
+        {
+        case 'R': R = strings2mat(x, cv::Size(3, 3)); break;
+        case 'T': T = strings2mat(x, cv::Size(3, 1)); break;
+        }
+    }
+
+    if (tform.SetRotationMatrix(R) && tform.SetTranslation(T))
+    {
+        m_okay = true;
+        E_INFO << "succesfully parsed " << from.string();
+    }
+}
+
+void KittiRawDataBuilder::WriteParams(cv::FileStorage& fs) const
+{
+    fs << "rectified" << m_rectified;
+    fs << "cam2cam" << m_cam2cam;
+    fs << "imu2lid" << m_imu2lid;
+    fs << "lid2cam" << m_lid2cam;
+}
+
+bool KittiRawDataBuilder::ReadParams(const cv::FileNode& fn)
+{
+    fn["rectified"] >> m_rectified;
+    fn["cam2cam"] >> m_cam2cam;
+    fn["imu2lid"] >> m_imu2lid;
+    fn["lid2cam"] >> m_lid2cam;
+
+    return true;
+}
+
+Parameterised::Options KittiRawDataBuilder::GetOptions(int flag)
+{
+    Options o("KITTI raw data builder options");
+    o.add_options()
+        ("synced",      po::bool_switch(&m_rectified)->default_value(false), "The sequence is synchronised and rectified.")
+        ("cam-to-cam",  po::value<String>(&m_cam2cam)->default_value("calib_cam_to_cam.txt"),  "Path to the camera calibration file.")
+        ("imu-to-velo", po::value<String>(&m_imu2lid)->default_value("calib_imu_to_velo.txt"), "Path to the IMU-to-LiDAR extrinsics file.")
+        ("velo-to-cam", po::value<String>(&m_lid2cam)->default_value("calib_velo_to_cam.txt"), "Path to the LiDAR-to-camera extrinsics file.");
+
+    return o;
+}
+
+bool KittiRawDataBuilder::BuildCamera(const Path& from, Cameras& cams, RectifiedStereoPairs& stereo) const
+{
+    CalibCam2Cam cam2cam(m_cam2cam);
+    CalibRigid imu2lid(m_imu2lid);
+    CalibRigid lid2cam(m_lid2cam);
+
+    if (!cam2cam.IsOkay() || !imu2lid.IsOkay() || !lid2cam.IsOkay())
+    {
+        E_ERROR << "error reading configurations";
+        return false;
+    }
+
+    EuclideanTransform imu2cam = imu2lid.tform >> lid2cam.tform;
+    EuclideanTransform cam2imu = imu2cam.GetInverse();
+
+    size_t ncams = cam2cam.data.size();
+    bool rectified = m_rectified;
+
+    if (!rectified) // automatically detect if the sequence is processed
+    {
+        Strings seqDirNameToks = explode(from.filename().string(), '_');
+        if (boost::equals(seqDirNameToks.back(), "sync"))
+        {
+            E_WARNING << "synced + rectified sequence detected despite --synced is not set";
+            rectified = true;
+        }
+    }
 
     if (ncams == 0)
     {
@@ -254,11 +394,11 @@ bool KittiRawDataScanner::Scan(const Path& seqPath, const Path& calPath, const P
     }
 
     E_INFO << "found " << ncams << " camera(s)";
-    seq.Clear();
 
-    Cameras& cams = seq.GetCameras();
+    assert(ncams == 4); // KITTI raw dataset should come with 4 cameras
+
     const size_t ref = 0; // index of the referenced camera; KITTI uses the first camera (idx=0)
-    const cv::Mat K = calib.data[ref].P_rect.rowRange(0, 3).colRange(0, 3);
+    const cv::Mat K = cam2cam.data[ref].P_rect.rowRange(0, 3).colRange(0, 3);
     const cv::Mat K_inv = K.inv();
 
     cams.resize(ncams);
@@ -269,13 +409,15 @@ bool KittiRawDataScanner::Scan(const Path& seqPath, const Path& calPath, const P
 
         Camera& cam = cams.at(i);
 
+        cam.SetIndex(i);
+
         // intrinsic parameters..
         BouguetModel::Ptr intrinsics = BouguetModel::Ptr(new BouguetModel());
 
         if (!rectified)
         {
-            intrinsics->SetCameraMatrix(calib.data[i].K);
-            intrinsics->SetDistCoeffs(calib.data[i].D);
+            intrinsics->SetCameraMatrix(cam2cam.data[i].K);
+            intrinsics->SetDistCoeffs(cam2cam.data[i].D);
         }
         else
         {
@@ -287,12 +429,12 @@ bool KittiRawDataScanner::Scan(const Path& seqPath, const Path& calPath, const P
         // extrinsic parameters..
         if (!rectified)
         {
-            cam.GetExtrinsics().SetRotationMatrix(calib.data[i].R);
-            cam.GetExtrinsics().SetTranslation(calib.data[i].T);
+            cam.GetExtrinsics().SetRotationMatrix(cam2cam.data[i].R);
+            cam.GetExtrinsics().SetTranslation(cam2cam.data[i].T);
         }
         else if (i != ref)
         {
-            cv::Mat RT = K_inv * calib.data[i].P_rect;
+            cv::Mat RT = K_inv * cam2cam.data[i].P_rect;
             cam.GetExtrinsics().SetTransformMatrix(RT);
 
             // TODO: take R_rect into account
@@ -301,41 +443,43 @@ bool KittiRawDataScanner::Scan(const Path& seqPath, const Path& calPath, const P
 
         // search for images
         stringstream ss; ss << "image_" << std::setfill('0') << std::setw(2) << i;
-        String imageDirName = ss.str();
-        Path imageDirPath = seqPath / imageDirName / "data";
+        const String imageDirName = ss.str();
+        const Path   imageDirPath = from / imageDirName / "data";
         const String imageFileExt = ".png";
 
         cam.SetName(imageDirName);
+        cam.SetModel(i < 2 ? "Point Grey Flea 2 (FL2-14S3M-C)" : "Point Grey Flea 2 (FL2-14S3C-C)");
 
         if (!dirExists(imageDirPath))
         {
-            E_INFO << "skipped because image folder \"" << imageDirPath.string() << "\" not found";
+            E_INFO << "skipped missing image folder " << imageDirPath.string();
             continue;
         }
 
-        Paths imageFiles = enumerateFiles(imageDirPath, imageFileExt);
-        Camera::ImageStorage& imageStore = cam.GetImageStorage();
+        cam.GetImageStore().FromExistingFiles(imageDirPath, imageFileExt);
 
-        imageStore.SetRootPath(imageDirPath);
-        imageStore.Allocate(imageFiles.size());
-
-        BOOST_FOREACH(const Path& imageFile, imageFiles)
-        {
-            imageStore.Add(imageFile.filename().string());
-        }
-
-        cv::Mat S = rectified ? calib.data[i].S_rect : calib.data[i].S;
+        cv::Mat S = rectified ? cam2cam.data[i].S_rect : cam2cam.data[i].S;
         cv::Size imageSize((int) S.at<float>(0), (int) S.at<float>(1));
         cam.SetImageSize(imageSize);
 
-        E_INFO << imageStore.GetSize() << " image(s) located for camera " << i;
+        E_INFO << cam.GetImageStore().GetItems() << " image(s) located for camera " << i;
     }
+
+    // create six possible stereo pairs
+    stereo.push_back(RectifiedStereo(cams[0], cams[1])); // canonical pair 0
+    stereo.push_back(RectifiedStereo(cams[2], cams[3])); // canonical pair 1
+    stereo.push_back(RectifiedStereo(cams[0], cams[3])); // long-baseline cross-pair 0
+    stereo.push_back(RectifiedStereo(cams[2], cams[1])); // long-baseline cross-pair 1
+    stereo.push_back(RectifiedStereo(cams[2], cams[0])); // short-baseline cross-pair 0
+    stereo.push_back(RectifiedStereo(cams[3], cams[1])); // short-baseline cross-pair 1
 
     return true;
 }
 
-ScannerFactory::ScannerFactory()
+//==[ SeqBuilderFactory ]=======================================================
+
+SeqBuilderFactory::SeqBuilderFactory()
 {
-    Register<KittiOdometryScanner>("KITTI_ODOMETRY");
-    Register<KittiRawDataScanner> ("KITTI_RAW");
+    Register<KittiOdometryBuilder>("KITTI_ODOMETRY");
+    Register<KittiRawDataBuilder> ("KITTI_RAW");
 }

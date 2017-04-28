@@ -33,12 +33,12 @@ Args::Args(int argc, char* argv[])
 
     po::options_description miscs("Miscs. Options");
     miscs.add_options()
-        ("help,h",    "Show this message and exit")
-        ("version,v", "")
-        ("force,f",   po::bool_switch(&force        )->default_value(false), "")
-        ("report",    po::value<String>(&reportPath )->default_value(""),    "Enable reporting and dump the calibration report to the specified folder. Use empty string to suppress reporting.")
-        ("logfile",   po::value<String>(&logfilePath)->default_value(""),    "")
-        ("gnuplot",   po::value<String>(&gnuplotPath)->default_value(""),    "");
+        ("help,h",    "Show this message and exit.")
+        ("version,v", "Print program version and exit.")
+        ("force,f",   po::bool_switch(&force        )->default_value(false),     "Force to start over a fresh calibration.")
+        ("report",    po::value<String>(&reportPath )->default_value(""),        "Enable reporting and dump the calibration report to the specified folder. Use empty string to disable reporting.")
+        ("logfile",   po::value<String>(&logfilePath)->default_value(""),        "Path to the log file.")
+        ("gnuplot",   po::value<String>(&gnuplotPath)->default_value("gnuplot"), "Path to the gnuplot binary, required by report rendering.");
 
     m_options.add(general).add(target).add(optim).add(miscs);
 	m_okay = Parse(argc, argv);

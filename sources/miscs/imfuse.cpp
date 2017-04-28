@@ -72,7 +72,19 @@ int main(int argc, char* argv[])
 			}
 
 			cv::Mat canvas;
-			cv::merge(im, canvas);
+
+            switch (maps.size())
+            {
+            case 1:
+                canvas = gray2rgb(im[0]);
+                break;
+            case 2:
+                canvas = imfuse(im[0], im[1]);
+                break;
+            case 3:
+                cv::merge(im, canvas);
+                break;
+            }
 
 			if (drawEpipolarLines)
 			{
@@ -112,7 +124,7 @@ bool parseArgs(int argc, char* argv[], UVMaps& maps, Paths& rawPaths)
 	Paths calPaths = enumerateFiles(calPath);
 	rawPaths = enumerateDirs(rawPath);
 
-	if (rawPaths.size() != 3 || calPaths.size() != rawPaths.size())
+	if (rawPaths.size() > 3 || calPaths.size() != rawPaths.size())
 	{
         E_ERROR << "raw path(s) in " << rawPath;
         for (size_t i = 0; i < rawPaths.size(); i++) E_INFO << rawPaths[i];

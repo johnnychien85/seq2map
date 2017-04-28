@@ -71,16 +71,18 @@ namespace seq2map
     {
     public:
         typedef boost::shared_ptr<ProjectionModel> Ptr;
+        typedef boost::shared_ptr<const ProjectionModel> ConstPtr;
+
         virtual void Project(const Points3D& pts3d, Points2D& pts2d) const = 0;
         virtual bool Store(cv::FileStorage& fs) const = 0;
         virtual bool Restore(const cv::FileNode& fn) = 0;
         virtual String GetModelName() const = 0;
     };
 
-    template<class T0, class T1> class PointMap
+    template<class T0, class T1> class Mapping
     {
     public:
-        PointMap() : m_size(0) {}
+        Mapping() : m_size(0) {}
         size_t Add(const T0& pt0, const T1& pt1)
         {
             m_pts0.push_back(pt0);
@@ -97,10 +99,12 @@ namespace seq2map
         std::vector<T1> m_pts1;
     };
 
-    typedef PointMap<Point2D, Point2D> PointMap2Dto2D;
-    typedef PointMap<Point3D, Point2D> PointMap3Dto2D;
+    typedef Mapping<Point2D, Point2D> PointMap2Dto2D;
+    typedef Mapping<Point3D, Point2D> PointMap3Dto2D;
 
-    class MotionEstimation : public LeastSquaresProblem, public Persistent<Path>
+    class MotionEstimation
+    : public LeastSquaresProblem,
+      public Persistent<Path>
     {
     public:
         MotionEstimation(const cv::Mat& K, double alpha = 0.0f, bool sepRpe = false, bool sampsonError = true) :
@@ -160,7 +164,9 @@ namespace seq2map
         static void DecomposeProjMatrix(const cv::Mat& P, cv::Mat& KRinv, cv::Mat& c);
     };
 
-    class BouguetModel : public ProjectionModel, public VectorisableD
+    class BouguetModel
+    : public ProjectionModel,
+      public VectorisableD
     {
     public:
         typedef boost::shared_ptr<BouguetModel> Ptr;

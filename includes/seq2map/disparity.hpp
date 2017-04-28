@@ -9,15 +9,15 @@ namespace seq2map
     {
     public:
         /* ctor */ StereoMatcherAdaptor(std::string matcherName, int numDisparities)
-                   : m_matcherName(matcherName), m_numDisparities(numDisparities) {}
+            : m_matcherName(matcherName), m_numDisparities(numDisparities) {}
         /* dtor */ virtual ~StereoMatcherAdaptor() {}
-	    virtual cv::Mat Match(const cv::Mat& left, const cv::Mat& right) = 0;
-	    virtual void    WriteParams(cv::FileStorage& f);
-	    inline int      GetNumDisparities() const {return m_numDisparities;}
-	    inline uint16_t GetScale() const          {return cv::StereoMatcher::DISP_SCALE;}
-	    inline uint16_t GetNormalisationFactor() const {return (uint16_t)(std::floor((double)USHRT_MAX / GetScale() / m_numDisparities));}
+        virtual cv::Mat Match(const cv::Mat& left, const cv::Mat& right) = 0;
+        virtual void    WriteParams(cv::FileStorage& f);
+        inline int      GetNumDisparities() const { return m_numDisparities; }
+        inline uint16_t GetScale() const { return cv::StereoMatcher::DISP_SCALE; }
+        inline uint16_t GetNormalisationFactor() const { return (uint16_t)(std::floor((double)USHRT_MAX / GetScale() / m_numDisparities)); }
     protected:
-	    int				  m_numDisparities;
+        int				  m_numDisparities;
         const std::string m_matcherName;
     };
 
@@ -35,15 +35,15 @@ namespace seq2map
     class SemiGlobalMatcher : public StereoMatcherAdaptor
     {
     public:
-	    /* ctor */ SemiGlobalMatcher(int numDisparities, int SADWindowSize,
-                    int P1, int P2, int disp12MaxDiff,
-                    int preFilterCap, int uniquenessRatio,
-                    int speckleWindowSize, int speckleRange, bool fullDP);
-	    /* dtor */ ~SemiGlobalMatcher();
+        /* ctor */ SemiGlobalMatcher(int numDisparities, int SADWindowSize,
+            int P1, int P2, int disp12MaxDiff,
+            int preFilterCap, int uniquenessRatio,
+            int speckleWindowSize, int speckleRange, bool fullDP);
+        /* dtor */ ~SemiGlobalMatcher();
         virtual cv::Mat	Match(const cv::Mat& left, const cv::Mat& right);
         virtual void WriteParams(cv::FileStorage& f);
     private:
-	    cv::Ptr<cv::StereoSGBM> m_SGBM;
+        cv::Ptr<cv::StereoSGBM> m_SGBM;
     };
 
     class DisparityIO
@@ -52,7 +52,7 @@ namespace seq2map
         /* ctor */ DisparityIO() : m_denorm(0), m_scale(0) {}
         /* ctor */ DisparityIO(uint16_t denorm, double scale) : m_denorm(denorm), m_scale(scale) {}
         /* ctor */ DisparityIO(const StereoMatcherAdaptor& matcher)
-                   : m_denorm(matcher.GetNormalisationFactor()), m_scale(matcher.GetScale()) {}
+            : m_denorm(matcher.GetNormalisationFactor()), m_scale(matcher.GetScale()) {}
         /* dtor */ virtual ~DisparityIO() {}
 
         bool    Write(const cv::Mat& dp, const Path& path);
@@ -61,6 +61,49 @@ namespace seq2map
     protected:
         uint16_t m_denorm;
         double m_scale;
+    };
+
+    /*
+    class DisparityMap : public Persistent<Path>
+    {
+    public:
+        virtual bool Store(Path& path) const;
+        virtual bool Restore(const Path& path);
+
+        cv::Mat  mat;
+
+        uint16_t dmin;
+        uint16_t dmax;
+    };
+    */
+
+    class StereoMatcher
+    : public virtual Parameterised,
+      public Persistent<cv::FileStorage, cv::FileNode>
+    {
+    public:
+        typedef boost::shared_ptr<StereoMatcher> Ptr;
+
+        virtual bool Store(cv::FileStorage& fs) const;
+        virtual bool Restore(const cv::FileNode& fn);
+
+        inline uint16_t GetDisparities() const { return m_ndisp; }
+        inline uint16_t GetScale()       const { return m_scale; }
+
+    protected:
+        uint16_t m_ndisp; // number of disparities the matcher can produce
+        uint16_t m_scale; // inverse distance between each two closest disaprity values
+    };
+
+    class StereoMatcherFactory
+    : public Factory<String, StereoMatcher>,
+      public Singleton<StereoMatcherFactory>
+    {
+    public:
+        friend class Singleton<StereoMatcherFactory>;
+        StereoMatcher::Ptr Create(const cv::FileNode& fn);
+    protected:
+        virtual void Init();
     };
 }
 

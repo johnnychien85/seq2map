@@ -70,4 +70,7 @@ ImageGrabberBuilderFactory::ImageGrabberBuilderFactory()
 #ifdef WITH_PYLON
     Factory::Register<PylonImageGrabberBuilder>("PYLON");
 #endif
+#ifdef WITH_STCAM
+	Factory::Register<StImageGrabberBuilder>("STCAM");
+#endif
 }

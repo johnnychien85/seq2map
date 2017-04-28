@@ -91,15 +91,25 @@ int main(int argc, char* argv[])
         E_INFO << "calibration graph restored from " << args.profilePath;
     }
 
+	// enable report generation
+	if (!args.reportPath.empty() &&
+		!graph.SetReporting(args.reportPath, args.gnuplotPath))
+	{
+		E_ERROR   << "error enabling report to " << args.reportPath;
+		E_WARNING << "reporting disabled"; // don't stop the process
+	}
+
     //
     // Stage 2: Camera Calibration
     //
+	// 2.1 Initialisation
     if (!graph.Calibrate(args.optimPairwise))
     {
         E_FATAL << "initial calibration failed";
         return EXIT_FAILURE;
     }
 
+	// 2.2 Optimisation
     if (args.optimGlobal && !graph.Optimise(args.optimIters, args.optimEpsilon, args.optimThreads))
     {
         E_FATAL << "global optimisation failed";
@@ -112,22 +122,14 @@ int main(int argc, char* argv[])
         E_WARNING << "error storing profile to " << args.profilePath;    
     }
 
-    //graph.WriteMFile("graph.m");
-
-    // let's print something
-    graph.Summary();
-
     // write the calibrated parameters
     if (!graph.WriteParams(args.calPath))
     {
         E_WARNING << "error writing calibrated parameters to " << args.calPath;
     }
 
-    // report generation
-    if (!args.reportPath.empty() && !graph.WriteReport(args.reportPath))
-    {
-        E_WARNING << "error writing calibration report to " << args.reportPath;
-    }
+	// print something and before exiting
+	graph.Summary();
 
     return 0;
 }

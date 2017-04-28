@@ -6,8 +6,12 @@
 #include <boost/foreach.hpp>
 #include <boost/program_options.hpp>
 #include <boost/timer/timer.hpp>
+#include <boost/date_time/posix_time/posix_time_types.hpp>
 #include <opencv2/opencv.hpp>
 
+/**
+ * macros for logging
+ */
 #if defined ( WIN32 )
 #define __func__ __FUNCTION__
 #endif
@@ -19,6 +23,9 @@
 #define E_ERROR		E_LOG(error)
 #define E_FATAL		E_LOG(fatal)
 
+/**
+ * type definitions
+ */
 namespace seq2map
 {
     typedef std::string String;
@@ -26,6 +33,8 @@ namespace seq2map
 
     typedef boost::filesystem::path Path;
     typedef std::vector<Path> Paths;
+
+    typedef boost::posix_time::ptime Time;
 
     typedef cv::Point2f Point2F;
     typedef cv::Point3f Point3F;
@@ -38,9 +47,16 @@ namespace seq2map
     typedef std::vector<Point3D> Points3D;
 
     typedef std::list<size_t> Indices;
-    const size_t INVALID_INDEX = (size_t) -1;
+    const size_t INVALID_INDEX = (size_t)-1;
     Indices makeIndices(size_t start, size_t end);
+}
 
+/**
+ * helper functions
+ */
+namespace seq2map
+{
+    // math
     double rad2deg(double radian);
     double deg2rad(double degree);
     double rms(const cv::Mat& e);
@@ -74,6 +90,16 @@ namespace seq2map
     cv::Mat gray2rgb(const cv::Mat& gray);
     cv::Mat imfuse(const cv::Mat& im0, const cv::Mat& im1);
 
+    // miscs.
+    Time unow();
+    String time2string(const Time& time);
+}
+
+/**
+ * classes
+ */
+namespace seq2map
+{
     /**
      * Indexed item
      */
@@ -99,26 +125,54 @@ namespace seq2map
         virtual void WriteParams(cv::FileStorage& fs) const = 0;
         virtual bool ReadParams(const cv::FileNode& fn) = 0;
         virtual void ApplyParams() = 0;
-        virtual Options GetOptions(int flag) = 0;
+        virtual Options GetOptions(int flag = 0) = 0;
     };
 
     /**
-     * An interface to represent any object that is storable to and later
-     * restorable from a file.
+     * An interface to represent any class that is storable to and later
+     * restorable from type T1 and T2 respectively.
      */
     template<class T1, class T2 = T1>
     class Persistent
     {
     public:
-        virtual bool Store(T1& path) const = 0;
-        virtual bool Restore(const T2& path) = 0;
+        virtual bool Store(T1& to) const = 0;
+        virtual bool Restore(const T2& from) = 0;
+    };
+
+    /**
+     * Linearily spaced vector.
+     */
+    template<typename T>
+    class LinearSpacedVec
+    {
+    public:
+        LinearSpacedVec(T begin, T end, size_t segs = 0)
+        : begin(begin), end(end), segs(segs > 0 ? segs : static_cast<size_t>(end - begin)) {}
+        
+        virtual ~LinearSpacedVec() {}
+
+        inline T operator[] (size_t idx) const
+        { return idx < segs ? static_cast<T>(static_cast<double>(begin) + static_cast<double>(idx) * static_cast<double>((end - begin)) / static_cast<double>(segs)) : end; }
+
+        void GetLinearMappingTo(const LinearSpacedVec<T>& dst, double& alpha, double& beta) const
+        {
+            alpha = static_cast<double>(dst.segs) / static_cast<double>(dst.end - dst.begin);
+            beta  = -alpha * static_cast<double>(begin);
+        }
+
+        T begin;
+        T end;
+        size_t segs;
     };
 
     /**
      * The storage class presents a collection of persistent objects
      * sequentially stored in the same folder.
      */
-    template<class DerivedPersistent> class SequentialPersistentLoader : public Persistent<cv::FileStorage, cv::FileNode>
+    /*
+    template<class DerivedPersistent>
+    class SequentialPersistentLoader : public Persistent<cv::FileStorage, cv::FileNode>
     {
     public:
         SequentialPersistentLoader() {}
@@ -174,9 +228,9 @@ namespace seq2map
             return true;
         }
 
-        /**
-         * element accessor
-         */
+        //
+        // element accessor
+        //
         bool Retrieve(size_t idx, DerivedPersistent& persistent) const
         {
             return idx < m_filenames.size() ? persistent.Restore(m_root / m_filenames[idx]) : false;
@@ -205,6 +259,7 @@ namespace seq2map
         Strings m_filenames;
         //std::vector<_Tp> m_persistents;
     };
+    */
 
     /**
      * A wrapper of cv::Mat with disk storage backend.
@@ -244,6 +299,9 @@ namespace seq2map
         boost::timer::cpu_timer m_timer;
     };
 
+    /**
+     * A scoped implementation of speedometre class.
+     */
     class AutoSpeedometreMeasure
     {
     public:
@@ -264,6 +322,7 @@ namespace seq2map
     public:
         typedef boost::shared_ptr<Base> BasePtr;
         typedef BasePtr(*CtorType)();
+        typedef std::vector<Key> Keys;
 
         BasePtr Create(const Key& key) const
         {
@@ -278,9 +337,9 @@ namespace seq2map
             return itr->second();
         }
 
-        std::vector<Key> GetRegisteredKeys() const
+        Keys GetRegisteredKeys() const
         {
-            std::vector<Key> keys;
+            Keys keys;
             BOOST_FOREACH(typename Registry::value_type v, m_ctors)
             {
                 keys.push_back(v.first);
@@ -299,9 +358,9 @@ namespace seq2map
         {
             CtorType ctor = &Factory::Constructor<Derived>;
 
-            bool newKey = m_ctors.insert(typename Registry::value_type(key, ctor)).second;
+            bool unique = m_ctors.insert(typename Registry::value_type(key, ctor)).second;
 
-            if (!newKey)
+            if (!unique)
             {
                 E_WARNING << "duplicated key " << key;
             }
@@ -313,22 +372,98 @@ namespace seq2map
     };
 
     /**
-     * Templated singleton class to create the only one static instance of class.
+     * Templated singleton class to create the only one static instance of class T.
      */
     template<class T> class Singleton
     {
     public:
-        typedef boost::shared_ptr<T> Ptr;
+        Singleton(Singleton const&);         // deleted - no copy constructor is allowed
+        void operator=(Singleton<T> const&); // deleted - no copying is allowed
 
-        static T  GetInstancePtr() { return m_instance ? m_instance : (m_instance = Ptr(new T)); }
-        static T& GetInstance()    { return *GetInstancePtr(); }
+        static T& GetInstance()
+        {
+            static T instance;
+
+            if (!s_init)
+            {
+                instance.Init();
+                s_init = true;
+            }
+            
+            return instance;
+        }
 
     protected:
+        Singleton()  {}
+        ~Singleton() {}
 
+        virtual void Init() {}
+
+        static bool s_init;
+    };
+
+    template<class T> bool Singleton<T>::s_init = false;
+
+    /**
+     * Application class
+     */
+    class App
+    {
+    public:
+        int Run();
+
+    protected:
+        typedef boost::program_options::options_description Options;
+        typedef boost::program_options::positional_options_description Positional;
+
+        /* ctor */ App(int argc, char* argv[]);
+        /* dtor */ virtual ~App() {}
+        virtual void SetOptions(Options& general, Options& hidden, Positional& positional) = 0;
+        virtual void ShowSynopsis() const;
+        virtual void ShowHelp(const Options& options) const = 0;
+        virtual bool ProcessUnknownArgs(const Strings& args);
+        virtual bool Init() = 0;
+        virtual bool Execute() = 0;
+
+        const Path m_exec;
 
     private:
-        static Ptr m_instance;
+        boost::program_options::command_line_parser m_parser;
+        bool m_help;
+        Path m_logfile;
     };
+}
+
+/**
+ * Some extensions for OpenCV
+ */
+namespace cv
+{
+    static void write(FileStorage& fs, const cv::String& bane, size_t value)
+    {
+        fs << static_cast<int>(value);
+    }
+
+    static void read(const FileNode& fn, size_t& value, const size_t& default_value = 0)
+    {
+        int x;
+        fn >> x;
+
+        value = static_cast<size_t>(x);
+    }
+
+    static void write(FileStorage& fs, const cv::String& name, const seq2map::Path& path)
+    {
+        fs << path.string();
+    }
+
+    static void read(const FileNode& fn, seq2map::Path& value, const seq2map::Path& default_value = seq2map::Path())
+    {
+        String x;
+        fn >> x;
+
+        value = fn.empty() ? default_value : seq2map::Path(x.c_str());
+    }
 }
 
 #endif //COMMON_HPP

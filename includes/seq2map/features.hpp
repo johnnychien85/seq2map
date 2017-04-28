@@ -89,12 +89,21 @@ namespace seq2map
         virtual ImageFeatureSet ExtractFeatures(const cv::Mat& im, KeyPoints& keypoints) const = 0;
     };
 
-    class FeatureDetextractor : public virtual Parameterised, public Persistent<cv::FileStorage, cv::FileNode>
+    class FeatureDetextractor
+    : public virtual Parameterised,
+      public Persistent<cv::FileStorage, cv::FileNode>
     {
     public:
+        typedef boost::shared_ptr<FeatureDetextractor> Ptr;
+        typedef boost::shared_ptr<const FeatureDetextractor> ConstPtr;
+
+        inline String GetKeypointName()   const { return m_keypointType;   }
+        inline String GetDescriptorName() const { return m_descriptorType; }
+
         virtual ImageFeatureSet DetectAndExtractFeatures(const cv::Mat& im) const = 0;
         virtual bool Store(cv::FileStorage& fs) const;
         virtual bool Restore(const cv::FileNode& fn);
+
     private:
         String m_keypointType;
         String m_descriptorType;
@@ -148,16 +157,21 @@ namespace seq2map
         /* dtor */ virtual ~FeatureExtractorFactory() {}
     };
 
-    class FeatureDetextractorFactory :
-        public Factory<String, FeatureDetextractor>
+    class FeatureDetextractorFactory
+    : public Factory<String, FeatureDetextractor>,
+      public Singleton<FeatureDetextractorFactory>
     {
     public:
-        /* ctor */ FeatureDetextractorFactory();
-        /* dtor */ virtual ~FeatureDetextractorFactory() {}
-        FeatureDetextractorPtr Create(const String& detectorName, const String& extractorName);
-        FeatureDetextractorPtr Create(const cv::FileNode& fn);
+        friend class Singleton<FeatureDetextractorFactory>;
+
+        FeatureDetextractor::Ptr Create(const String& detectorName, const String& extractorName);
+        FeatureDetextractor::Ptr Create(const cv::FileNode& fn);
         inline const FeatureDetectorFactory&  GetDetectorFactory()  const { return m_detectorFactory; }
         inline const FeatureExtractorFactory& GetExtractorFactory() const { return m_extractorFactory; }
+
+    protected:
+        virtual void Init();
+
     private:
         FeatureDetectorFactory  m_detectorFactory;
         FeatureExtractorFactory m_extractorFactory;

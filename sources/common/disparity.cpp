@@ -114,3 +114,13 @@ Mat DisparityIO::Read(const Path& path)
 
     return dpmap;
 }
+
+seq2map::StereoMatcher::Ptr StereoMatcherFactory::Create(const cv::FileNode& fn)
+{
+    return seq2map::StereoMatcher::Ptr();
+}
+
+void StereoMatcherFactory::Init()
+{
+
+}

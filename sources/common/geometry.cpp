@@ -124,8 +124,10 @@ bool EuclideanTransform::SetRotationMatrix(const cv::Mat& rmat)
         return false;
     }
 
-    cv::Rodrigues(rmat, m_rvec);
-    SetRotationVector(m_rvec);
+    cv::Mat rvec;
+
+    cv::Rodrigues(rmat, rvec);
+    SetRotationVector(rvec);
 
     return true;
 }

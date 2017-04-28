@@ -1,212 +1,162 @@
 #include "scanner.hpp"
 
-namespace po = boost::program_options;
-
-struct Args
+class MyApp : public App
 {
-    String scanner;
-    String seqNanme;
-    Path srcPath;
-    Path dstPath;
-    Path calPath;
-    Path motPath;
-    Path featuresPath;
-    String dxtorFileName;
-    bool help;
+public:
+    MyApp(int argc, char* argv[]) : App(argc, argv) {}
+
+protected:
+    virtual void SetOptions(Options&, Options&, Positional&);
+    virtual void ShowHelp(const Options&) const;
+    virtual bool ProcessUnknownArgs(const Strings& args);
+    virtual bool Init();
+    virtual bool Execute();
+
+private:
+    String m_rawPath;
+    String m_outPath;
+    String m_seqName;
+    String m_builderName;
+    SeqBuilderFactory m_factory;
+    SeqBuilderFactory::BasePtr m_builder;
 };
 
-bool init(int, char*[], const ScannerFactory& factory, Args&);
-void scanFeatures(Path path, Sequence& seq);
-void showSynopsis(char*);
-
-int main(int argc, char* argv[])
+void MyApp::ShowHelp(const Options& o) const
 {
-    Args args;
-    ScannerFactory factory;
+    std::cout << "Make a new sequence database from raw data folder." << std::endl;
+    std::cout << std::endl;
+    std::cout << "Usage: " << m_exec.string() << " [options] <sequence_in_dir> <database_out_dir>" << std::endl;
+    std::cout << o << std::endl;
 
-    if (!init(argc, argv, factory, args)) return args.help ? EXIT_SUCCESS : EXIT_FAILURE;
-
-    try
+    if (m_builderName.empty())
     {
-        Sequence seq;
-        ScannerFactory::BasePtr scanner = factory.Create(args.scanner);
-
-        if (!scanner)
-        {
-            E_ERROR << "unknown sequence scanner \"" << args.scanner << "\"";
-            return -1;
-        }
-
-        if (!scanner->Scan(args.srcPath, args.calPath, args.motPath, seq))
-        {
-            E_ERROR << "error scanning sequence \"" << args.srcPath << "\"";
-            return -1;
-        }
-
-        seq.SetPath(boost::filesystem::absolute(args.srcPath));
-        seq.SetName(args.seqNanme);
-        seq.SetGrabber(args.scanner);
-
-        if (!args.featuresPath.empty())
-        {
-            // try to restore the feature detextractor if its
-            //  persistent storage is found
-            Path dxtorPath = args.featuresPath / args.dxtorFileName;
-
-            if (fileExists(dxtorPath))
-            {
-                cv::FileStorage fs(dxtorPath.string(), cv::FileStorage::READ);
-                FeatureDetextractorFactory dxtorFactory;
-                FeatureDetextractorPtr dxtor = dxtorFactory.Create(fs.root());
-
-                if (dxtor)
-                {
-                    E_INFO << "the feature detector and extractor succefully restored from " << dxtorPath;
-                    seq.SetFeatureDetextractor(dxtor);
-                }
-            }
-
-            scanFeatures(args.featuresPath, seq);
-        }
-
-        if (!seq.Store(args.dstPath))
-        {
-            E_ERROR << "error writing sequence profile to \"" << args.dstPath << "\"";
-            return -1;
-        }
-
-        E_INFO << "sequence profile succesfuilly saved to " << args.dstPath;
-    }
-    catch (std::exception& ex)
-    {
-        E_FATAL << "exception caught in main loop";
-        E_FATAL << ex.what();
-
-        return -1;
+        std::cout << "Please use -h with -b to see sequence builder specific options.";
+        return;
     }
 
-    return 0;
+    SeqBuilderFactory::BasePtr builder = m_factory.Create(m_builderName);
+
+    if (!builder)
+    {
+        E_ERROR << "unknown sequence builder \"" << m_builderName << "\"";
+        return;
+    }
+
+    std::cout << builder->GetOptions();
 }
 
-bool init(int argc, char* argv[], const ScannerFactory& factory, Args& args)
+void MyApp::SetOptions(Options& o, Options& h, Positional& p)
 {
-    String srcPath, calPath, motPath, featuresPath, dstPath;
-    String scanners = "Folder scanner name, must be one of " + makeNameList(factory.GetRegisteredKeys());
+    namespace po = boost::program_options;
+    String builders = "Sequence builder, must be one of " + makeNameList(m_factory.GetRegisteredKeys());
 
-    po::options_description o("General Options");
     o.add_options()
-        ("name,n", po::value<String>(&args.seqNanme), "Name of the sequence.")
-        ("type,t", po::value<String>(&args.scanner), scanners.c_str())
-        ("cal,c",  po::value<String>(&calPath)->default_value(""), "Path to the calibration file(s).")
-        ("mot,m",  po::value<String>(&motPath)->default_value(""), "Optional path to the motion data.")
-        ("features,f", po::value<String>(&featuresPath)->default_value(""), "Optional path to the features folder.")
-        ("dxtor",  po::value<String>(&args.dxtorFileName)->default_value("dxtor.yml"), "File name of the feature detector-and-extractor parameters. This file has to be located in the feature folder.")
-        ("help,h", "Show this help message and exit.");
+        ("name,n",    po::value<String>(&m_seqName    )->default_value(""), "Name of the sequence.")
+        ("builder,b", po::value<String>(&m_builderName)->default_value(""), builders.c_str());
 
-    po::options_description h("Hiddens");
     h.add_options()
-        ("in",  po::value<String>(&srcPath)->default_value(""), "Path to the input sequence")
-        ("out", po::value<String>(&dstPath)->default_value(""), "Path to the output profile");
+        ("raw", po::value<String>(&m_rawPath)->default_value(""), "Path to the input sequence.")
+        ("out", po::value<String>(&m_outPath)->default_value(""), "Path to the output folder.");
 
-    po::positional_options_description p;
-    p.add("in", 1).add("out", 1);
+    p.add("raw", 1).add("out", 1);
+}
+
+bool MyApp::ProcessUnknownArgs(const Strings& args)
+{
+    namespace po = boost::program_options;
+
+    if (m_builderName.empty())
+    {
+        E_ERROR << "missing builder name";
+        return false;
+    }
+
+    m_builder = m_factory.Create(m_builderName);
+
+    if (!m_builder)
+    {
+        E_ERROR << "unknown sequence builder \"" << m_builderName << "\"";
+        return false;
+    }
 
     try
     {
-        po::options_description a;
-        po::parsed_options parsed = po::command_line_parser(argc, argv).options(a.add(o).add(h)).positional(p).run();
-        po::variables_map vm;
+        Options opts = m_builder->GetOptions();
 
+        po::variables_map vm;
+        po::parsed_options parsed = po::command_line_parser(args).options(opts).run();
         po::store(parsed, vm);
         po::notify(vm);
-
-        args.help = vm.count("help") > 0;
-    }
-    catch (po::error& pe)
-    {
-        E_FATAL << "error parsing general arguments: " << pe.what();
-        showSynopsis(argv[0]);
-
-        return false;
     }
     catch (std::exception& ex)
     {
-        E_FATAL << "exception caugth: " << ex.what();
-        return false;
-    }
-
-    args.srcPath = srcPath;
-    args.calPath = calPath;
-    args.motPath = motPath;
-    args.dstPath = dstPath;
-    args.featuresPath = featuresPath;
-
-    if (args.help)
-    {
-        std::cout << "Usage: " << argv[0] << " <sequence_dir> <output_profile> [options]" << std::endl;
-        std::cout << o << std::endl;
+        E_ERROR << "error parsing builder-specific arguments: " << ex.what();
+        std::cout << "Please use -h with -b to see supported options.";
 
         return false;
     }
 
-    if (srcPath.empty())
-    {
-        E_FATAL << "input sequence path missing";
-        showSynopsis(argv[0]);
+    m_builder->ApplyParams();
+    return true;
+}
 
+bool MyApp::Init()
+{
+    assert(m_builder);
+
+    if (m_rawPath.empty())
+    {
+        E_ERROR << "missing input path";
         return false;
     }
 
-    if (dstPath.empty())
+    if (m_outPath.empty())
     {
-        E_FATAL << "output sequence profile missing";
-        showSynopsis(argv[0]);
-
+        E_ERROR << "missing output path";
         return false;
     }
 
-    if (args.seqNanme.empty())
+    if (m_seqName.empty())
     {
-        args.seqNanme = removeFilenameExt(args.dstPath.filename().string());
+        E_ERROR << "sequence name not specified";
+        return false;
     }
 
     return true;
 }
 
-void showSynopsis(char* exec)
+bool MyApp::Execute()
 {
-    std::cout << std::endl;
-    std::cout << "Try \"" << exec << " -h\" for usage listing." << std::endl;
+    Sequence seq;
+
+    Path seqDirName  = Path(m_seqName);
+    Path seqFullPath = m_outPath / seqDirName;
+    Path rawFullPath = fullpath(m_rawPath);
+
+    if (!makeOutDir(seqFullPath))
+    {
+        E_ERROR << "error creating output dir " << seqFullPath;
+        return false;
+    }
+
+    if (!m_builder->Build(rawFullPath, m_seqName, m_builderName, seq))
+    {
+        E_ERROR << "error building sequence " << rawFullPath;
+        return false;
+    }
+
+    if (!seq.Store(seqFullPath))
+    {
+        E_ERROR << "error storing sequence to " << seqFullPath;
+        return false;
+    }
+
+    E_INFO << "sequence succesfuilly built in " << seqFullPath;
+    return true;
 }
 
-void scanFeatures(Path path, Sequence& seq)
+int main(int argc, char* argv[])
 {
-    Cameras& cams = seq.GetCameras();
-    
-    E_INFO << "scanning image feature files";
-
-    for (size_t i = 0; i < cams.size(); i++)
-    {
-        Camera& cam = cams.at(i);
-        Path featureDirPath = path / cam.GetName();
-
-        if (!dirExists(featureDirPath))
-        {
-            E_INFO << "skipped because folder \"" << featureDirPath.string() << "\" does not exist";
-            continue;
-        }
-
-        Paths featureFiles = enumerateFiles(featureDirPath);
-        Camera::FeatureStorage& featureStore = cam.GetFeatureStorage();
-
-        featureStore.SetRootPath(featureDirPath);
-        featureStore.Allocate(featureFiles.size());
-
-        BOOST_FOREACH(const Path& featureFile, featureFiles)
-        {
-            featureStore.Add(featureFile.filename().string());
-        }
-
-        E_INFO << featureStore.GetSize() << " feature set(s) located for camera " << i;
-    }
+    MyApp app(argc, argv);
+    return app.Run();
 }

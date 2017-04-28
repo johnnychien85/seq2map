@@ -158,6 +158,12 @@ MinimumSpanningTree::MinimumSpanningTree(const cv::Mat& costs, size_t start)
     }
 }
 
+bool CalibGraph::SetReporting(const Path& docPath, const String& gpPath)
+{
+	m_report.SetGnuplotPath(gpPath);
+	return m_report.Create(docPath);
+}
+
 bool CalibGraph::Create(size_t cams, size_t views, size_t refCamIdx)
 {
     if (cams == 0 || views == 0)
@@ -173,7 +179,7 @@ bool CalibGraph::Create(size_t cams, size_t views, size_t refCamIdx)
     }
 
     m_camvtx = CameraVertex::Ptrs(cams);
-    m_viewvtx   = ViewVertex::Ptrs(views);
+    m_viewvtx = ViewVertex::Ptrs(views);
 
     for (size_t c = 0; c < cams;  c++) m_camvtx[c] = CameraVertex::Ptr(new CameraVertex(c));
     for (size_t v = 0; v < views; v++) m_viewvtx[v]   = ViewVertex::Ptr  (new ViewVertex  (v));
@@ -282,7 +288,7 @@ bool CalibGraph::Calibrate(bool pairwiseOptim)
         std::vector<Points2F> imagePoints1;
         std::vector<Points2F> imagePoints2;
 
-        E_INFO << "calibrating local transforms of camera pair (" << e.p << "," << e.q << ")";
+        E_INFO << "collecting views shared among camera pair (" << e.p << "," << e.q << ")";
 
         for (size_t view = 0; view < m_views; view++)
         {
@@ -459,7 +465,7 @@ bool CalibGraph::WriteParams(const Path& calPath) const
 {
     if (m_camvtx.empty())
     {
-        E_ERROR << "no cameras available";
+        E_ERROR << "no camera available";
         return false;
     }
 
@@ -488,7 +494,7 @@ bool CalibGraph::WriteParams(const Path& calPath) const
     {
         if (!camvtx[i]->connected || !camvtx[i]->initialised)
         {
-            E_ERROR << "camera " << camvtx[i]->GetIndex() << " not connected nor initialised";
+            E_ERROR << "camera " << camvtx[i]->GetIndex() << " is neither connected nor initialised";
             return false;
         }
 
@@ -502,7 +508,7 @@ bool CalibGraph::WriteParams(const Path& calPath) const
 
     if (camvtx.size() == 1) // monocular case
     {
-        rect[0].R_rect = cv::Mat::eye  (3, 3, CV_64F);
+        rect[0].R_rect = cv::Mat::eye(3, 3, CV_64F);
         rect[0].P_rect = cv::Mat::zeros(3, 4, CV_64F);
 
         camvtx[0]->intrinsics.GetCameraMatrix().copyTo(rect[0].P_rect.rowRange(0, 3).colRange(0, 3));
@@ -545,9 +551,9 @@ bool CalibGraph::WriteParams(const Path& calPath) const
         {
             cv::FileStorage fs(ymlPath.string().c_str(), cv::FileStorage::WRITE);
 
-            fs <<"index" << (int) camvtx[i]->GetIndex();
-            fs << "ref"  << (int) m_refCamIdx;
-            fs << "i" << (int) i;
+            fs << "index" << (int)camvtx[i]->GetIndex();
+            fs << "ref" << (int)m_refCamIdx;
+            fs << "i" << (int)i;
             fs << "K" << rect[i].K;
             fs << "D" << rect[i].D;
             fs << "R" << rect[i].R;
@@ -557,14 +563,14 @@ bool CalibGraph::WriteParams(const Path& calPath) const
             fs << "P_rect" << rect[i].P_rect;
             fs << "S_rect" << rect[i].S_rect;
 
-            of << "i = " << i << ";";
+            of << "i = " << i << ";" << std::endl;
             of << "cam(i).idx = " << camvtx[i]->GetIndex() << std::endl;
             of << "cam(i).ref = " << m_refCamIdx << std::endl;
             of << mat2string(rect[i].K, "cam(i).K") << std::endl;
             of << mat2string(rect[i].D, "cam(i).D") << std::endl;
             of << mat2string(rect[i].R, "cam(i).R") << std::endl;
             of << mat2string(rect[i].T, "cam(i).T") << std::endl;
-            of << "cam(i).S = [" << size2string(rect[i].S) << "];" << std::endl;
+            of << "cam(i).S = [" << rect[i].S.height << " " << rect[i].S.width << "];" << std::endl;
             of << mat2string(rect[i].R_rect, "cam(i).R_rect") << std::endl;
             of << mat2string(rect[i].P_rect, "cam(i).P_rect") << std::endl;
             of << "cam(i).S_rect = [" << size2string(rect[i].S_rect) << "];" << std::endl;
@@ -580,12 +586,8 @@ bool CalibGraph::WriteParams(const Path& calPath) const
         }
     }
 
-    return true;
-}
-
-bool CalibGraph::WriteReport(const Path& reportPath)
-{
-    return false;
+    Path graphPath = calPath / "graph.m";
+    return WriteMFile(graphPath);
 }
 
 bool CalibGraph::WriteMFile(const Path& mfilePath) const

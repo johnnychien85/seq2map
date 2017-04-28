@@ -1,3 +1,12 @@
+% MOT2EMAT converts pose matrix M = [R,t] to essential matrix
+% E = tx * R, where tx is the skew-symmetry form of vector t.
+%
+% Use mot2fmat instead for calibrated camera(s) to obtain the
+% fundamental matrix that directly applies to unormalised image
+% coordinates.
+%
+% See also mot2fmat
+%
 function E = mot2emat(M)
     R = M(1:3,1:3);
     t = normalise(M(1:3,4));

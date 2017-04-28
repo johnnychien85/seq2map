@@ -350,7 +350,7 @@ bool EbusImageGrabber::Grab(cv::Mat& im)
 
     if (!result.IsOK())
     {
-        // the ocming frame is not ready for now
+        // the frame is not ready for now
         return false;
     }
 

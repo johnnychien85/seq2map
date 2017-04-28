@@ -4,6 +4,7 @@
 #include <boost/log/attributes/attribute.hpp>
 #include <boost/log/attributes/clock.hpp>
 #include <boost/algorithm/string.hpp>
+#include <boost/date_time/posix_time/posix_time.hpp>
 #include <seq2map/common.hpp>
 
 namespace fs = boost::filesystem;
@@ -137,8 +138,18 @@ namespace seq2map
 
     bool makeOutDir(const Path& path)
     {
-        if (dirExists(path)) return true;
-        else return fs::create_directories(path);
+        try
+        {
+            if (dirExists(path)) return true;
+            else return fs::create_directories(path);
+        }
+        catch (std::exception& ex)
+        {
+            E_ERROR << "error making output directory " << path;
+            E_ERROR << ex.what();
+
+            return false;
+        }
     }
 
     size_t filesize(const Path& path)
@@ -149,13 +160,18 @@ namespace seq2map
     Paths enumerateFiles(const Path& root, const String& ext)
     {
         Paths files;
-        fs::directory_iterator endItr;
+        const fs::directory_iterator endItr;
 
         for (fs::directory_iterator itr(root); itr != endItr ; itr++)
         {
             if (!fs::is_regular(*itr)) continue;
-            bool extCheck = ext.empty() || boost::iequals(ext, itr->path().extension().string());
-            if(extCheck) files.push_back(*itr);
+
+            bool check = ext.empty() || boost::iequals(ext, itr->path().extension().string());
+
+            if (check)
+            {
+                files.push_back(*itr);
+            }
         }
 
         return files;
@@ -169,14 +185,23 @@ namespace seq2map
 
     Paths enumerateDirs(const Path& root)
     {
-        Paths dirs;
-        fs::directory_iterator endItr;
+        if (!dirExists(root)) return Paths();
 
-        for (fs::directory_iterator itr(root) ;
-            itr != endItr ; itr++)
+        Paths dirs;
+        const fs::directory_iterator endItr;
+
+        try
         {
-            if (!fs::is_directory(*itr)) continue;
-            dirs.push_back(*itr);
+            for (fs::directory_iterator itr(root); itr != endItr; itr++)
+            {
+                if (!fs::is_directory(*itr)) continue;
+                dirs.push_back(*itr);
+            }
+        }
+        catch (std::exception& ex)
+        {
+            E_ERROR << "error enumerating directories in " << root;
+            E_ERROR << ex.what();
         }
 
         return dirs;
@@ -371,6 +396,16 @@ namespace seq2map
         return im;
     }
 
+	Time unow()
+	{
+		return boost::posix_time::microsec_clock::local_time();
+	}
+
+	String time2string(const Time& time)
+	{
+		return boost::posix_time::to_simple_string(time);
+	}
+    
     void Speedometre::Start()
     {
         if (!m_activated)
@@ -430,5 +465,98 @@ namespace seq2map
         ss << m_displayName << ": " << std::fixed << std::setprecision(2) << GetSpeed() << " " << m_displayUnit;
 
         return ss.str();
+    }
+
+    App::App(int argc, char* argv[])
+    : m_parser(boost::program_options::command_line_parser(argc, argv)),
+      m_exec(argc > 0 ? String(argv[0]) : "")
+    {
+        // make the default path to the log file
+        m_logfile = m_exec;
+        m_logfile.replace_extension("log");
+    }
+
+    int App::Run()
+    {
+        namespace po = boost::program_options;
+
+        Options o("General options"), h("hidden");
+        Positional p;
+        String logfile;
+        Strings unknownArgs;
+
+        o.add_options()
+            ("help,h",  po::bool_switch  (&m_help )->default_value(false),              "Show this help message and exit.")
+            ("logfile", po::value<String>(&logfile)->default_value(m_logfile.string()), "Path to the log file.");
+
+        SetOptions(o, h, p);
+
+        try
+        {
+            Options a; // all options
+            po::parsed_options parsed = m_parser.options(a.add(o).add(h)).positional(p).allow_unregistered().run();
+            po::variables_map vm;
+
+            po::store(parsed, vm);
+            po::notify(vm);
+
+            unknownArgs = po::collect_unrecognized(parsed.options, po::exclude_positional);
+        }
+        catch (po::error& pe)
+        {
+            E_FATAL << "error parsing general arguments: " << pe.what();
+            return EXIT_FAILURE;
+        }
+        catch (std::exception& ex)
+        {
+            E_FATAL << "exception caugth: " << ex.what();
+            return EXIT_FAILURE;
+        }
+
+        if (m_help)
+        {
+            ShowHelp(o);
+            return EXIT_SUCCESS;
+        }
+
+        if (!initLogFile(m_logfile = logfile))
+        {
+            E_WARNING << "error writing to log file " << m_logfile;
+        }
+
+        try
+        {
+            if (!ProcessUnknownArgs(unknownArgs) || !Init())
+            {
+                ShowSynopsis();
+                return EXIT_FAILURE;
+            }
+
+            return Execute() ? EXIT_SUCCESS : EXIT_FAILURE;
+        }
+        catch (std::exception& ex)
+        {
+            E_FATAL << "unhandled exception caught";
+            E_FATAL << ex.what();
+
+            return EXIT_FAILURE;
+        }
+    }
+
+    bool App::ProcessUnknownArgs(const Strings& args)
+    {
+        if (!args.empty())
+        {
+            E_ERROR << "unknown argument(s) detected: " << makeNameList(args);
+            return false;
+        }
+
+        return true;
+    }
+
+    void App::ShowSynopsis() const
+    {
+        std::cout << std::endl;
+        std::cout << "Try \"" << m_exec.string() << " -h\" for usage listing." << std::endl;
     }
 }

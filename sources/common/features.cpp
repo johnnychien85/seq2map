@@ -47,7 +47,7 @@ FeatureExtractorFactory::FeatureExtractorFactory()
 #endif // WITH_XFEATURES2D ................................
 }
 
-FeatureDetextractorFactory::FeatureDetextractorFactory()
+void FeatureDetextractorFactory::Init()
 {
     Factory::Register<ORBFeatureDetextractor>  ("ORB"  );
     Factory::Register<BRISKFeatureDetextractor>("BRISK");
@@ -245,7 +245,7 @@ bool ImageFeatureSet::Restore(const Path& path)
     return true;
 }
 
-FeatureDetextractorPtr FeatureDetextractorFactory::Create(const seq2map::String& detectorName, const seq2map::String& extractorName)
+FeatureDetextractor::Ptr FeatureDetextractorFactory::Create(const seq2map::String& detectorName, const seq2map::String& extractorName)
 {
     FeatureDetextractorPtr dxtor;
 
@@ -279,7 +279,7 @@ FeatureDetextractorPtr FeatureDetextractorFactory::Create(const seq2map::String&
     return dxtor;
 }
 
-FeatureDetextractorPtr FeatureDetextractorFactory::Create(const cv::FileNode& fn)
+FeatureDetextractor::Ptr FeatureDetextractorFactory::Create(const cv::FileNode& fn)
 {
     FeatureDetextractorPtr dxtor;
     String keypointType, descriptorType;
@@ -306,7 +306,7 @@ bool FeatureDetextractor::Store(cv::FileStorage& fs) const
 {
     fs << "keypoint"   << m_keypointType;
     fs << "descriptor" << m_descriptorType;
-    fs << "parameters" << "{:";
+    fs << "parameters" << "{";
     WriteParams(fs);
     fs << "}";
 
@@ -328,7 +328,7 @@ bool FeatureDetextractor::Restore(const cv::FileNode& fn)
         {
             E_ERROR << "incompatible feature keypoint and/or descriptor";
             E_ERROR << m_keypointType << " and " << m_descriptorType << " expected";
-            E_ERROR << "while " << keypointType << " and " << descriptorType << " presented";
+            E_ERROR << "while " << keypointType << " and " << descriptorType << " present";
 
             return false;
         }
@@ -348,11 +348,11 @@ bool FeatureDetextractor::Restore(const cv::FileNode& fn)
 
 void HetergeneousDetextractor::WriteParams(cv::FileStorage& fs) const
 {
-    fs << s_detectorFileNodeName << "{:";
+    fs << s_detectorFileNodeName << "{";
     m_detector->WriteParams(fs);
     fs << "}";
 
-    fs << s_extractorFileNodeName << "{:";
+    fs << s_extractorFileNodeName << "{";
     m_extractor->WriteParams(fs);
     fs << "}";
 }
@@ -525,7 +525,7 @@ FeatureMatcher& FeatureMatcher::AddFilter(FeatureMatchFilter& filter)
 cv::Mat FeatureMatcher::NormaliseDescriptors(const cv::Mat& desc)
 {
     cv::Mat normalised = cv::Mat(desc.rows, desc.cols, desc.type());
-    for (size_t i = 0; i < desc.rows; i++)
+    for (int i = 0; i < desc.rows; i++)
     {
         cv::normalize(desc.row(i), normalised.row(i));
     }
@@ -858,7 +858,7 @@ void GFTTFeatureDetector::ApplyParams()
 
 Parameterised::Options GFTTFeatureDetector::GetOptions(int flag)
 {
-    Options o("GFTT (Good Features To Track) Feature Detection Options");
+    Options o("GFTT (Good Features To Track) detection options");
     if (flag & DETECTION_OPTIONS)
     {
         o.add_options()
@@ -911,7 +911,7 @@ Parameterised::Options FASTFeatureDetector::GetOptions(int flag)
     bool nonmax = m_fast->getNonmaxSuppression();
     int  neighb = Type2NeighbourCode(m_fast->getType());
 
-    Options o("FAST (Features from Accelerated Segment Test) Feature Detection Options");
+    Options o("FAST (Features from Accelerated Segment Test) detection options");
 
     if (flag & DETECTION_OPTIONS)
     {
@@ -990,7 +990,7 @@ Parameterised::Options AGASTFeatureDetector::GetOptions(int flag)
     bool nonmax = m_agast->getNonmaxSuppression();
     seq2map::String neighb = NeighbourType2String(m_agast->getType());
 
-    Options o("AGAST (Adaptive and Generic Corner Detection Based on the Accelerated Segment Test) Feature Detection Options");
+    Options o("AGAST (Adaptive and Generic Corner Detection Based on the Accelerated Segment Test) detection options");
 
     if (flag & DETECTION_OPTIONS)
     {
@@ -1083,7 +1083,7 @@ Parameterised::Options ORBFeatureDetextractor::GetOptions(int flag)
     if (flag & DETECTION_OPTIONS)
     {
         String scoreType = ScoreType2String(m_cvDxtor->getScoreType());
-        Options o("ORB (Oriented BRIEF) Feature Detection Options");
+        Options o("ORB (Oriented BRIEF) detection options");
         o.add_options()
             ("max-features",   po::value<int>   (&m_maxFeatures)  ->default_value(m_cvDxtor->getMaxFeatures()),   "The maximum number of features to retain.")
             ("scale-factor",   po::value<double>(&m_scaleFactor)  ->default_value(m_cvDxtor->getScaleFactor()),   "Pyramid decimation ratio, greater than 1. scaleFactor=2 means the classical pyramid, where each next level has 4x less pixels than the previous, but such a big scale factor will degrade feature matching scores dramatically. On the other hand, too close to 1 scale factor will mean that to cover certain scale range you will need more pyramid levels and so the speed will suffer.")
@@ -1097,7 +1097,7 @@ Parameterised::Options ORBFeatureDetextractor::GetOptions(int flag)
 
     if (flag & EXTRACTION_OPTIONS)
     {
-        Options o("ORB (Oriented BRIEF) Feature Extraction Option");
+        Options o("ORB (Oriented BRIEF) feature extraction option");
         o.add_options()
             ("patch-size",     po::value<int>(&m_patchSize)       ->default_value(m_cvDxtor->getPatchSize()),     "Size of the patch used by the oriented BRIEF descriptor. Of course, on smaller pyramid layers the perceived image area covered by a feature will be larger.");
         a.add(o);
@@ -1168,7 +1168,7 @@ Parameterised::Options BRISKFeatureDetextractor::GetOptions(int flag)
 
     if (flag & DETECTION_OPTIONS)
     {
-        Options o("BRISK (Binary Robust Invariant Scalable Keypoints) Feature Detection Options");
+        Options o("BRISK (Binary Robust Invariant Scalable Keypoints) detection options");
         o.add_options()
             ("threshold",     po::value<int>  (&m_threshold)   ->default_value(m_threshold),    "AGAST detection threshold score.")
             ("levels",        po::value<int>  (&m_levels)      ->default_value(m_levels),       "Number of detection octaves; use 0 to do single scale.")
@@ -1229,7 +1229,7 @@ Parameterised::Options KAZEFeatureDetextractor::GetOptions(int flag)
     {
         String diffuse = DiffuseType2String(m_cvDxtor->getDiffusivity());
 
-        Options o("KAZE Feature Detection Options");
+        Options o("KAZE detection options");
         o.add_options()
             ("threshold",     po::value<double>(&m_threshold)      ->default_value(m_cvDxtor->getThreshold()),     "Detector response threshold to accept point.")
             ("levels",        po::value<int>   (&m_levels)         ->default_value(m_cvDxtor->getNOctaves()),      "Maximum octave evolution of the image.")
@@ -1240,7 +1240,7 @@ Parameterised::Options KAZEFeatureDetextractor::GetOptions(int flag)
 
     if (flag & EXTRACTION_OPTIONS)
     {
-        Options o("KAZE Feature Extraction Options");
+        Options o("KAZE extraction options");
         o.add_options()
             ("extended",       po::value<bool>   (&m_extended)        ->default_value(m_cvDxtor->getExtended()),      "Set to enable extraction of extended (128-byte) descriptor.")
             ("upright",        po::value<bool>   (&m_upright)         ->default_value(m_cvDxtor->getUpright()),       "Set to enable use of upright descriptors (non rotation-invariant).");
@@ -1328,7 +1328,7 @@ Parameterised::Options AKAZEFeatureDetextractor::GetOptions(int flag)
     {
         String diffuse = KAZEFeatureDetextractor::DiffuseType2String(m_cvDxtor->getDiffusivity());
 
-        Options o("AKAZE (Accelerated KAZE) Feature Detection Options");
+        Options o("AKAZE (Accelerated KAZE) detection options");
         o.add_options()
             ("threshold",     po::value<double>(&m_threshold)      ->default_value(m_cvDxtor->getThreshold()),     "Detector response threshold to accept point.")
             ("levels",        po::value<int>   (&m_levels)         ->default_value(m_cvDxtor->getNOctaves()),      "Maximum octave evolution of the image.")
@@ -1340,7 +1340,7 @@ Parameterised::Options AKAZEFeatureDetextractor::GetOptions(int flag)
     if (flag & EXTRACTION_OPTIONS)
     {
         String desc = DescriptorType2String(m_cvDxtor->getDescriptorType());
-        Options o("AKAZE (Accelerated KAZE) Feature Extraction Options");
+        Options o("AKAZE (Accelerated KAZE) extraction options");
         o.add_options()
             ("descriptor-type",     po::value<String>(&m_descriptorType)    ->default_value(desc),                               "Type of the descriptor: \"KAZE\", \"UPRIGHT-KAZE\", \"MLDB\" or \"UPRIGHT-MLDB\".")
             ("descriptor-bits",     po::value<int>   (&m_descriptorBits)    ->default_value(m_cvDxtor->getDescriptorSize()),     "Size of the descriptor in bits; Set 0 for full size.")
@@ -1427,7 +1427,7 @@ Parameterised::Options StarFeatureDetector::GetOptions(int flag)
 
     if (flag & DETECTION_OPTIONS)
     {
-        Options o("Star Feature (based on CenSurE, or Center Surrounded Extrema) Detection Options");
+        Options o("Star Feature (based on CenSurE, or Center Surrounded Extrema) detection options");
         o.add_options()
             ("max-size",                 po::value<int>(&m_maxSize)               ->default_value(m_maxSize),                "The maximum number of filters to be applied."               )
             ("response-threshold",       po::value<int>(&m_responseThreshold)     ->default_value(m_responseThreshold),      "The threshold to eliminate weak corners."                   )
@@ -1497,7 +1497,7 @@ Parameterised::Options MSDFeatureDetector::GetOptions(int flag)
 
     if (flag & DETECTION_OPTIONS)
     {
-        Options o("MSD (Maximal Self-Dissimilarity) Feature Detection Options");
+        Options o("MSD (Maximal Self-Dissimilarity) detection options");
         o.add_options()
             ("patch-radius",     po::value<int>  (&m_patchRadius)   ->default_value(m_patchRadius),    "")
             ("search-dadius",    po::value<int>  (&m_searchRadius)  ->default_value(m_searchRadius),   "")
@@ -1559,7 +1559,7 @@ Parameterised::Options SIFTFeatureDetextractor::GetOptions(int flag)
 
     if (flag & DETECTION_OPTIONS)
     {
-        Options o("SIFT (Scale-Invariant Feature Transform) Feature Detection Options");
+        Options o("SIFT (Scale-Invariant Feature Transform) detection options");
         o.add_options()
             ("max-features",       po::value<int>   (&m_maxFeatures)      ->default_value(m_maxFeatures),       "The number of best features to retain. The features are ranked by their scores (measured in SIFT algorithm as the local contrast)")
             ("octave-layers",      po::value<int>   (&m_octaveLayers)     ->default_value(m_octaveLayers),      "The number of layers in each octave. 3 is the value used in D. Lowe paper. The number of octaves is computed automatically from the image resolution.")
@@ -1615,7 +1615,7 @@ Parameterised::Options SURFFeatureDetextractor::GetOptions(int flag)
 
     if (flag & DETECTION_OPTIONS)
     {
-        Options o("SURF (Speeded-Up Robust Features) Feature Detection Options");
+        Options o("SURF (Speeded-Up Robust Features) detection options");
         o.add_options()
             ("hessian-threshold", po::value<double>(&m_hessianThreshold)->default_value(m_cvDxtor->getHessianThreshold()), "Threshold for hessian keypoint detector used in SURF.")
             ("levels",            po::value<int>   (&m_levels          )->default_value(m_cvDxtor->getNOctaves()        ), "Number of pyramid octaves the keypoint detector will use.")
@@ -1626,7 +1626,7 @@ Parameterised::Options SURFFeatureDetextractor::GetOptions(int flag)
 
     if (flag & EXTRACTION_OPTIONS)
     {
-        Options o("SURF (Speeded-Up Robust Features) Feature Extraction Option");
+        Options o("SURF (Speeded-Up Robust Features) extraction option");
         o.add_options()
             ("extended",          po::value<bool>  (&m_extended        )->default_value(m_cvDxtor->getExtended()        ), "Extended descriptor flag (true - use extended 128-element descriptors; false - use 64-element descriptors).");
         a.add(o);
@@ -1672,7 +1672,7 @@ Parameterised::Options BRIEFFeatureExtractor::GetOptions(int flag)
 
     if (flag & EXTRACTION_OPTIONS)
     {
-        Options o("BRIEF (Binary Robust Independent Elementary Features) Feature Extraction Options");
+        Options o("BRIEF (Binary Robust Independent Elementary Features) extraction options");
         o.add_options()
             ("bytes",    po::value<int> (&m_descriptorBytes)->default_value(m_descriptorBytes), "Legth of the descriptor in bytes, valid values are: 16, 32 or 64.")
             ("oriented", po::value<bool>(&m_oriented)       ->default_value(m_oriented       ), "Sample patterns using keypoints orientation, disabled by default.");
@@ -1734,7 +1734,7 @@ Parameterised::Options DAISYFeatureExtractor::GetOptions(int flag)
 
     if (flag & EXTRACTION_OPTIONS)
     {
-        Options o("DAISY Feature Extraction Options");
+        Options o("DAISY extraction options");
         o.add_options()
             ("radius",        po::value<float> (&m_radius)  ->default_value(m_radius),   "Radius of the descriptor at the initial scale.")
             ("iradius",       po::value<int>   (&m_iradius) ->default_value(m_iradius),  "Amount of radial range division quantity.")
@@ -1818,7 +1818,7 @@ Parameterised::Options FREAKFeatureExtractor::GetOptions(int flag)
 
     if (flag & EXTRACTION_OPTIONS)
     {
-        Options o("FREAK (Fast REtinA Keypoint) Feature Extraction Options");
+        Options o("FREAK (Fast REtinA Keypoint) extraction options");
         o.add_options()
             ("levels",                po::value<int>  (&m_levels)              ->default_value(m_levels),               "Number of octaves covered by the detected keypoints.")
             ("pattern-scale",         po::value<float>(&m_patternScale)        ->default_value(m_patternScale),         "Scaling of the description pattern.")
@@ -1869,7 +1869,7 @@ Parameterised::Options LATCHFeatureExtractor::GetOptions(int flag)
 
     if (flag & EXTRACTION_OPTIONS)
     {
-        Options o("LATCH () Feature Extraction Options");
+        Options o("LATCH extraction options");
         o.add_options()
             ("bytes",               po::value<int> (&m_bytes)             ->default_value(m_bytes),             "The size of the descriptor, can be 64, 32, 16, 8, 4, 2 or 1.")
             ("rotation-invariance", po::value<bool>(&m_rotationInvariance)->default_value(m_rotationInvariance),"Whether or not the descriptor should compansate for orientation changes.")
@@ -1916,7 +1916,7 @@ Parameterised::Options LUCIDFeatureExtractor::GetOptions(int flag)
 
     if (flag & DETECTION_OPTIONS)
     {
-        Options o("LUCID (Locally Uniform Comparison Image Descriptor) Feature Extraction Options");
+        Options o("LUCID (Locally Uniform Comparison Image Descriptor) extraction options");
         o.add_options()
             ("lucid-kernel", po::value<int> (&m_lucidKernel)->default_value(m_lucidKernel), "Kernel for descriptor construction.")
             ("blur-kernel",  po::value<int> (&m_blurKernel) ->default_value(m_blurKernel),  "Kernel for blurring image prior to descriptor construction.");
