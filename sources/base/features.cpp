@@ -64,13 +64,13 @@ ImageFeature ImageFeatureSet::GetFeature(const size_t idx)
     assert(idx < m_keypoints.size());
     return ImageFeature(m_keypoints[idx], m_descriptors.row((int)idx));
 }
-/*
-ImageFeature ImageFeatureSet::GetFeature(const size_t idx) const
-{
-    assert(idx < m_keypoints.size());
-    return ImageFeature(m_keypoints[idx], m_descriptors.row((int)idx).clone());
-}
-*/
+
+// ImageFeature ImageFeatureSet::GetFeature(const size_t idx) const
+// {
+//    assert(idx < m_keypoints.size());
+//    return ImageFeature(m_keypoints[idx], m_descriptors.row((int)idx).clone());
+// }
+
 seq2map::String ImageFeatureSet::NormType2String(int type)
 {
     switch (type)
@@ -83,7 +83,7 @@ seq2map::String ImageFeatureSet::NormType2String(int type)
     case NORM_HAMMING2: return "HAMMING2"; break;
     }
 
-    E_WARNING << "unknown norm type: " << type;
+    E_WARNING << "unknown norm type " << type;
 
     return "UNKNOWN";
 }
@@ -102,7 +102,7 @@ seq2map::String ImageFeatureSet::MatType2String(int type)
     case CV_USRTYPE1: return "USR"; break;
     }
 
-    E_WARNING << "unknown matrix type: " << type;
+    E_WARNING << "unknown matrix type " << type;
 
     return MatType2String(CV_USRTYPE1);
 }
@@ -118,7 +118,7 @@ int seq2map::ImageFeatureSet::String2MatType(const seq2map::String& type)
     else if (type == "64F")  return CV_64F; 
     else if (type == "USR")  return CV_USRTYPE1;  
 
-    E_WARNING << "unknown string: " << type;
+    E_WARNING << "unknown type string \"" << type << "\"";
 
     return String2MatType("USR");
 }
@@ -133,7 +133,7 @@ int seq2map::ImageFeatureSet::String2NormType(const seq2map::String& type)
     else if (type == "HAMMING")  return NORM_HAMMING;  
     else if (type == "HAMMING2") return NORM_HAMMING2; 
 
-    E_WARNING << "unknown string: " << type;
+    E_WARNING << "unknown string type \"" << type << "\"";
 
     return -1;
 }
@@ -333,7 +333,11 @@ bool FeatureDetextractor::Restore(const cv::FileNode& fn)
             return false;
         }
 
-        ReadParams(fn["parameters"]);
+        if (!ReadParams(fn["parameters"]))
+        {
+            E_ERROR << "error reading parameters from file node";
+            return false;
+        }
     }
     catch (std::exception& ex)
     {

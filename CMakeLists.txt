@@ -6,6 +6,13 @@ set(MONOLITHIC TRUE  CACHE BOOL "Build big standalone executables statically lin
 set(WITH_EBUS  FALSE CACHE BOOL "Build the grabber with the support of Pleora's cameras")
 set(WITH_PYLON FALSE CACHE BOOL "Build the grabber with the support of Basler's cameras")
 set(WITH_STCAM FALSE CACHE BOOL "Build the grabber with the support of Sentech's cameras")
+set(BUILD_DOCS FALSE CACHE BOOL "Build documentation (requires Doxygen)")
+
+# The project version number.
+set(VERSION_MAJOR 0 CACHE STRING "Project major version number.")
+set(VERSION_MINOR 0 CACHE STRING "Project minor version number.")
+set(VERSION_PATCH 1 CACHE STRING "Project patch version number.")
+mark_as_advanced(VERSION_MAJOR VERSION_MINOR VERSION_PATCH)
 
 # Pleora's eBUS library
 if(WITH_EBUS)
@@ -58,18 +65,18 @@ endif()
 
 # Executables Configuration
 project(seq2map CXX)
-add_library   (common      includes/seq2map/common.hpp           # Shared components
+add_library   (base        includes/seq2map/common.hpp           # Shared components
                            includes/seq2map/disparity.hpp        # 
                            includes/seq2map/features.hpp         # 
                            includes/seq2map/geometry.hpp         # 
                            includes/seq2map/sequence.hpp         # 
                            includes/seq2map/solve.hpp            # 
-                           sources/common/common.cpp             # 
-                           sources/common/disparity.cpp          # 
-                           sources/common/features.cpp           # 
-                           sources/common/geometry.cpp           # 
-                           sources/common/sequence.cpp           # 
-                           sources/common/solve.cpp             )# 
+                           sources/base/common.cpp               # 
+                           sources/base/disparity.cpp            # 
+                           sources/base/features.cpp             # 
+                           sources/base/geometry.cpp             # 
+                           sources/base/sequence.cpp             # 
+                           sources/base/solve.cpp             )  # 
 add_executable(calibn      sources/calibn/args.hpp               # Multi-camera calibration utility
                            sources/calibn/calibgraph.hpp         # 
                            sources/calibn/calibgraphbuilder.hpp  # 
@@ -109,19 +116,19 @@ add_executable(imfuse      sources/miscs/imfuse.cpp             )# Multi-camera 
 add_executable(imrect      sources/miscs/imrect.cpp             )# Image rectification utility
 add_executable(chkseq      sources/miscs/chkseq.cpp             )# Sequence file examining utility
 
-target_link_libraries(calibn      common)
-target_link_libraries(im2kpts     common)
-target_link_libraries(im2disp     common)
-target_link_libraries(im2flow     common)
-target_link_libraries(raw2seq     common)
-#target_link_libraries(seq2mot     common)
-target_link_libraries(monovo      common)
-target_link_libraries(vggrab      common)
-target_link_libraries(disp2pts    common)
-target_link_libraries(imcvt       common)
-target_link_libraries(imfuse      common)
-target_link_libraries(imrect      common)
-target_link_libraries(chkseq      common)
+target_link_libraries(calibn   base)
+target_link_libraries(im2kpts  base)
+target_link_libraries(im2disp  base)
+target_link_libraries(im2flow  base)
+target_link_libraries(raw2seq  base)
+#target_link_libraries(seq2mot base)
+target_link_libraries(monovo   base)
+target_link_libraries(vggrab   base)
+target_link_libraries(disp2pts base)
+target_link_libraries(imcvt    base)
+target_link_libraries(imfuse   base)
+target_link_libraries(imrect   base)
+target_link_libraries(chkseq   base)
 
 include_directories(includes)
 
@@ -196,6 +203,27 @@ else()
 	message(SEND_ERROR "boost not found")
 endif()
 
+# Documentation
+if(BUILD_DOCS)
+    find_package(Doxygen)
+    
+    if(NOT DOXYGEN_FOUND)
+        message(SEND_ERROR "Doxygen is required to build documentation")
+    endif()
+    
+    set(DOXYFILE_IN ${CMAKE_CURRENT_SOURCE_DIR}/docs/Doxyfile.in)
+    set(DOXYFILE    ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile)
+    
+    configure_file(${DOXYFILE_IN} ${DOXYFILE} @ONLY)
+    
+    add_custom_target(docs
+        COMMAND ${DOXYGEN_EXECUTABLE} ${DOXYFILE}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMENT "Generating API documentation with Doxygen"
+        VERBATIM)
+
+    install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/html DESTINATION docs)
+endif()
 
 # MUST use static standard c runtime for monolithic build
 if(MONOLITHIC AND MSVC)

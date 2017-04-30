@@ -5,94 +5,91 @@
 
 namespace seq2map
 {
-    class StereoMatcherAdaptor
-    {
-    public:
-        /* ctor */ StereoMatcherAdaptor(std::string matcherName, int numDisparities)
-            : m_matcherName(matcherName), m_numDisparities(numDisparities) {}
-        /* dtor */ virtual ~StereoMatcherAdaptor() {}
-        virtual cv::Mat Match(const cv::Mat& left, const cv::Mat& right) = 0;
-        virtual void    WriteParams(cv::FileStorage& f);
-        inline int      GetNumDisparities() const { return m_numDisparities; }
-        inline uint16_t GetScale() const { return cv::StereoMatcher::DISP_SCALE; }
-        inline uint16_t GetNormalisationFactor() const { return (uint16_t)(std::floor((double)USHRT_MAX / GetScale() / m_numDisparities)); }
-    protected:
-        int				  m_numDisparities;
-        const std::string m_matcherName;
-    };
-
-    class BlockMatcher : public StereoMatcherAdaptor
-    {
-    public:
-        /* ctor */ BlockMatcher(int numDisparities, int SADWindowSize);
-        /* dtor */ ~BlockMatcher();
-        virtual cv::Mat	Match(const cv::Mat& left, const cv::Mat& right);
-        virtual void    WriteParams(cv::FileStorage& f);
-    private:
-        cv::Ptr<cv::StereoBM> m_BM;
-    };
-
-    class SemiGlobalMatcher : public StereoMatcherAdaptor
-    {
-    public:
-        /* ctor */ SemiGlobalMatcher(int numDisparities, int SADWindowSize,
-            int P1, int P2, int disp12MaxDiff,
-            int preFilterCap, int uniquenessRatio,
-            int speckleWindowSize, int speckleRange, bool fullDP);
-        /* dtor */ ~SemiGlobalMatcher();
-        virtual cv::Mat	Match(const cv::Mat& left, const cv::Mat& right);
-        virtual void WriteParams(cv::FileStorage& f);
-    private:
-        cv::Ptr<cv::StereoSGBM> m_SGBM;
-    };
-
-    class DisparityIO
-    {
-    public:
-        /* ctor */ DisparityIO() : m_denorm(0), m_scale(0) {}
-        /* ctor */ DisparityIO(uint16_t denorm, double scale) : m_denorm(denorm), m_scale(scale) {}
-        /* ctor */ DisparityIO(const StereoMatcherAdaptor& matcher)
-            : m_denorm(matcher.GetNormalisationFactor()), m_scale(matcher.GetScale()) {}
-        /* dtor */ virtual ~DisparityIO() {}
-
-        bool    Write(const cv::Mat& dp, const Path& path);
-        cv::Mat Read(const Path& path);
-
-    protected:
-        uint16_t m_denorm;
-        double m_scale;
-    };
-
-    /*
-    class DisparityMap : public Persistent<Path>
-    {
-    public:
-        virtual bool Store(Path& path) const;
-        virtual bool Restore(const Path& path);
-
-        cv::Mat  mat;
-
-        uint16_t dmin;
-        uint16_t dmax;
-    };
-    */
-
     class StereoMatcher
     : public virtual Parameterised,
       public Persistent<cv::FileStorage, cv::FileNode>
     {
     public:
         typedef boost::shared_ptr<StereoMatcher> Ptr;
+        
+        virtual void WriteParams(cv::FileStorage& f) const = 0;
+        virtual bool ReadParams(const cv::FileNode& f) = 0;
+        virtual void ApplyParams() = 0;
+        virtual Options GetOptions(int flag) = 0;
 
         virtual bool Store(cv::FileStorage& fs) const;
         virtual bool Restore(const cv::FileNode& fn);
 
-        inline uint16_t GetDisparities() const { return m_ndisp; }
-        inline uint16_t GetScale()       const { return m_scale; }
+        virtual String GetMatcherName() const = 0;
+        virtual cv::Mat Match(const cv::Mat& left, const cv::Mat& right) = 0;
+    };
+    
+    template<class T>
+    class CvStereoMatcher : public StereoMatcher
+    {
+    public:
+        typedef cv::Ptr<T> Ptr;
+        CvStereoMatcher(const Ptr& matcher) : m_matcher(matcher) {}
+
+        virtual void WriteParams(cv::FileStorage& fs) const;
+        virtual bool ReadParams(const cv::FileNode& fn);
+        virtual void ApplyParams();
+        virtual Options GetOptions(int flag);
+
+        virtual cv::Mat Match(const cv::Mat& left, const cv::Mat& right);
 
     protected:
-        uint16_t m_ndisp; // number of disparities the matcher can produce
-        uint16_t m_scale; // inverse distance between each two closest disaprity values
+        cv::Ptr<T> m_matcher;
+        int m_minDisparity;
+        int m_numDisparities;
+        int m_blockSize;
+        int m_speckleWinSize;
+        int m_speckleRange;
+        int m_disp12MaxDiff;
+    };
+
+    class BlockMatcher : public CvStereoMatcher<cv::StereoBM>
+    {
+    public:
+        BlockMatcher() : CvStereoMatcher<cv::StereoBM>(cv::StereoBM::create()) {}
+        virtual String GetMatcherName() const { return "BM"; }
+
+        virtual void WriteParams(cv::FileStorage& fs) const;
+        virtual bool ReadParams(const cv::FileNode& fn);
+        virtual void ApplyParams();
+        virtual Options GetOptions(int flag);
+
+        static String FilterType2String(int type);
+        static int String2FilterType(String type);
+
+    protected:
+        String m_preFilterType;
+        int    m_preFilterCap;
+        int    m_textureThreshold;
+        int    m_uniquenessRatio;
+        int    m_smallerBlockSize;
+    };
+
+    class SemiGlobalBlockMatcher : public CvStereoMatcher<cv::StereoSGBM>
+    {
+    public:
+        SemiGlobalBlockMatcher() : CvStereoMatcher<cv::StereoSGBM>(cv::StereoSGBM::create(0, 64, 21)) {}
+        virtual String GetMatcherName() const { return "SGBM"; }
+
+        virtual void WriteParams(cv::FileStorage& fs) const;
+        virtual bool ReadParams(const cv::FileNode& fn);
+        virtual void ApplyParams();
+        virtual Options GetOptions(int flag);
+
+        static String Mode2String(int type);
+        static int String2Mode(String type);
+
+    protected:
+        String m_mode;
+        int    m_preFilterCap;
+        int    m_uniquenessRatio;
+        int    m_p1;
+        int    m_p2;
     };
 
     class StereoMatcherFactory
@@ -105,31 +102,6 @@ namespace seq2map
     protected:
         virtual void Init();
     };
-}
-
-namespace cv
-{
-    static void write(FileStorage& fs, const std::string&, const seq2map::DisparityIO& dpio)
-    {
-
-    }
-
-    static void read(const FileNode& fn, seq2map::DisparityIO& dpio,
-        const seq2map::DisparityIO& empty = seq2map::DisparityIO())
-    {
-        dpio = empty;
-
-        if (fn.empty()) return;
-        try
-        {
-
-        }
-        catch (std::exception& ex)
-        {
-            E_ERROR << "error loading seq2map::DisparityIO";
-            E_ERROR << ex.what();
-        }
-    }
 }
 
 #endif //DISPARITY_HPP

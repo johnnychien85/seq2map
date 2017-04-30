@@ -110,6 +110,7 @@ namespace seq2map
         friend class FeatureDetextractorFactory;
     };
 
+    // TODO: remove these typedefs
     typedef boost::shared_ptr<FeatureDetector>	   FeatureDetectorPtr;
     typedef boost::shared_ptr<FeatureExtractor>	   FeatureExtractorPtr;
     typedef boost::shared_ptr<FeatureDetextractor> FeatureDetextractorPtr;
