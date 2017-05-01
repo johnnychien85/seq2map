@@ -176,12 +176,23 @@ bool FeatureStore::Restore(const cv::FileNode& fn)
 
 LinearSpacedVec<double> DisparityStore::s_dspace16U(0.0f, 65535.0f);
 
+/*
 bool DisparityStore::Create(const Path& root, size_t priCamIdx, size_t secCamIdx, const Strings& filenames)
 {
     m_priCamIdx = priCamIdx;
     m_secCamIdx = secCamIdx;
 
     return SequentialFileStore<PersistentImage>::Create(root, filenames);
+}
+*/
+
+bool DisparityStore::Create(const Path& root, size_t priCamIdx, size_t secCamIdx, StereoMatcher::Ptr matcher)
+{
+    m_priCamIdx = priCamIdx;
+    m_secCamIdx = secCamIdx;
+    m_matcher   = matcher;
+
+    return SequentialFileStore<PersistentImage>::Create(root);
 }
 
 bool DisparityStore::Store(cv::FileStorage& fs) const

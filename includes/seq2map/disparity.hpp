@@ -15,7 +15,7 @@ namespace seq2map
         virtual void WriteParams(cv::FileStorage& f) const = 0;
         virtual bool ReadParams(const cv::FileNode& f) = 0;
         virtual void ApplyParams() = 0;
-        virtual Options GetOptions(int flag) = 0;
+        virtual Options GetOptions(int flag = 0) = 0;
 
         virtual bool Store(cv::FileStorage& fs) const;
         virtual bool Restore(const cv::FileNode& fn);
@@ -98,6 +98,7 @@ namespace seq2map
     {
     public:
         friend class Singleton<StereoMatcherFactory>;
+        using Factory<String, StereoMatcher>::Create;
         StereoMatcher::Ptr Create(const cv::FileNode& fn);
     protected:
         virtual void Init();

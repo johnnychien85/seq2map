@@ -172,9 +172,9 @@ String SemiGlobalBlockMatcher::Mode2String(int type)
 {
     switch (type)
     {
-    case cv::StereoSGBM::MODE_HH:        "FULL";  break;
-    case cv::StereoSGBM::MODE_SGBM:      "SGBM";  break;
-    case cv::StereoSGBM::MODE_SGBM_3WAY: "SGBM3"; break;
+    case cv::StereoSGBM::MODE_HH:        return "FULL";  break;
+    case cv::StereoSGBM::MODE_SGBM:      return "SGBM";  break;
+    case cv::StereoSGBM::MODE_SGBM_3WAY: return "SGBM3"; break;
     }
 
     E_WARNING << "unknown type " << type;
@@ -212,9 +212,15 @@ void SemiGlobalBlockMatcher::ApplyParams()
 {
     CvStereoMatcher::ApplyParams();
 
+    if (m_p1 == 0) m_p1 = 8  * m_blockSize * m_blockSize;
+    if (m_p2 == 0) m_p2 = 32 * m_blockSize * m_blockSize;
+
+
     m_matcher->setMode           (String2Mode(m_mode));
     m_matcher->setPreFilterCap   (m_preFilterCap);
     m_matcher->setUniquenessRatio(m_uniquenessRatio);
+    m_matcher->setP1             (m_p1);
+    m_matcher->setP2             (m_p2);
 }
 
 Parameterised::Options SemiGlobalBlockMatcher::GetOptions(int flag)
@@ -223,9 +229,11 @@ Parameterised::Options SemiGlobalBlockMatcher::GetOptions(int flag)
     Options o("OpenCV semi-global block matcher options");
 
     o.add_options()
-        ("mode",             po::value<String>(&m_mode            )->default_value(Mode2String(m_matcher->getMode())), "SGBM, SGBM3, or FULL")
-        ("pre-filter-cap",   po::value<int>   (&m_preFilterCap    )->default_value(m_matcher->getPreFilterCap()     ), "...")
-        ("uniqueness-ratio", po::value<int>   (&m_uniquenessRatio )->default_value(m_matcher->getUniquenessRatio()  ), "Margin in percentage by which the best (minimum) computed cost function value should \"win\" the second best value to consider the found match correct. Normally, a value within the 5-15 range is good enough.");
+        ("mode",             po::value<String>(&m_mode           )->default_value(Mode2String(m_matcher->getMode())), "SGBM, SGBM3, or FULL")
+        ("pre-filter-cap",   po::value<int>   (&m_preFilterCap   )->default_value(m_matcher->getPreFilterCap()     ), "Truncation value for the prefiltered image pixels. The algorithm first computes x-derivative at each pixel and clips its value by [-preFilterCap, preFilterCap] interval. The result values are passed to the Birchfield-Tomasi pixel cost function.")
+        ("uniqueness-ratio", po::value<int>   (&m_uniquenessRatio)->default_value(m_matcher->getUniquenessRatio()  ), "Margin in percentage by which the best (minimum) computed cost function value should \"win\" the second best value to consider the found match correct. Normally, a value within the 5-15 range is good enough.")
+        ("p1",               po::value<int>   (&m_p1             )->default_value(                                0), "The first parameter controlling the disparity smoothness.")
+        ("p2",               po::value<int>   (&m_p2             )->default_value(                                0), "The second parameter controlling the disparity smoothness.");
 
     return g.add(o);
 }

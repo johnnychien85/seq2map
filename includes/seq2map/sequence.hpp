@@ -194,6 +194,11 @@ namespace seq2map
             return m_root;
         }
 
+        inline Path GetItemPath(size_t idx) const
+        {
+            return m_root / m_filenames[idx];
+        }
+
         inline const Strings& GetFileNames() const
         {
             return m_filenames;
@@ -321,13 +326,16 @@ namespace seq2map
     public:
         DisparityStore() : m_dspace(0, 64, 1024) { UpdateMappings(); }
 
-        bool Create(const Path& root, size_t priCamIdx, size_t secCamIdx, const Strings& filenames);
+        //bool Create(const Path& root, size_t priCamIdx, size_t secCamIdx, const Strings& filenames);
+        bool Create(const Path& root, size_t priCamIdx, size_t secCamIdx, StereoMatcher::Ptr matcher);
 
         virtual bool Store(cv::FileStorage& fs) const;
         virtual bool Restore(const cv::FileNode& fn);
 
         inline size_t GetPrimaryCameraIndex()   const { return m_priCamIdx; }
         inline size_t GetSecondaryCameraIndex() const { return m_secCamIdx; }
+
+        using SequentialFileStore<PersistentImage>::Append;
 
     protected:
         virtual bool Append(Path& to, const PersistentImage& dpm) const;
@@ -484,6 +492,7 @@ namespace seq2map
         inline const Cameras& GetCameras() const { return m_cameras; }
         inline const RectifiedStereoPairs GetRectifiedStereo() const { return m_stereo; }
         inline Path GetFeatureStoreRoot() const { return m_seqPath / m_kptsDirName; }
+        inline Path GetDisparityStoreRoot() const { return m_seqPath / m_dispDirName; }
         inline size_t GetFrames() const { return m_cameras.size() > 0 ? m_cameras[0].GetFrames() : 0; }
 
     private:
