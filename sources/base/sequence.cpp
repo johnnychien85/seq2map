@@ -192,6 +192,12 @@ bool DisparityStore::Create(const Path& root, size_t priCamIdx, size_t secCamIdx
     m_secCamIdx = secCamIdx;
     m_matcher   = matcher;
 
+    if (m_matcher)
+    {
+        m_dspace = m_matcher->GetDisparitySpace();
+        UpdateMappings();
+    }
+
     return SequentialFileStore<PersistentImage>::Create(root);
 }
 
@@ -202,14 +208,14 @@ bool DisparityStore::Store(cv::FileStorage& fs) const
         return false;
     }
 
-    fs << "priCamIdx" << (int) m_priCamIdx;
-    fs << "secCamIdx" << (int) m_secCamIdx;
+    fs << "priCamIdx" << m_priCamIdx;
+    fs << "secCamIdx" << m_secCamIdx;
 
     fs << "dspace" << "{";
     {
         fs << "begin" << m_dspace.begin;
         fs << "end"   << m_dspace.end;
-        fs << "segs"  << (int) m_dspace.segs;
+        fs << "segs"  << m_dspace.segs;
     }
     fs << "}";
 
@@ -218,17 +224,17 @@ bool DisparityStore::Store(cv::FileStorage& fs) const
         return true;
     }
 
-    fs << "matcher";
-    fs << "{";
+    fs << "matcher" << "{";
     bool matcherStored = m_matcher->Store(fs);
     fs << "}";
 
     if (!matcherStored)
     {
         E_ERROR << "error storing stereo matcher";
+        return false;
     }
 
-    return matcherStored;
+    return true;
 }
 
 bool DisparityStore::Restore(const cv::FileNode& fn)
@@ -265,6 +271,12 @@ bool DisparityStore::Restore(const cv::FileNode& fn)
             E_ERROR << "error creating stereo matcher from file node";
             return false;
         }
+
+        if (m_matcher->GetDisparitySpace() != m_dspace)
+        {
+            E_ERROR << "disparity space not compatible";
+            return false;
+        }
     }
     catch (std::exception& ex)
     {
@@ -279,16 +291,13 @@ bool DisparityStore::Restore(const cv::FileNode& fn)
 
 bool DisparityStore::Append(Path& to, const PersistentImage& data) const
 {
-    cv::Mat dpm = data.im;
-    cv::Mat dpm32F, dpm16U;
+    cv::Mat dpm32F = data.im;
+    cv::Mat dpm16U;
 
-    if (dpm.type() == CV_32F)
+    if (dpm32F.type() != CV_32F)
     {
-        dpm32F = dpm;
-    }
-    else
-    {
-        dpm.convertTo(dpm32F, CV_32F);
+        E_ERROR << "given matrix is not a single precision disparity map";
+        return false;
     }
 
     // linearily remap the disparity map to a 16U image
@@ -304,6 +313,12 @@ bool DisparityStore::Retrieve(const Path& from, PersistentImage& data) const
     if (dpm16U.empty())
     {
         E_ERROR << "error reading " << from;
+        return false;
+    }
+
+    if (dpm16U.type() != CV_16U)
+    {
+        E_ERROR << "not a 16-bit single channel disparity image: " << from;
         return false;
     }
 
@@ -515,6 +530,7 @@ void Sequence::Clear()
     m_rawPath = "";
     m_seqPath = "";
     m_seqName = "";
+    m_vehicleName = "";
     m_grabberName = "";
 
     m_kptsDirName = s_featureStoreDirName;
@@ -542,6 +558,7 @@ bool Sequence::Store(Path& path) const
 
     fs << "sequence"  << m_seqName;
     fs << "source"    << m_rawPath;
+    fs << "vehicle"   << m_vehicleName;
     fs << "grabber"   << m_grabberName;
     fs << "keypoints" << m_kptsDirName;
     fs << "disparity" << m_dispDirName;
@@ -599,6 +616,7 @@ bool Sequence::Restore(const Path& path)
     {
         fs["sequence"]  >> m_seqName;
         fs["source"]    >> m_rawPath;
+        fs["vehicle"]   >> m_vehicleName;
         fs["grabber"]   >> m_grabberName;
         fs["keypoints"] >> m_kptsDirName;
         fs["disparity"] >> m_dispDirName;
@@ -789,6 +807,7 @@ bool Sequence::Builder::Build(const Path& from, const String& name, const String
 
     seq.m_rawPath = from;
     seq.m_seqName = name;
+    seq.m_vehicleName = GetVehicleName(from);
     seq.m_grabberName = grabber;
 
     return BuildCamera(from, seq.m_cameras, seq.m_stereo);

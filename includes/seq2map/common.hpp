@@ -157,8 +157,26 @@ namespace seq2map
 
         void GetLinearMappingTo(const LinearSpacedVec<T>& dst, double& alpha, double& beta) const
         {
-            alpha = static_cast<double>(dst.segs) / static_cast<double>(dst.end - dst.begin);
-            beta  = -alpha * static_cast<double>(begin);
+            //alpha = static_cast<double>(dst.segs) / static_cast<double>(dst.end - dst.begin);
+            //alpha = static_cast<double>(dst.segs + 1) / static_cast<double>(segs + 1);
+            //beta  = -alpha * static_cast<double>(begin);
+
+            alpha = static_cast<double>(dst.end - dst.begin) / static_cast<double>(end - begin);
+            beta = -alpha * static_cast<double>(dst.begin);
+
+            E_INFO << begin << ":" << end << ", n=" << segs;
+            E_INFO << dst.begin << ":" << dst.end << ", n=" << dst.segs;
+            E_INFO << "alpha=" << alpha << ", beta=" << beta;
+        }
+
+        inline bool operator== (const LinearSpacedVec<T>& vec)
+        {
+            return begin == vec.begin && end == vec.end && segs == vec.segs;
+        }
+
+        inline bool operator!= (const LinearSpacedVec<T>& vec)
+        {
+            return !((*this) == vec);
         }
 
         T begin;
@@ -310,7 +328,59 @@ namespace seq2map
     template<class T> bool Singleton<T>::s_init = false;
 
     /**
-     * Application class
+     * Chained operation.
+     */
+    /*
+    template<typename T>
+    class ChainedOp
+    {
+    public:
+        typedef boost::shared_ptr<ChainedOp> Ptr;
+
+        ChainedOp() : m_next(NULL) {}
+
+        ChainedOp& operator>>(ChainedOp& nextOp)
+        {
+            return *(m_next = nextOp.Create());
+        }
+
+        virtual T& operator()(T& x) = 0;
+
+        T& Forward(T& x)
+        {
+            return m_next ? m_next->Forward((*this)(x)) : (*this)(x);
+        }
+
+        T& Backward(T& x)
+        {
+            return m_next ? (*this)(m_next->Backward(x)) : (*this)(x);
+        }
+
+    protected:
+        virtual Ptr Create() const = 0;
+
+    private:
+        Ptr m_next;
+    }; */
+
+    /*
+    class Flipping : public ChainedOp<cv::Mat>
+    {
+    public:
+        Flipping(bool flipX, bool flipY)
+        {
+
+        }
+
+        cv::Mat operator(cv::Mat& im)
+        {
+
+        }
+    };
+    */
+
+    /**
+     * Application class to provide an unified interface for seq2map utilities.
      */
     class App
     {

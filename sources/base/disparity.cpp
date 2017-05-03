@@ -89,10 +89,12 @@ Parameterised::Options CvStereoMatcher<T>::GetOptions(int flag)
 template<class T>
 cv::Mat CvStereoMatcher<T>::Match(const cv::Mat& left, const cv::Mat& right)
 {
-    cv::Mat dp;
-    m_matcher->compute(left, right, dp);
+    cv::Mat dp16U, dp32F;
+    m_matcher->compute(left, right, dp16U);
 
-    return dp;
+    dp16U.convertTo(dp32F, CV_32F, 1.0f/(double)cv::StereoMatcher::DISP_SCALE);
+
+    return dp32F;
 }
 
 String BlockMatcher::FilterType2String(int type)
@@ -194,6 +196,8 @@ int SemiGlobalBlockMatcher::String2Mode(String type)
 
 void SemiGlobalBlockMatcher::WriteParams(cv::FileStorage& fs) const
 {
+    CvStereoMatcher::WriteParams(fs);
+
     fs << "mode"            << m_mode;
     fs << "preFilterCap"    << m_preFilterCap;
     fs << "uniquenessRatio" << m_uniquenessRatio;
@@ -205,7 +209,7 @@ bool SemiGlobalBlockMatcher::ReadParams(const cv::FileNode& fn)
     fn["preFilterCap"]    >> m_preFilterCap;
     fn["uniquenessRatio"] >> m_uniquenessRatio;
 
-    return true;
+    return CvStereoMatcher::ReadParams(fn);
 }
 
 void SemiGlobalBlockMatcher::ApplyParams()

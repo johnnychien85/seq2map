@@ -23,7 +23,7 @@ double SyncBuffer::GetUsage()
 
 bool SyncBuffer::TryWrite(size_t& seq, unsigned long& bestDelta, BufferData*& data)
 {
-    Time now = UNow();
+    Time now = unow();
 
     for(;;)
     {

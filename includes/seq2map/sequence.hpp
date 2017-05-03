@@ -149,7 +149,7 @@ namespace seq2map
 
             Path to = m_root / filename;
 
-            if (!data.Store(to))
+            if (!Append(to, data))
             {
                 E_ERROR << "error storing to " << filename;
                 return false;
@@ -324,9 +324,8 @@ namespace seq2map
     class DisparityStore : public SequentialFileStore<PersistentImage>
     {
     public:
-        DisparityStore() : m_dspace(0, 64, 1024) { UpdateMappings(); }
+        DisparityStore() : m_dspace(0, 64, 64*16) { UpdateMappings(); }
 
-        //bool Create(const Path& root, size_t priCamIdx, size_t secCamIdx, const Strings& filenames);
         bool Create(const Path& root, size_t priCamIdx, size_t secCamIdx, StereoMatcher::Ptr matcher);
 
         virtual bool Store(cv::FileStorage& fs) const;
@@ -354,7 +353,7 @@ namespace seq2map
 
         size_t m_priCamIdx;
         size_t m_secCamIdx;
-        LinearSpacedVec<double> m_dspace;
+        StereoMatcher::DisparitySpace m_dspace;
         StereoMatcher::Ptr m_matcher;
 
         LinearMapping m_dspaceTo16U;
@@ -433,6 +432,7 @@ namespace seq2map
 
         bool SetActiveStore(size_t store);
         const DisparityStore& GetDisparityStore(size_t idx) const { return m_stores[idx]; }
+        const DisparityStores& GetDisparityStores() const { return m_stores; }
 
         cv::Mat GetDepthMap(size_t frame, size_t store) const;
         inline cv::Mat GetDepthMap(size_t frame) const { return GetDepthMap(frame, m_activeStore); }
@@ -471,9 +471,11 @@ namespace seq2map
             virtual bool ReadParams(const cv::FileNode& fn) = 0;
             virtual void ApplyParams() = 0;
             virtual Options GetOptions(int flag = 0) = 0;
+            
             virtual bool Build(const Path& from, const String& name, const String& grabber, Sequence& seq) const;
 
         protected:
+            virtual String GetVehicleName(const Path& from) const = 0;
             virtual bool BuildCamera(const Path& from, Cameras& cams, RectifiedStereoPairs& stereo) const = 0;
         };
 
@@ -486,6 +488,7 @@ namespace seq2map
         inline const Path GetRawPath()   const { return m_rawPath; }
         inline const Path GetRootPath()  const { return m_seqPath; }
         inline const String GetName()    const { return m_seqName; }
+        inline const String GetVehicle() const { return m_vehicleName; }
         inline const String GetGrabber() const { return m_grabberName; }
 
         inline const Camera& GetCamera(size_t idx)  const { return m_cameras[idx]; }
@@ -504,6 +507,7 @@ namespace seq2map
         Path                 m_rawPath;
         Path                 m_seqPath;
         String               m_seqName;
+        String               m_vehicleName;
         String               m_grabberName;
         String               m_kptsDirName;
         String               m_dispDirName;

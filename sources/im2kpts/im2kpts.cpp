@@ -49,7 +49,7 @@ void MyApp::ShowHelp(const Options& o) const
 
     if (!m_detector.empty())
     {
-        FeatureDetectorPtr detector = dxtorFactory.GetDetectorFactory().Create(m_detector);
+        FeatureDetector::Ptr detector = dxtorFactory.GetDetectorFactory().Create(m_detector);
 
         if (detector)
         {
@@ -64,7 +64,7 @@ void MyApp::ShowHelp(const Options& o) const
 
     if (!m_xtractor.empty())
     {
-        FeatureExtractorPtr xtractor = dxtorFactory.GetExtractorFactory().Create(m_xtractor);
+        FeatureExtractor::Ptr xtractor = dxtorFactory.GetExtractorFactory().Create(m_xtractor);
 
         if (xtractor)
         {

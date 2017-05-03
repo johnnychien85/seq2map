@@ -74,7 +74,7 @@ void MyApp::SetOptions(Options& o, Options& h, Positional& p)
         ("matcher,m", po::value<String>(&m_matcherName)->default_value(         ""), matcherDesc.c_str())
         ("pri",       po::value<int>   (&m_priCamIdx  )->default_value(         -1), "Index of the primary camera for IN-SEQ mode.")
         ("sec",       po::value<int>   (&m_secCamIdx  )->default_value(         -1), "Index of the secondary camera for IN-SEQ mode.")
-        ("geometry",  po::value<String>(&m_geometry   )->default_value(       "LR"), "Configuration of stereo cameras. This option is automatically determined for IN-SEQ mode.")
+    //  ("geometry",  po::value<String>(&m_geometry   )->default_value(       "LR"), "Configuration of stereo cameras. This option is automatically determined for IN-SEQ mode.")
         ("ext,e",     po::value<String>(&m_extension  )->default_value(     ".png"), "The extension name of the output disparity files. Must be a valid image extension supported by OpenCV.")
         ("cam,c",     po::value<String>(&m_index      )->default_value("index.yml"), "Select camera from a sequence database to enable IN-SEQ mode.");
 
@@ -125,7 +125,6 @@ bool MyApp::ProcessUnknownArgs(const Strings& args)
 
     return true;
 }
-
 
 bool MyApp::Init()
 {
@@ -188,7 +187,7 @@ bool MyApp::Init()
 
     E_INFO << m_priImageStore.GetItems() << " items will be processed";
 
-    // set feature store for output
+    // set disparity store for output
     if (inSeqMode)
     {
         Path dispStoreRoot = seq.GetDisparityStoreRoot();
@@ -330,7 +329,42 @@ bool MyApp::Execute()
 
     return true;
 }
+/*
+class OpA : public ChainedOp<int>
+{
+public:
+    OpA(int k) : k(k) {}
+    virtual int operator() (int& x) { return k * x; }
+    int k;
 
+protected:
+    virtual Ptr Create() const { return Ptr(new OpA(k)); }
+};
+
+class OpB : public ChainedOp<int>
+{
+public:
+    OpB(int a, int b) : a(a), b(b) {}
+    virtual int operator() (int& x) { return a * x + b; }
+    int a;
+    int b;
+
+protected:
+    virtual Ptr Create() const { return Ptr(new OpB(a, b)); }
+};
+
+class OpC : public ChainedOp<int>
+{
+public:
+    OpC(int a, int b) : a(a), b(b) {}
+    virtual int operator() (int& x) { return (x - b) / a; }
+    int a;
+    int b;
+
+protected:
+    virtual Ptr Create() const { return Ptr(new OpC(a, b)); }
+};
+*/
 int main(int argc, char* argv[])
 {
     MyApp app(argc, argv);

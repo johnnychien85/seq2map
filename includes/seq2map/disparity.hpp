@@ -11,6 +11,7 @@ namespace seq2map
     {
     public:
         typedef boost::shared_ptr<StereoMatcher> Ptr;
+        typedef LinearSpacedVec<double> DisparitySpace;
         
         virtual void WriteParams(cv::FileStorage& f) const = 0;
         virtual bool ReadParams(const cv::FileNode& f) = 0;
@@ -22,6 +23,7 @@ namespace seq2map
 
         virtual String GetMatcherName() const = 0;
         virtual cv::Mat Match(const cv::Mat& left, const cv::Mat& right) = 0;
+        virtual DisparitySpace GetDisparitySpace() const = 0;
     };
     
     template<class T>
@@ -37,6 +39,14 @@ namespace seq2map
         virtual Options GetOptions(int flag);
 
         virtual cv::Mat Match(const cv::Mat& left, const cv::Mat& right);
+        virtual DisparitySpace GetDisparitySpace() const
+        {
+            return DisparitySpace(
+                m_minDisparity,
+                m_minDisparity + m_numDisparities,
+                m_numDisparities * cv::StereoMatcher::DISP_SCALE - 1
+            );
+        }
 
     protected:
         cv::Ptr<T> m_matcher;

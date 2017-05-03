@@ -1,19 +1,13 @@
-#ifndef SCANNER_HPP
-#define SCANNER_HPP
+#ifndef BUILDER_HPP
+#define BUILDER_HPP
 #include <seq2map/sequence.hpp>
 
 using namespace seq2map;
 
-/* class Scanner : public Parameterised
-{
-public:
-    virtual void WriteParams(cv::FileStorage& fs) const = 0;
-    virtual bool ReadParams(const cv::FileNode& fn) = 0;
-    virtual void ApplyParams() = 0;
-    virtual Options GetOptions(int flag = 0) = 0;
-    virtual bool Scan(const Path& from, Sequence& seq) = 0;
-}; */
-
+/**
+ * Class to parse VO/SLAM datasets from KITTI Benchmark Suite, KIT.
+ * Source: http://www.cvlibs.net/datasets/kitti/eval_odometry.php
+ */
 class KittiOdometryBuilder : public Sequence::Builder
 {
 public:
@@ -24,6 +18,8 @@ public:
 
 protected:
     static size_t ParseIndex(const String& varname, size_t offset = 1);
+
+    virtual String GetVehicleName(const Path& from) const { return "KITTI CAR"; }
     virtual bool BuildCamera(const Path& from, Cameras& cams, RectifiedStereoPairs& stereo) const;
 
     friend class KittiRawDataBuilder;
@@ -46,6 +42,10 @@ private:
     String m_posePath; // path to pose file
 };
 
+/**
+ * Class to parse raw data from KITTI Benchmark Suite, KIT.
+ * Source: http://www.cvlibs.net/datasets/kitti/raw_data.php
+ */
 class KittiRawDataBuilder : public Sequence::Builder
 {
 public:
@@ -55,6 +55,7 @@ public:
     virtual Options GetOptions(int flag = 0);
 
 protected:
+    virtual String GetVehicleName(const Path& from) const { return "KITTI CAR"; }
     virtual bool BuildCamera(const Path& from, Cameras& cams, RectifiedStereoPairs& stereo) const;
 
 private:
@@ -108,9 +109,28 @@ private:
     String m_lid2cam; // path to the calib_velo_to_cam.txt file
 };
 
+/**
+ * Class to parse aerial visual-intertial datasets from Autonomous Systems Lab, ETH.
+ * Source: http://projects.asl.ethz.ch/datasets/doku.php?id=kmavvisualinertialdatasets
+ */
+class EurocMavBuilder : public Sequence::Builder
+{
+public:
+    virtual void WriteParams(cv::FileStorage& fs) const {}
+    virtual bool ReadParams(const cv::FileNode& fn) { return true; }
+    virtual void ApplyParams() {}
+    virtual Options GetOptions(int flag = 0) { return Options(); }
+
+protected:
+    virtual String GetVehicleName(const Path& from) const;
+    virtual bool BuildCamera(const Path& from, Cameras& cams, RectifiedStereoPairs& stereo) const;
+
+    static bool ReadConfig(const Path& fromm, cv::FileStorage& to);
+};
+
 class SeqBuilderFactory : public Factory<String, Sequence::Builder>
 {
 public:
     SeqBuilderFactory();
 };
-#endif // SCANNER_HPP
+#endif // BUILDER_HPP

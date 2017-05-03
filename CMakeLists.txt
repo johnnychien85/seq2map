@@ -68,13 +68,17 @@ project(seq2map CXX)
 add_library   (base        includes/seq2map/common.hpp           # Shared components
                            includes/seq2map/disparity.hpp        # 
                            includes/seq2map/features.hpp         # 
+                           includes/seq2map/features_opencv.hpp  # 
                            includes/seq2map/geometry.hpp         # 
+                           includes/seq2map/mapping.hpp          # 
                            includes/seq2map/sequence.hpp         # 
                            includes/seq2map/solve.hpp            # 
                            sources/base/common.cpp               # 
                            sources/base/disparity.cpp            # 
                            sources/base/features.cpp             # 
+                           sources/base/features_opencv.cpp      #
                            sources/base/geometry.cpp             # 
+                           sources/base/mapping.cpp              # 
                            sources/base/sequence.cpp             # 
                            sources/base/solve.cpp             )  # 
 add_executable(calibn      sources/calibn/args.hpp               # Multi-camera calibration utility
@@ -90,11 +94,10 @@ add_executable(calibn      sources/calibn/args.hpp               # Multi-camera 
 add_executable(im2disp     sources/im2disp/im2disp.cpp          )# Stereo matcher-based disparity map computation
 add_executable(im2flow     sources/im2flow/im2flow.cpp          )# Optical flow computation
 add_executable(im2kpts     sources/im2kpts/im2kpts.cpp          )# Image feature detection and extraction
-add_executable(raw2seq     sources/raw2seq/scanner.hpp           # Process raw data to build structured sequence profiles
-                           sources/raw2seq/scanner.cpp           # 
+add_executable(raw2seq     sources/raw2seq/builder.hpp           # Process raw data to build structured sequence profiles
+                           sources/raw2seq/builder.cpp           # 
                            sources/raw2seq/raw2seq.cpp          )# 
-#add_executable(seq2mot     sources/seq2mot/seq2mot.cpp          )# Motion recovery
-add_executable(monovo      sources/monovo/monovo.cpp            )# Monocular visual odometry
+add_executable(seq2map     sources/seq2map/seq2map.cpp          )# Motion recovery and mapping
 add_executable(vggrab      sources/vggrab/recorder.hpp           # Software synchronised multi-camera frame grabber
                            sources/vggrab/recorder.cpp           # 
                            sources/vggrab/grabber.hpp            # 
@@ -110,19 +113,18 @@ add_executable(vggrab      sources/vggrab/recorder.hpp           # Software sync
                            sources/vggrab/uirenderer.hpp         # 
                            sources/vggrab/uirenderer.cpp         # 
                            sources/vggrab/vggrab.cpp            )# 
+add_executable(chkseq      sources/miscs/chkseq.cpp             )# Sequence file examining utility
 add_executable(disp2pts    sources/miscs/disp2pts.cpp           )# Converion from disparity map to point cloud
 add_executable(imcvt       sources/miscs/imcvt.cpp              )# Image conversion utility
 add_executable(imfuse      sources/miscs/imfuse.cpp             )# Multi-camera image fusion utility
 add_executable(imrect      sources/miscs/imrect.cpp             )# Image rectification utility
-add_executable(chkseq      sources/miscs/chkseq.cpp             )# Sequence file examining utility
 
 target_link_libraries(calibn   base)
 target_link_libraries(im2kpts  base)
 target_link_libraries(im2disp  base)
 target_link_libraries(im2flow  base)
 target_link_libraries(raw2seq  base)
-#target_link_libraries(seq2mot base)
-target_link_libraries(monovo   base)
+target_link_libraries(seq2map  base)
 target_link_libraries(vggrab   base)
 target_link_libraries(disp2pts base)
 target_link_libraries(imcvt    base)
@@ -162,8 +164,7 @@ if(OpenCV_VERSION AND NOT OpenCV_VERSION_MAJOR LESS 3)
 	target_link_libraries(im2kpts  ${OpenCV_LIBS})
 	target_link_libraries(im2flow  ${OpenCV_LIBS})
 	target_link_libraries(raw2seq  ${OpenCV_LIBS})
-   #target_link_libraries(seq2mot  ${OpenCV_LIBS})
-	target_link_libraries(monovo   ${OpenCV_LIBS})
+    target_link_libraries(seq2map  ${OpenCV_LIBS})
 	target_link_libraries(vggrab   ${OpenCV_LIBS})
 	target_link_libraries(disp2pts ${OpenCV_LIBS})
 	target_link_libraries(imcvt    ${OpenCV_LIBS})
@@ -190,7 +191,7 @@ if(Boost_FOUND)
 	target_link_libraries(im2disp     ${Boost_LIBRARIES})
 	target_link_libraries(im2flow     ${Boost_LIBRARIES})
 	target_link_libraries(raw2seq     ${Boost_LIBRARIES})
-	target_link_libraries(monovo      ${Boost_LIBRARIES})
+	target_link_libraries(seq2map     ${Boost_LIBRARIES})
 	target_link_libraries(vggrab      ${Boost_LIBRARIES})
 	target_link_libraries(disp2pts    ${Boost_LIBRARIES})
 	target_link_libraries(imcvt       ${Boost_LIBRARIES})

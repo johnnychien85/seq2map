@@ -1,6 +1,6 @@
 #include <iomanip>
 #include <boost/algorithm/string/predicate.hpp>
-#include "scanner.hpp"
+#include "builder.hpp"
 
 using namespace std;
 namespace po = boost::program_options;
@@ -476,10 +476,125 @@ bool KittiRawDataBuilder::BuildCamera(const Path& from, Cameras& cams, Rectified
     return true;
 }
 
+//==[ EurocBuilder ]============================================================
+
+bool EurocMavBuilder::ReadConfig(const Path& from, cv::FileStorage& to)
+{
+    std::ifstream fs(from.string());
+    std::stringstream ss;
+
+    if (!fs.is_open())
+    {
+        E_ERROR << "error opening file stream " << from;
+        return false;
+    }
+
+    ss << "%YAML:1.0" << std::endl; // OpenCV needs this clue..
+    ss << "---"       << std::endl;
+    ss << fs.rdbuf(); // concatenate the body
+
+    // parse the content of YML file in memory
+    return to.open(ss.str(), cv::FileStorage::READ | cv::FileStorage::MEMORY);
+}
+
+String EurocMavBuilder::GetVehicleName(const Path& from) const
+{
+    Path confPath = from / "body.yaml";
+    cv::FileStorage fs;
+
+    if (!ReadConfig(confPath, fs))
+    {
+        E_ERROR << "error parsing body configuration from " << confPath;
+        return "UNKNOWN";
+    }
+
+    return fs["comment"];
+}
+
+bool EurocMavBuilder::BuildCamera(const Path& from, Cameras& cams, RectifiedStereoPairs& stereo) const
+{
+    for (size_t k = 0; k < 2; k++)
+    {
+        std::stringstream ss;
+        ss << "cam" << k;
+
+        Path confPath = from / ss.str() / "sensor.YAML";
+        cv::FileStorage fs;
+
+        if (!ReadConfig(confPath, fs))
+        {
+            E_ERROR << "error reading camera configuration from " << confPath;
+            return false;
+        }
+
+        String sensorType;
+        fs["sensor_type"] >> sensorType;
+
+        if (sensorType != "camera")
+        {
+            E_ERROR << "wrong sensor type \"" << sensorType << "\"";
+            return false;
+        }
+
+        Camera cam;
+        String modelName;
+        cv::Size imageSize;
+        std::vector<double> extrinsics, intrinsics, distCoeffs;
+        cv::Mat cameraMatrix = cv::Mat::eye(3, 3, CV_64F);
+
+        fs["comment"]      >> modelName;
+        fs["resolution"]   >> imageSize;
+        fs["T_BS"]["data"] >> extrinsics;
+        fs["intrinsics"]   >> intrinsics;
+        fs["distortion_coefficients"] >> distCoeffs;
+
+        if (extrinsics.size() != 16)
+        {
+            E_ERROR << "error reading extrinsics, the parsed vector has a length of " << extrinsics.size() << " instead of 16";
+            return false;
+        }
+
+        if (intrinsics.size() != 4)
+        {
+            E_ERROR << "error reading intrinsics, the parsed vector has a length of " << intrinsics.size() << " instead of 4";
+            return false;
+        }
+
+        if (distCoeffs.size() != 4)
+        {
+            E_ERROR << "error reading distortion coefficients, the parsed vector has a length of " << distCoeffs.size() << " instead of 4";
+            return false;
+        }
+
+        cameraMatrix.at<double>(0, 0) = intrinsics[0];
+        cameraMatrix.at<double>(1, 1) = intrinsics[1];
+        cameraMatrix.at<double>(0, 2) = intrinsics[2];
+        cameraMatrix.at<double>(1, 2) = intrinsics[3];
+
+        cam.SetIndex(k);
+        cam.SetName(ss.str());
+        cam.SetModel(modelName);
+        cam.SetImageSize(imageSize);
+        cam.GetExtrinsics().SetTransformMatrix(cv::Mat(extrinsics).reshape(1, 4));
+        cam.SetIntrinsics(BouguetModel::Ptr(new BouguetModel(cameraMatrix, cv::Mat(distCoeffs))));
+
+        const Path imageDirPath = from / ss.str() / "data";
+        const String imageFileExt = ".png";
+
+        cam.GetImageStore().FromExistingFiles(imageDirPath, imageFileExt);
+        E_INFO << cam.GetImageStore().GetItems() << " image(s) located for camera " << k;
+
+        cams.push_back(cam);
+    }
+
+    return true;
+}
+
 //==[ SeqBuilderFactory ]=======================================================
 
 SeqBuilderFactory::SeqBuilderFactory()
 {
     Register<KittiOdometryBuilder>("KITTI_ODOMETRY");
     Register<KittiRawDataBuilder> ("KITTI_RAW");
+    Register<EurocMavBuilder>     ("EUROC");
 }

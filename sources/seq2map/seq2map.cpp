@@ -1,4 +1,6 @@
-#include "builder.hpp"
+#include <seq2map/common.hpp>
+
+using namespace seq2map;
 
 class MyApp : public App
 {
@@ -13,12 +15,8 @@ protected:
     virtual bool Execute();
 
 private:
-    String m_rawPath;
-    String m_outPath;
-    String m_seqName;
-    String m_builderName;
-    SeqBuilderFactory m_factory;
-    SeqBuilderFactory::BasePtr m_builder;
+    String m_seqPath;
+    String m_mapperName;
 };
 
 void MyApp::ShowHelp(const Options& o) const

@@ -66,6 +66,7 @@ bool MyApp::Execute()
     // show sequence summary
     std::cout << "Database:        " << seq.GetRootPath().string() << std::endl;
     std::cout << "Source:          " << seq.GetRawPath().string()  << std::endl;
+    std::cout << "Vehicle:         " << seq.GetVehicle()           << std::endl;
     std::cout << "Grabber:         " << seq.GetGrabber()           << std::endl;
     std::cout << "Frames:          " << seq.GetFrames()            << std::endl;
     std::cout << "Cameras:         " << seq.GetCameras().size()    << std::endl;
