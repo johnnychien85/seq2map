@@ -1,5 +1,6 @@
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string/join.hpp>
+#include <opencv2/cudafeatures2d.hpp>
 #include <seq2map/features.hpp>
 #include <seq2map/features_opencv.hpp>
 
@@ -542,19 +543,35 @@ cv::Mat FeatureMatcher::NormaliseDescriptors(const cv::Mat& desc)
 FeatureMatches FeatureMatcher::MatchDescriptors(const Mat& src, const Mat& dst, int metric)
 {
     FeatureMatches matches;
+    matches.reserve(src.rows);
 
     const bool ratioTest = m_maxRatio > 0.0f && m_maxRatio < 1.0f;
     const int k = ratioTest ? 2 : 1;
     std::vector<std::vector<DMatch> > knn;
 
-    Ptr<cv::DescriptorMatcher> matcher = m_exhaustive ?
-        Ptr<DescriptorMatcher>(new BFMatcher(metric)) : Ptr<DescriptorMatcher>(new FlannBasedMatcher());
-
-    matches.reserve(src.rows);
-
+    if (m_useGpu && cv::cuda::getCudaEnabledDeviceCount() > 0)
     {
-        AutoSpeedometreMeasure measure(m_descMatchingMetre, src.rows + dst.rows);
-        matcher->knnMatch(src, dst, knn, k);
+        Ptr<cv::cuda::DescriptorMatcher> matcher = cv::cuda::DescriptorMatcher::createBFMatcher(metric);
+        
+        {
+            AutoSpeedometreMeasure measure(m_descMatchingMetre, src.rows + dst.rows);
+            cv::cuda::GpuMat D1, D2;
+
+            D1.upload(src);
+            D2.upload(dst);
+
+            matcher->knnMatch(D1, D2, knn, k);
+        }
+    }
+    else
+    {
+        Ptr<cv::DescriptorMatcher> matcher = m_exhaustive ?
+            Ptr<DescriptorMatcher>(new BFMatcher(metric)) : Ptr<DescriptorMatcher>(new FlannBasedMatcher());
+
+        {
+            AutoSpeedometreMeasure measure(m_descMatchingMetre, src.rows + dst.rows);
+            matcher->knnMatch(src, dst, knn, k);
+        }
     }
 
     if (ratioTest)
@@ -616,7 +633,7 @@ seq2map::String FeatureMatcher::Report() const
     summary.push_back(m_symmetryTestMetre.ToString());
     summary.push_back(m_filteringMetre   .ToString());
 
-    return boost::algorithm::join(summary, " / ");
+    return boost::algorithm::join(summary, " / ") + (m_useGpu ? " [GPU]" : "");
 }
 
 bool FundamentalMatrixFilter::Filter(ImageFeatureMap& map, Indices& inliers)

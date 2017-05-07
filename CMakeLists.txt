@@ -155,7 +155,7 @@ endif()
 # Thirty-party Libraries
 mark_as_advanced(FORCE OPENCV_FOUND OpenCV_FOUND)
 find_package(OpenCV REQUIRED COMPONENTS core highgui calib3d features2d)
-find_package(OpenCV COMPONENTS xfeatures2d)
+find_package(OpenCV COMPONENTS xfeatures2d cudastereo cudafeatures2d)
 
 if(OpenCV_VERSION AND NOT OpenCV_VERSION_MAJOR LESS 3)
 	include_directories(${OpenCV_INCLUDE_DIRS})

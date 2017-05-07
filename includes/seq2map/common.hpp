@@ -163,10 +163,6 @@ namespace seq2map
 
             alpha = static_cast<double>(dst.end - dst.begin) / static_cast<double>(end - begin);
             beta = -alpha * static_cast<double>(dst.begin);
-
-            E_INFO << begin << ":" << end << ", n=" << segs;
-            E_INFO << dst.begin << ":" << dst.end << ", n=" << dst.segs;
-            E_INFO << "alpha=" << alpha << ", beta=" << beta;
         }
 
         inline bool operator== (const LinearSpacedVec<T>& vec)

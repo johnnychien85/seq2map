@@ -249,8 +249,8 @@ namespace seq2map
     class FeatureMatcher
     {
     public:
-        FeatureMatcher(bool exhaustive = true, bool symmetric = true, float maxRatio = 0.6f)
-        : m_exhaustive(exhaustive), m_symmetric(symmetric), m_maxRatio(maxRatio),
+        FeatureMatcher(bool exhaustive = true, bool symmetric = true, float maxRatio = 0.6f, bool useGpu = false)
+        : m_exhaustive(exhaustive), m_symmetric(symmetric), m_maxRatio(maxRatio), m_useGpu(useGpu),
           m_descMatchingMetre("Descriptors Matching", "features/s"),
           m_ratioTestMetre   ("Ratio Test",           "matches/s"),
           m_symmetryTestMetre("Symmetry Test",        "matches/s"),
@@ -269,6 +269,7 @@ namespace seq2map
         std::vector<FeatureMatchFilter*> m_filters;
         bool  m_exhaustive;
         bool  m_symmetric;
+        bool  m_useGpu;
         float m_maxRatio;
         Speedometre m_descMatchingMetre;
         Speedometre m_ratioTestMetre;

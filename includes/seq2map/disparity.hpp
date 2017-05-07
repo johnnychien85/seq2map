@@ -1,6 +1,7 @@
 #ifndef DISPARITY_HPP
 #define DISPARITY_HPP
 #include <opencv2/calib3d/calib3d.hpp>
+#include <opencv2/cudastereo.hpp>
 #include <seq2map/common.hpp>
 
 namespace seq2map
@@ -31,7 +32,7 @@ namespace seq2map
     {
     public:
         typedef cv::Ptr<T> Ptr;
-        CvStereoMatcher(const Ptr& matcher) : m_matcher(matcher) {}
+        CvStereoMatcher(const Ptr& matcher, bool useGpuMat = false) : m_matcher(matcher), m_useGpuMat(useGpuMat) {}
 
         virtual void WriteParams(cv::FileStorage& fs) const;
         virtual bool ReadParams(const cv::FileNode& fn);
@@ -56,13 +57,16 @@ namespace seq2map
         int m_speckleWinSize;
         int m_speckleRange;
         int m_disp12MaxDiff;
+
+        const bool m_useGpuMat;
     };
 
-    class BlockMatcher : public CvStereoMatcher<cv::StereoBM>
+    template<class T>
+    class BlockMatcher : public CvStereoMatcher<T>
     {
     public:
-        BlockMatcher() : CvStereoMatcher<cv::StereoBM>(cv::StereoBM::create()) {}
-        virtual String GetMatcherName() const { return "BM"; }
+        BlockMatcher<T>(const Ptr& matcher, bool useGpuMat) : CvStereoMatcher<T>(matcher, useGpuMat) {}
+        virtual String GetMatcherName() const = 0;
 
         virtual void WriteParams(cv::FileStorage& fs) const;
         virtual bool ReadParams(const cv::FileNode& fn);
@@ -78,6 +82,20 @@ namespace seq2map
         int    m_textureThreshold;
         int    m_uniquenessRatio;
         int    m_smallerBlockSize;
+    };
+
+    class CpuBlockMatcher : public BlockMatcher<cv::StereoBM>
+    {
+    public:
+        CpuBlockMatcher() : BlockMatcher(cv::StereoBM::create(), false) {}
+        virtual String GetMatcherName() const { return "BM"; }
+    };
+
+    class GpuBlockMatcher : public BlockMatcher<cv::cuda::StereoBM>
+    {
+    public:
+        GpuBlockMatcher() : BlockMatcher(cv::cuda::createStereoBM(), true) {}
+        virtual String GetMatcherName() const { return "BM_GPU"; }
     };
 
     class SemiGlobalBlockMatcher : public CvStereoMatcher<cv::StereoSGBM>
