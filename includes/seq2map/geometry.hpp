@@ -61,6 +61,7 @@ namespace seq2map
         inline EuclideanTransform GetGlobalTransform(size_t to) const { return m_tforms[to]; }
         inline EuclideanTransform GetLocalTransform(size_t from, size_t to) const { return m_tforms[from].GetInverse() >> m_tforms[to]; }
         inline bool IsEmpty() const { return m_tforms.empty(); }
+        inline size_t GetSize() const { return m_tforms.size(); }
         virtual bool Store(Path& path) const;
         virtual bool Restore(const Path& path);
     protected:

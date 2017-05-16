@@ -60,10 +60,10 @@ void FeatureDetextractorFactory::Init()
 #endif // WITH_XFEATURES2D ................................
 }
 
-ImageFeature ImageFeatureSet::GetFeature(const size_t idx)
+ImageFeature ImageFeatureSet::GetFeature(const size_t idx) const
 {
     assert(idx < m_keypoints.size());
-    return ImageFeature(m_keypoints[idx], m_descriptors.row((int)idx));
+    return ImageFeature(m_keypoints[idx], m_descriptors.row(static_cast<int>(idx)));
 }
 
 // ImageFeature ImageFeatureSet::GetFeature(const size_t idx) const

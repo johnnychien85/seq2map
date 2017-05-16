@@ -210,7 +210,7 @@ namespace seq2map
             try
             {
                 fs << "root"  << m_root.string();
-                fs << "items" << (int) m_filenames.size();
+                fs << "items" << m_filenames.size();
                 fs << "files" << "[";
                 BOOST_FOREACH(const String& filename, m_filenames)
                 {
@@ -273,12 +273,26 @@ namespace seq2map
         virtual bool Store(Path& to) const
         {
             cv::FileStorage fs(to.string(), cv::FileStorage::WRITE);
+
+            if (!fs.isOpened())
+            {
+                E_ERROR << "error opening file " << to << " for writing";
+                return false;
+            }
+
             return Store(fs);
         }
 
         virtual bool Restore(const Path& from)
         {
             cv::FileStorage fs(from.string(), cv::FileStorage::READ);
+
+            if (!fs.isOpened())
+            {
+                E_ERROR << "error opening file " << from << " for reading";
+                return false;
+            }
+
             return Restore(fs.root());
         }
 
@@ -321,7 +335,9 @@ namespace seq2map
     /**
      * Disparity map store.
      */
-    class DisparityStore : public SequentialFileStore<PersistentImage>
+    class DisparityStore
+    : public SequentialFileStore<PersistentImage>,
+      public Indexed
     {
     public:
         DisparityStore() : m_dspace(0, 64, 64*16) { UpdateMappings(); }
@@ -491,16 +507,16 @@ namespace seq2map
         inline const String GetVehicle() const { return m_vehicleName; }
         inline const String GetGrabber() const { return m_grabberName; }
 
-        inline const Camera& GetCamera(size_t idx)  const { return m_cameras[idx]; }
+        inline const Camera& GetCamera(size_t idx) const { return m_cameras[idx]; }
         inline const Cameras& GetCameras() const { return m_cameras; }
         inline const RectifiedStereoPairs GetRectifiedStereo() const { return m_stereo; }
         inline Path GetFeatureStoreRoot() const { return m_seqPath / m_kptsDirName; }
         inline Path GetDisparityStoreRoot() const { return m_seqPath / m_dispDirName; }
         inline size_t GetFrames() const { return m_cameras.size() > 0 ? m_cameras[0].GetFrames() : 0; }
 
+        bool FindFeatureStore(size_t index, FeatureStore const* &store) const;
+
     private:
-        //static void WriteFileList(cv::FileStorage& fs, const String& node, const Path& root, const Strings& filenames);
-        //static void ReadFileList
         void Clear();
         size_t ScanStores();
 

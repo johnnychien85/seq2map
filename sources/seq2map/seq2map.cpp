@@ -1,4 +1,4 @@
-#include <seq2map/sequence.hpp>
+#include <seq2map/mapping.hpp>
 
 using namespace seq2map;
 
@@ -61,22 +61,22 @@ bool MyApp::Execute()
         return false;
     }
 
-    if (seq.GetCameras().size() == 0 || 
-        seq.GetCamera(0).GetFeatureStores().size() == 0)
+    MultiFrameFeatureIntegration mapper;
+    Map map;
+
+    mapper.SetMergePolicy(MultiFrameFeatureIntegration::REJECT);
+    mapper.AddPathway(0, 0, 0, 1);
+    //mapper.AddPathway(0, 1, 1, 1);
+    //mapper.AddPathway(1, 1, 1, 0);
+    //mapper.AddPathway(1, 0, 0, 0);
+    //mapper.AddPathway(1, 1, 0, 1);
+    //mapper.AddPathway(0, 1, 0, 1);
+    //mapper.AddPathway(1, 0, 0, 1);
+    
+    if (!mapper.SLAM(seq, map, 0, 2))
     {
+        E_ERROR << "error mapping sequence " << m_seqPath;
         return false;
-    }
-
-    const FeatureStore& f = seq.GetCamera(0).GetFeatureStore(0);
-    FeatureMatcher matcher(true, true, 0.6f, false);
-
-    for (size_t t = 0; t < seq.GetFrames() - 1; t++)
-    {
-        size_t ti = t;
-        size_t tj = t + 1;
-
-        ImageFeatureMap map = matcher.MatchFeatures(f[ti], f[tj]);
-        E_INFO << ti << "->" << tj << ": " << matcher.Report();
     }
 
     return true;

@@ -683,9 +683,28 @@ bool Sequence::Restore(const Path& path)
     return true;
 }
 
+bool Sequence::FindFeatureStore(size_t index, FeatureStore const* &store) const
+{
+    store = NULL;
+
+    BOOST_FOREACH (const Camera& cam, m_cameras)
+    {
+        BOOST_FOREACH (const FeatureStore& f, cam.GetFeatureStores())
+        {
+            if (f.GetIndex() == index)
+            {
+                store = &f;
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 size_t Sequence::ScanStores()
 {
-    size_t stores = 0;
+    size_t featureStores = 0, dispStores = 0;
 
     // remove all bound stores first
     BOOST_FOREACH(Camera& cam, m_cameras)
@@ -737,9 +756,9 @@ size_t Sequence::ScanStores()
             continue;
         }
 
-        store.SetIndex(stores);
+        store.SetIndex(featureStores);
         cam.m_featureStores.push_back(store);
-        stores++;
+        featureStores++;
 
         E_INFO << "feature store loaded to camera " << cam.GetIndex();
     }
@@ -774,8 +793,9 @@ size_t Sequence::ScanStores()
 
                 if (store.GetItems() == pair.m_primary->GetFrames())
                 {
+                    store.SetIndex(dispStores);
                     pair.m_stores.push_back(store);
-                    stores++;
+                    dispStores++;
 
                     E_INFO << "disparity store loaded to stereo pair " << pair.ToString();
                 }
@@ -796,7 +816,7 @@ size_t Sequence::ScanStores()
         }
     }
 
-    return stores;
+    return featureStores + dispStores;
 }
 
 //==[ Sequence::Builder ]=====================================================//

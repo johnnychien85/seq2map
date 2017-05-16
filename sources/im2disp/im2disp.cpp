@@ -219,7 +219,7 @@ bool MyApp::Init()
         return false;
     }
 
-    if (inSeqMode)
+    if (!inSeqMode)
     {
         m_priCamIdx = 0;
         m_secCamIdx = 0;

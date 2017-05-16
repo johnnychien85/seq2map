@@ -27,12 +27,12 @@ namespace seq2map
 
         /* dtor */ virtual ~ImageFeature() {}
 
-        cv::KeyPoint& keypoint;
-        cv::Mat       descriptor;
+        const cv::KeyPoint& keypoint;
+        const cv::Mat       descriptor;
 
     protected:
         /* ctor */ 
-        ImageFeature(cv::KeyPoint& keypoint, cv::Mat descriptor)
+        ImageFeature(const cv::KeyPoint& keypoint, const cv::Mat descriptor)
         : keypoint(keypoint), descriptor(descriptor)
         {
             assert(descriptor.rows == 1);
@@ -59,8 +59,8 @@ namespace seq2map
         /* ctor */ ImageFeatureSet() : m_normType(cv::NORM_L2) {}
         /* dtor */ virtual ~ImageFeatureSet() {}
 
-        ImageFeature GetFeature(const size_t idx);
-        inline ImageFeature operator[](size_t idx) { return GetFeature(idx); }
+        ImageFeature GetFeature(const size_t idx) const;
+        inline const ImageFeature operator[](size_t idx) const { return GetFeature(idx); }
         
         virtual bool Store(Path& path) const;
         virtual bool Restore(const Path& path);
@@ -203,7 +203,7 @@ namespace seq2map
         FeatureMatch(size_t srcIdx = INVALID_INDEX, size_t dstIdx = INVALID_INDEX, float distance = -1, int state = INLIER)
         : srcIdx(srcIdx), dstIdx(dstIdx), distance(distance), state(state) {}
 
-        inline void Reject(int flag) { state = (state ^ INLIER) | flag; }
+        inline void Reject(int reason) { state = (state ^ INLIER) | reason; }
 
         size_t srcIdx;
         size_t dstIdx;
@@ -249,7 +249,7 @@ namespace seq2map
     class FeatureMatcher
     {
     public:
-        FeatureMatcher(bool exhaustive = true, bool symmetric = true, float maxRatio = 0.6f, bool useGpu = false)
+        FeatureMatcher(bool exhaustive = true, bool symmetric = true, float maxRatio = 0.6f, bool useGpu = true)
         : m_exhaustive(exhaustive), m_symmetric(symmetric), m_maxRatio(maxRatio), m_useGpu(useGpu),
           m_descMatchingMetre("Descriptors Matching", "features/s"),
           m_ratioTestMetre   ("Ratio Test",           "matches/s"),

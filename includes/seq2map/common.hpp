@@ -108,8 +108,11 @@ namespace seq2map
     public:
         Indexed(size_t index = INVALID_INDEX) : m_index(index) {}
         virtual ~Indexed() {}
-        inline void SetIndex(size_t index) { m_index = index; }
+        inline virtual void SetIndex(size_t index) { m_index = index; }
         inline size_t GetIndex() const {return m_index;}
+        inline bool IsOkay() const { return m_index != INVALID_INDEX; }
+        inline bool operator< (const Indexed& rhs) { return m_index < rhs.m_index; }
+
     private:
         size_t m_index;
     };
@@ -162,7 +165,7 @@ namespace seq2map
             //beta  = -alpha * static_cast<double>(begin);
 
             alpha = static_cast<double>(dst.end - dst.begin) / static_cast<double>(end - begin);
-            beta = -alpha * static_cast<double>(dst.begin);
+            beta  = -alpha * static_cast<double>(dst.begin);
         }
 
         inline bool operator== (const LinearSpacedVec<T>& vec)
@@ -259,7 +262,7 @@ namespace seq2map
         Keys GetRegisteredKeys() const
         {
             Keys keys;
-            BOOST_FOREACH(typename Registry::value_type v, m_ctors)
+            BOOST_FOREACH (typename Registry::value_type v, m_ctors)
             {
                 keys.push_back(v.first);
             }
@@ -296,8 +299,8 @@ namespace seq2map
     template<class T> class Singleton
     {
     public:
-        Singleton(Singleton const&);         // deleted - no copy constructor is allowed
-        void operator=(Singleton<T> const&); // deleted - no copying is allowed
+        Singleton(Singleton const&);         // deleted - no copy constructor allowed
+        void operator=(Singleton<T> const&); // deleted - no copying allowed
 
         static T& GetInstance()
         {
