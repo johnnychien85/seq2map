@@ -1,73 +1,11 @@
 #ifndef MAPPING_HPP
 #define MAPPING_HPP
 
-#include <boost/enable_shared_from_this.hpp> // needed by a dynamic 2D linked list
 #include <seq2map/sequence.hpp>
+#include <seq2map/spamap.hpp>
 
 namespace seq2map
 {
-    /*
-    class Landmark : public Indexed
-    {
-    public:
-        class IdTable
-        {
-        public:
-            typedef std::vector<size_t> IdList;
-
-            IdTable(size_t t0, size_t tn, size_t fsets) : m_begin(t0), m_frames(tn - t0 + 1), m_stores(fsets), m_table(std::vector<ListOfIdList>(m_frames)) {}
-            IdList& operator() (size_t f, size_t t);
-
-        private:
-            typedef std::vector<IdList> ListOfIdList;
-
-            static IdList s_nullList;
-
-            size_t m_begin;
-            size_t m_frames;
-            size_t m_stores;
-            std::vector<ListOfIdList> m_table;
-        };
-
-        struct Hit
-        {
-            Hit(size_t f, size_t t, size_t k, const Point2D& proj, Landmark& owner)
-            : store(f), frame(t), index(k), proj(proj), landmark(owner) {}
-
-            size_t store; // feature store index
-            size_t frame; // frame index
-            size_t index; // index in the feature set
-            Point2D proj; // image projection
-            Landmark& landmark;
-        };
-
-        typedef std::vector<Hit> Hits;
-        inline void AddHit(size_t f, size_t t, size_t k, const Point2D& proj) { hits.push_back(Hit(f, t, k, proj, *this)); }
-
-        Point3D pos;
-        Hits hits;
-
-    protected:
-        friend class LandmarkSet;
-        Landmark(size_t index) { SetIndex(index); }
-
-    };
-
-    class LandmarkSet
-    {
-    public:
-        LandmarkSet() : m_newId(0) {}
-        Landmark& Insert();
-        Landmark& Select(size_t index);
-        bool Update();
-
-    protected:
-    private:
-        typedef std::map<size_t, Landmark> Landmarks;
-        Landmarks m_landmarks;
-        size_t m_newId;
-    };*/
-
     class Map
     {
     private:

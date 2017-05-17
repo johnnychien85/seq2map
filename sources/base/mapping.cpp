@@ -315,6 +315,30 @@ bool MultiFrameFeatureIntegration::BindPathways(const Sequence& seq, size_t& max
 
 bool MultiFrameFeatureIntegration::SLAM(const Sequence& seq, Map& map, size_t t0, size_t tn)
 {
+    spamap::Map<int> M;
+
+    M.Insert(1, 2, 8);
+    M.Insert(0, 0, 1);
+    M.Insert(0, 2, 3);
+    M.Insert(2, 3, 6);
+    M.Insert(0, 3, 5);
+    M.Insert(1, 1, 7);
+    M.Insert(2, 1, 4);
+    M.Insert(2, 3, 0);
+    M.Insert(1, 2, 9);
+
+    BOOST_FOREACH (int val, M.Col(1))
+    {
+        E_INFO << val;
+    }
+
+    BOOST_FOREACH (int val, M.Row(2))
+    {
+        E_INFO << val;
+    }
+
+    return true;
+
     bool valid = t0 >= 0 && tn > t0 && tn < seq.GetFrames();
 
     if (!valid)

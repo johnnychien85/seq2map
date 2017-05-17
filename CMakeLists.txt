@@ -73,6 +73,7 @@ add_library   (base        includes/seq2map/common.hpp           # Shared compon
                            includes/seq2map/mapping.hpp          # 
                            includes/seq2map/sequence.hpp         # 
                            includes/seq2map/solve.hpp            # 
+                           includes/seq2map/spamap.hpp           # 
                            sources/base/common.cpp               # 
                            sources/base/disparity.cpp            # 
                            sources/base/features.cpp             # 
@@ -80,7 +81,7 @@ add_library   (base        includes/seq2map/common.hpp           # Shared compon
                            sources/base/geometry.cpp             # 
                            sources/base/mapping.cpp              # 
                            sources/base/sequence.cpp             # 
-                           sources/base/solve.cpp             )  # 
+                           sources/base/solve.cpp               )# 
 add_executable(calibn      sources/calibn/args.hpp               # Multi-camera calibration utility
                            sources/calibn/calibgraph.hpp         # 
                            sources/calibn/calibgraphbuilder.hpp  # 
