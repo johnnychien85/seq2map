@@ -6,117 +6,60 @@
 
 namespace seq2map
 {
-    class Map
+    class Frame;
+    class Landmark;
+
+    struct Hit
     {
-    private:
-        template<typename T> class LinkedNode2D : public boost::enable_shared_from_this<LinkedNode2D<T> >
-        {
-        public:
-            LinkedNode2D(const T& value) : value(value) {}
-            virtual ~LinkedNode2D() {}
-
-            virtual void Detach();
-
-            typedef LinkedNode2D<T> NodeType;
-            typedef boost::shared_ptr<NodeType> Ptr;
-            typedef boost::weak_ptr<NodeType>   Ref;
-
-            Ref up;
-            Ref down;
-            Ref left;
-            Ptr right;
-            T   value;
-        };
-
     public:
-        class Landmark;
-        class Frame;
-        class Hit
-        {
-        public:
-            Landmark& landmark; // owning landmark
-            Frame& frame;       // owning frame
-            const size_t store; // originating store index
-            const size_t index; // originating feature index in the store
-            Point2D proj;       // observed 2D image coordinates
+        Landmark& landmark; // owning landmark
+        Frame& frame;       // owning frame
+        const size_t store; // originating store index
+        const size_t index; // originating feature index in the store
+        Point2D proj;       // observed 2D image coordinates
 
-        protected:
-            friend class Landmark; // only Landmark can make and own a Hit
+    protected:
+        friend class Landmark; // only landmarks can make hits
 
-            Hit(Landmark& landmark, Frame& frame, size_t store, size_t index)
-            : landmark(landmark), frame(frame), store(store), index(index) {}
-        };
+        Hit(Landmark& landmark, Frame& frame, size_t store, size_t index)
+        : landmark(landmark), frame(frame), store(store), index(index) {}
+    };
 
-        class HitNode : public LinkedNode2D<Hit>
-        {
-        public:
-            virtual ~HitNode() { s_kill++; Detach(); }
+    class Landmark : public spamap::Node<Hit>::Row
+    {
+    public:
+        virtual inline Hit& Hit(Frame& frame, size_t store, size_t index);
+        Point3D position;
 
-        protected:
-            friend class Landmark;
+    protected:
+        friend class spamap::Map<seq2map::Hit, Landmark, Frame>;
+        Landmark(size_t index = INVALID_INDEX) : Row(index) {}
+    };
 
-            HitNode(const Hit& hit);
-            virtual void Detach();
+    class Frame : public spamap::Node<Hit>::Column
+    {
+    public:
+        typedef std::vector<size_t> IdList;
+        typedef std::map<size_t, IdList> IdLists;
 
-        private:
-            static size_t s_born;
-            static size_t s_kill;
-        };
+        IdLists featureIdLookup;
 
-        class HitList
-        {
-        public:
-            size_t Count() const;
-            void Clear() { m_tail.reset(); m_head.reset(); }
+    protected:
+        friend class spamap::Map<Hit, Landmark, Frame>;
+        Frame(size_t index = INVALID_INDEX) : Column(index) {}
+    };
 
-        protected:
-            friend class HitNode; // let HitNode to maintain my head and tail
-
-            HitNode::Ptr m_head;
-            HitNode::Ptr m_tail;
-        };
-
-        class Landmark : public Indexed
-        {
-        public:
-            virtual inline Hit& Hit(Frame& frame, size_t store, size_t index);
-
-            Point3D position;
-            HitList hits;
-
-        protected:
-            friend class Map; // only Map can create a new landmark
-            Landmark(size_t index = INVALID_INDEX) : Indexed(index) {}
-        };
-
-        class Frame : public Indexed
-        {
-        public:
-            typedef std::vector<size_t> IdList;
-            typedef std::map<size_t, IdList> IdLists;
-
-            HitList hits;
-            IdLists featureIdLists;
-
-        protected:
-            friend class Map; // only Map can create a new frame
-            Frame(size_t index = INVALID_INDEX) : Indexed(index) {}
-        };
-
+    class Map : public spamap::Map<Hit, Landmark, Frame>
+    {
+    public:
         Map() : m_newLandmarkId(0) {}
-        virtual ~Map();
+        virtual ~Map() {}
 
         Landmark& AddLandmark();
-        Landmark& GetLandmark(size_t index);
-        Frame&    GetFrame(size_t index);
+        inline Landmark& GetLandmark(size_t index) { return Row(index); }
+        inline Frame&    GetFrame(size_t index)    { return Col(index); };
         
     private:
-        typedef std::map<size_t, Landmark> Landmarks;
-        typedef std::map<size_t, Frame>    Frames;
-
-        Landmarks m_landmarks; // observed image landmarks
-        Frames    m_frames;    // explored frames
-
         size_t    m_newLandmarkId;
     };
 

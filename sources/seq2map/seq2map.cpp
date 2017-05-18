@@ -66,14 +66,14 @@ bool MyApp::Execute()
 
     mapper.SetMergePolicy(MultiFrameFeatureIntegration::REJECT);
     mapper.AddPathway(0, 0, 0, 1);
-    //mapper.AddPathway(0, 1, 1, 1);
-    //mapper.AddPathway(1, 1, 1, 0);
-    //mapper.AddPathway(1, 0, 0, 0);
+    mapper.AddPathway(0, 1, 1, 1);
+    mapper.AddPathway(1, 1, 1, 0);
+    mapper.AddPathway(1, 0, 0, 0);
     //mapper.AddPathway(1, 1, 0, 1);
     //mapper.AddPathway(0, 1, 0, 1);
     //mapper.AddPathway(1, 0, 0, 1);
     
-    if (!mapper.SLAM(seq, map, 0, 2))
+    if (!mapper.SLAM(seq, map))
     {
         E_ERROR << "error mapping sequence " << m_seqPath;
         return false;

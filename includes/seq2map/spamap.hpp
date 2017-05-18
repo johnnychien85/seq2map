@@ -14,7 +14,8 @@ namespace spamap
     {
     public:
         class Row;
-        class Col;
+        class Column;
+        typedef Column Col;
 
         virtual ~Node()
         {
@@ -25,7 +26,7 @@ namespace spamap
             assert(left.expired());
             assert(!right);
 
-            E_TRACE << ToString() << " destroyed";
+            //E_TRACE << ToString() << " destroyed";
         }
 
         inline String ToString() const
@@ -44,7 +45,7 @@ namespace spamap
         // can only be constructed by Row::Insert
         Node(Row& row, Col& col, const T& value) : row(row), col(col), value(value), indexed(false)
         {
-            E_TRACE << ToString() << " borned";
+            //E_TRACE << ToString() << " borned";
         }
 
     public:
@@ -133,7 +134,7 @@ namespace spamap
                         node->right = next;
                         next->left  = node->shared_from_this();
 
-                        E_TRACE << node->ToString() << " <----> " << next->ToString();
+                        // E_TRACE << node->ToString() << " <----> " << next->ToString();
                     }
                     else
                     {
@@ -145,7 +146,7 @@ namespace spamap
                         node->left  = prev;
                         prev->right = node->shared_from_this();
 
-                        E_TRACE << prev->ToString() << " <----> " << node->ToString();
+                        // E_TRACE << prev->ToString() << " <----> " << node->ToString();
                     }
                     else
                     {
@@ -171,7 +172,7 @@ namespace spamap
                 if (prev)
                 {
                     prev->right = next;
-                    E_TRACE << prev->ToString() << " <-//-> " << node->ToString();
+                    // E_TRACE << prev->ToString() << " <-//-> " << node->ToString();
                 }
                 else
                 {
@@ -182,7 +183,7 @@ namespace spamap
                 if (next)
                 {
                     next->left = prev;
-                    E_TRACE << node->ToString() << " <-//-> " << next->ToString();
+                    // E_TRACE << node->ToString() << " <-//-> " << next->ToString();
                 }
                 else
                 {
@@ -216,11 +217,11 @@ namespace spamap
             }
         };
 
-        class Col : public Header
+        class Column : public Header
         {
         public:
-            Col(size_t idx = INVALID_IDX) : Header(idx) {}
-            ~Col() { clear(); }
+            Column(size_t idx = INVALID_INDEX) : Header(idx) {}
+            ~Column() { clear(); }
 
         protected:
             friend class Row;
@@ -279,7 +280,7 @@ namespace spamap
                     prev->down = node->shared_from_this();
                     node->up   = prev;
 
-                    E_INFO << prev->ToString() << " <----> " << node->ToString();
+                    //E_TRACE << prev->ToString() << " <----> " << node->ToString();
                 }
                 else
                 {
@@ -291,7 +292,7 @@ namespace spamap
                     next->up   = node->shared_from_this();
                     node->down = next;
 
-                    E_INFO << node->ToString() << " <----> " << next->ToString();
+                    //E_TRACE << node->ToString() << " <----> " << next->ToString();
                 }
                 else
                 {
@@ -339,7 +340,7 @@ namespace spamap
                 if (prev)
                 {
                     prev->down = next;
-                    E_INFO << prev->ToString() << " <-//-> " << node->ToString();
+                    // E_TRACE << prev->ToString() << " <-//-> " << node->ToString();
                 }
                 else
                 {
@@ -349,7 +350,7 @@ namespace spamap
                 if (next)
                 {
                     next->up = prev;
-                    E_INFO << node->ToString() << " <-//-> " << next->ToString();
+                    // E_TRACE << node->ToString() << " <-//-> " << next->ToString();
                 }
                 else
                 {
