@@ -111,7 +111,9 @@ namespace seq2map
         inline virtual void SetIndex(size_t index) { m_index = index; }
         inline size_t GetIndex() const {return m_index;}
         inline bool IsOkay() const { return m_index != INVALID_INDEX; }
-        inline bool operator< (const Indexed& rhs) { return m_index < rhs.m_index; }
+        inline bool operator<  (const Indexed& rhs) const { return m_index <  rhs.m_index; }
+        inline bool operator== (const Indexed& rhs) const { return m_index == rhs.m_index; }
+        inline bool operator!= (const Indexed& rhs) const { return !(*this == rhs); }
 
     private:
         size_t m_index;

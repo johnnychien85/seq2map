@@ -100,8 +100,41 @@ namespace seq2map
         std::vector<T1> m_pts1;
     };
 
+    struct AlignmentCriteria
+    {
+        enum Metric
+        {
+            EPIPOLAR_DIRECT,
+            EPIPOLAR_NORMALISED,
+            EPIPOLAR_SAMPSON,
+            PROJECTIVE,
+            RIGID,
+            PHOTOMETRIC
+        };
+
+        inline bool IsEnabled() const { return threshold > 0; }
+
+        Metric metric;
+        double threshold;
+    };
+
+    template<typename T, size_t dim> struct Weighted
+    {
+        Weighted(const T& pt = T(), const cv::Mat& cov = cv::Mat::eye(dim, dim, CV_64F))
+        : pt(pt), cov(cov) {}
+
+        T pt;
+        cv::Mat cov;
+    };
+
+    typedef Weighted<Point2D, 2> PointW2D;
+    typedef Weighted<Point3D, 3> PointW3D;
+
     typedef Mapping<Point2D, Point2D> PointMap2Dto2D;
     typedef Mapping<Point3D, Point2D> PointMap3Dto2D;
+
+    typedef Mapping<PointW2D, PointW2D> WeightedPointMap2Dto2D;
+    typedef Mapping<PointW3D, PointW2D> WeightedPointMap3Dto2D;
 
     class MotionEstimation
     : public LeastSquaresProblem,

@@ -57,10 +57,37 @@ namespace seq2map
 
         Landmark& AddLandmark();
         inline Landmark& GetLandmark(size_t index) { return Row(index); }
-        inline Frame&    GetFrame(size_t index)    { return Col(index); };
+        inline Frame&    GetFrame   (size_t index) { return Col(index); }
         
     private:
         size_t    m_newLandmarkId;
+    };
+
+    class Operator
+    {
+    public:
+        virtual bool InScope(size_t frame) = 0;
+        virtual bool operator() (Map& map, size_t frame) = 0;
+    };
+
+    class MatchFeatures : public Operator
+    {
+    public:
+        MatchFeatures(FeatureStore& src, FeatureStore& dst, size_t ti, size_t tj);
+
+        //inline void UseMotionPrior(bool enable) { m_motionPrior = enable; }
+        //inline void MakeMotionPosterior(bool enable) { m_motionPosterior = enable; }
+
+        inline void SetRigidAlignCutoff(double cutoff) {}
+        inline void SetProjectiveAlignCutff(double cutff) {}
+        inline void SetEpipolarCutoff(double cutoff) {}
+
+        void EnableGeometricFilter(cv::Mat Ki = cv::Mat(), cv::Mat Kj = cv::Mat());
+
+    private:
+        //bool m_geometricFiltering;
+        //bool m_motionPrior;
+        //bool m_motionPosterior;
     };
 
     class Mapper

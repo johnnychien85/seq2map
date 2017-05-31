@@ -53,8 +53,33 @@ bool MyApp::Init()
 
 bool MyApp::Execute()
 {
-    Sequence seq;
+    spamap::Map3<int> map;
+    spamap::Map<int> map2;
 
+    const size_t n = 1e5;
+    Speedometre m0, m1;
+
+    for (size_t i = 0; i < n; i++)
+    {
+        size_t i0 = (size_t)(std::rand() % 100);
+        size_t i1 = (size_t)(std::rand() % 100);
+        size_t i2 = (size_t)(std::rand() % 100);
+        int v = std::rand() % 100;
+
+        {
+            AutoSpeedometreMeasure measure(m0, 1);
+            map.Insert(i0, i1, i2, v);
+        }
+        {
+            AutoSpeedometreMeasure measure(m1, 1);
+            map2.Insert(i0, i1, v);
+        }
+
+        E_INFO << m0.ToString() << "/" << m1.ToString();
+    }
+
+    Sequence seq;
+    /*
     if (!seq.Restore(m_seqPath))
     {
         E_ERROR << "error restoring sequence from " << m_seqPath;
@@ -78,7 +103,7 @@ bool MyApp::Execute()
         E_ERROR << "error mapping sequence " << m_seqPath;
         return false;
     }
-
+    */
     return true;
 }
 
