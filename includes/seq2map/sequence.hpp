@@ -6,6 +6,7 @@
 #include <seq2map/features.hpp>
 #include <seq2map/disparity.hpp>
 #include <seq2map/geometry.hpp>
+#include <seq2map/seq_file_store.hpp>
 
 namespace seq2map
 {
@@ -44,18 +45,6 @@ namespace seq2map
 	};
 
     /**
-     * A data source returns data given a specific frame.
-     */
-    /*
-    template <typename T>
-    class DataSource
-    {
-    public:
-        virtual bool GetData(size_t frame, T& data) = 0;
-    };
-    */
-
-    /**
      * A sensor object represents a physical sensor installed.
      * The extrinsic parameters specify the geometric relationship
      * between the sensor and a reference frame.
@@ -79,255 +68,184 @@ namespace seq2map
 	};
 
     /**
-     *
+     * A wrapper of cv::Mat with disk storage backend.
      */
-    /* class SequentialFileNameGenerator
+    class PersistentImage : public Persistent<Path>
     {
     public:
-        SequentialFilenameGenerator(size_t start = 0, size_t digit = 8);
-        String Next();
-    private:
-        String m_extension;
-        size_t m_counter;
-    }; */
+        virtual bool Store(Path& path) const { return cv::imwrite(path.string(), im); };
+        virtual bool Restore(const Path& path) { return !(im = cv::imread(path.string())).empty(); };
 
-    /**
-     * 
-     */
-    template <typename T>
-    class SequentialFileStore
-    : public Persistent<cv::FileStorage, cv::FileNode>,
-      public Persistent<Path>
-    {
-    public:
-        bool Create(const Path& root, size_t allocated = 128)
-        {
-            if (!makeOutDir(root))
-            {
-                E_ERROR << "error creating directory " << root;
-                return false;
-            }
-
-            m_root = root;
-            m_filenames.clear();
-            m_filenames.reserve(allocated);
-
-            return true;
-        }
-
-        bool Create(const Path& root, const Strings& filenames)
-        {
-            if (!Create(root, filenames.size()))
-            {
-                return false;
-            }
-
-            m_filenames = filenames;
-
-            return true;
-        }
-
-        void FromExistingFiles(const Path& root, const String& ext = "")
-        {
-            Paths files = enumerateFiles(root, ext);
-            Strings filenames;
-
-            BOOST_FOREACH (const Path& file, files)
-            {
-                filenames.push_back(file.filename().string());
-            }
-
-            Create(root, filenames);
-        }
-
-        bool Append(const String& filename, const T& data)
-        {
-            // TODO: duplication check
-            // ...
-            // ..
-            // .
-
-            Path to = m_root / filename;
-
-            if (!Append(to, data))
-            {
-                E_ERROR << "error storing to " << filename;
-                return false;
-            }
-
-            m_filenames.push_back(filename);
-
-            return true;
-        }
-
-        bool Retrieve(size_t idx, T& data) const
-        {
-            if (idx >= m_filenames.size())
-            {
-                E_ERROR << "index out of bound (index=" << idx << ", size=" << m_filenames.size() << ")";
-                return false;
-            }
-
-            return Retrieve(m_root / m_filenames[idx], data);
-        }
-
-        T operator[] (size_t idx) const
-        {
-            T data;
-
-            if (!Retrieve(idx, data))
-            {
-                E_ERROR << "error retrieving data, index=" << idx;
-                return T();
-            }
-
-            return data;
-        }
-
-        inline size_t GetItems() const
-        {
-            return m_filenames.size();
-        }
-
-        inline Path GetRoot() const
-        {
-            return m_root;
-        }
-
-        inline Path GetItemPath(size_t idx) const
-        {
-            return m_root / m_filenames[idx];
-        }
-
-        inline const Strings& GetFileNames() const
-        {
-            return m_filenames;
-        }
-
-        //...
-        virtual bool Store(cv::FileStorage& fs) const
-        {
-            try
-            {
-                fs << "root"  << m_root.string();
-                fs << "items" << m_filenames.size();
-                fs << "files" << "[";
-                BOOST_FOREACH(const String& filename, m_filenames)
-                {
-                    fs << filename;
-                }
-                fs << "]";
-            }
-            catch (std::exception& ex)
-            {
-                E_ERROR << "error storing sequential file store";
-                E_ERROR << ex.what();
-
-                return false;
-            }
-
-            return true;
-        }
-
-        virtual bool Restore(const cv::FileNode& fn)
-        {
-            m_filenames.clear();
-
-            try
-            {
-                cv::FileNode files = fn["files"];
-                String root;
-                size_t items = 0;
-
-                fn["root"]  >> root;
-                fn["items"] >> items;
-
-                if (!Create(root, items))
-                {
-                    E_ERROR << "error creating store " << root;
-                    return false;
-                }
-
-                for (cv::FileNodeIterator itr = files.begin(); itr != files.end(); itr++)
-                {
-                    m_filenames.push_back((String)*itr);
-                }
-
-                if (items != m_filenames.size())
-                {
-                    E_WARNING << "the number of items " << items << " does not agree with file list size " << m_filenames.size();
-                    E_WARNING << "possible file corruption";
-                }
-            }
-            catch (std::exception& ex)
-            {
-                E_ERROR << "error restoring sequential file store";
-                E_ERROR << ex.what();
-
-                return false;
-            }
-
-            return true;
-        }
-
-        virtual bool Store(Path& to) const
-        {
-            cv::FileStorage fs(to.string(), cv::FileStorage::WRITE);
-
-            if (!fs.isOpened())
-            {
-                E_ERROR << "error opening file " << to << " for writing";
-                return false;
-            }
-
-            return Store(fs);
-        }
-
-        virtual bool Restore(const Path& from)
-        {
-            cv::FileStorage fs(from.string(), cv::FileStorage::READ);
-
-            if (!fs.isOpened())
-            {
-                E_ERROR << "error opening file " << from << " for reading";
-                return false;
-            }
-
-            return Restore(fs.root());
-        }
-
-    protected:
-        virtual bool Append(Path& to, const T& data) const     { return data.Store(to);     }
-        virtual bool Retrieve(const Path& from, T& data) const { return data.Restore(from); }
-
-    private:
-        Path    m_root;
-        Strings m_filenames;
+        cv::Mat im;
     };
 
+    /**
+     * Sequence of images stored in the same folder.
+     */
     typedef SequentialFileStore<PersistentImage> ImageStore;
 
     /**
-     *
+     * A camera instance provides an image sequence in the same image size.
+     */
+    class Camera
+    : public Sensor,
+      public IndexReferenced<Camera>
+    {
+    public:
+        /**
+         * The intrinsic factory used to restore a camera from file node.
+         */
+        class IntrinsicsFactory
+        : public Factory<String, ProjectionModel>,
+          public Singleton<IntrinsicsFactory>
+        {
+        public:
+            friend class Singleton<IntrinsicsFactory>;
+        protected:
+            virtual void Init();
+        };
+
+        //
+        // Constructor and desctructor
+        //
+        Camera(size_t index) : IndexReferenced(index) {}
+        virtual ~Camera() {}
+
+        //
+        // Accessors
+        //
+        inline void     SetImageSize(const cv::Size& imageSize)     { m_imageSize = imageSize; }
+        inline cv::Size GetImageSize() const                        { return m_imageSize; }
+        inline void SetIntrinsics(ProjectionModel::Own& intrinsics) { m_intrinsics = intrinsics; }
+        inline ProjectionModel::ConstOwn GetIntrinsics() const      { return m_intrinsics; }
+        inline ProjectionModel::Own      GetIntrinsics()            { return m_intrinsics; }
+        ImageStore&       GetImageStore()                           { return m_imageStore; }
+        const ImageStore& GetImageStore() const                     { return m_imageStore; }
+        inline size_t GetFrames() const                             { return m_imageStore.GetItems(); }
+
+        //inline void World2Camera(const Points3D& worldPts, Points3D& cameraPts) const { GetExtrinsics().Apply(cameraPts = worldPts); };
+        //void Camera2Image(const Points3D& cameraPts, Points2D& imagePts) const;
+        //void World2Image(const Points3D& worldPts, Points2D& imagePts) const;
+
+        //
+        // Persistence
+        //
+        virtual bool Store(cv::FileStorage& fn) const;
+        virtual bool Restore(const cv::FileNode& fs);
+
+    private:
+        ProjectionModel::Own m_intrinsics;
+        cv::Size             m_imageSize;
+        ImageStore           m_imageStore;
+    };
+
+    /**
+     * Rectified stereo camera pair.
+     */
+    class RectifiedStereo
+    : public Referenced<RectifiedStereo>
+    {
+    public:
+        struct Less
+        {
+            bool operator() (const RectifiedStereo::Own& lhs, const RectifiedStereo::Own& rhs)
+            {
+                Camera::ConstOwn lcam0 = lhs->GetPrimaryCamera();
+                Camera::ConstOwn lcam1 = lhs->GetSecondaryCamera();
+                Camera::ConstOwn rcam0 = rhs->GetPrimaryCamera();
+                Camera::ConstOwn rcam1 = rhs->GetSecondaryCamera();
+
+                return lcam0 && lcam1 && rcam0 && rcam1 && (*lcam0 < *rcam0 || *lcam1 < *rcam1);
+            }
+        };
+
+        typedef std::set<RectifiedStereo::Own, Less> Set;
+
+        /**
+         * Geometric configuration of the recrified cameras.
+         */
+        enum Geometry
+        {
+            LEFT_RIGHT,   // Classical lateral configuration
+            TOP_DOWN,     // Vertically arranged configuration
+            BACK_FORWARD, // Polar rectified configuration
+            UNKNOWN
+        };
+
+        //
+        // Constructor and destructor
+        //
+        RectifiedStereo() : m_config(UNKNOWN), m_baseline(0) {}
+        RectifiedStereo(Camera::ConstOwn& cam0, Camera::ConstOwn& cam1) { Create(cam0, cam1); }
+        virtual ~RectifiedStereo() {}
+
+        //
+        // Creation
+        //
+        bool Create(Camera::ConstOwn& cam0, Camera::ConstOwn& cam1);
+
+        static Own Create(Camera::Own& cam0, Camera::Own& cam1) { return Own(new RectifiedStereo(Camera::ConstOwn(cam0), Camera::ConstOwn(cam1))); }
+
+        //
+        // Accessor
+        //
+        inline Camera::ConstOwn GetPrimaryCamera()   const { return m_priCam; }
+        inline Camera::ConstOwn GetSecondaryCamera() const { return m_secCam; }
+        inline bool IsOkay() const { return m_priCam && m_secCam; }
+
+        //
+        // Misc.
+        //
+        Geometry Backproject(const cv::Mat& dp) const;
+        String ToString() const;
+
+    private:
+        friend class Sequence; // for restoring camera references
+
+        Camera::ConstOwn m_priCam; // reference to the primary camera
+        Camera::ConstOwn m_secCam; // reference to the secondary camera
+
+        Geometry m_config; // geometric configuration of the stereo pair
+        double m_baseline; // length of baseline
+    };
+
+    /**
+     * Sequence of image feature sets stored in the same folder.
      */
     class FeatureStore
     : public SequentialFileStore<ImageFeatureSet>,
-      public Indexed
+      public IndexReferenced<FeatureStore>
     {
     public:
-        FeatureStore() : m_camIdx(INVALID_INDEX) {}
+        //
+        // Constructor and destructor
+        //
+        FeatureStore(size_t index) : IndexReferenced(index) {}
+        virtual ~FeatureStore() {}
 
-        bool Create(const Path& root, size_t cam, FeatureDetextractor::Ptr dxtor);
-        inline size_t GetCameraIndex() const { return m_camIdx; }
-        inline FeatureDetextractor::Ptr GetFeatureDetextractor()            { return m_dxtor; }
-        inline FeatureDetextractor::ConstPtr GetFeatureDetextractor() const { return m_dxtor; }
+        //
+        // Creation
+        //
+        bool Create(const Path& root, Camera::ConstOwn& camera, FeatureDetextractor::Own& dxtor);
 
+        //
+        // Accessor
+        //
+        inline Camera::ConstOwn GetCamera() const { return m_cam; }
+        inline FeatureDetextractor::Own      GetFeatureDetextractor()       { return m_dxtor; }
+        inline FeatureDetextractor::ConstOwn GetFeatureDetextractor() const { return m_dxtor; }
+
+        //
+        // Persistence
+        //
         virtual bool Store(cv::FileStorage& fs) const;
         virtual bool Restore(const cv::FileNode& fn);
 
     private:
-        size_t m_camIdx;
-        FeatureDetextractor::Ptr m_dxtor;
+        friend class Sequence; // for restoring camera reference
+
+        Camera::ConstOwn m_cam;
+        FeatureDetextractor::Own m_dxtor;
     };
 
     typedef std::vector<FeatureStore> FeatureStores;
@@ -337,18 +255,31 @@ namespace seq2map
      */
     class DisparityStore
     : public SequentialFileStore<PersistentImage>,
-      public Indexed
+      public IndexReferenced<DisparityStore>
     {
     public:
-        DisparityStore() : m_dspace(0, 64, 64*16) { UpdateMappings(); }
+        //
+        // Constructor and destructor
+        //
+        DisparityStore(size_t index) : m_dspace(0, 64, 64*16), IndexReferenced(index) { UpdateMappings(); }
+        virtual ~DisparityStore() {}
 
-        bool Create(const Path& root, size_t priCamIdx, size_t secCamIdx, StereoMatcher::Ptr matcher);
+        //
+        // Creation
+        //
+        bool Create(const Path& root, RectifiedStereo::ConstOwn& stereo, StereoMatcher::ConstOwn& matcher);
 
+        //
+        // Accessor
+        //
+        inline RectifiedStereo::ConstOwn GetStereoPair() const { return m_stereo; }
+        inline StereoMatcher::ConstOwn GetMatcher() const { return m_matcher; }
+
+        //
+        // Persistence
+        //
         virtual bool Store(cv::FileStorage& fs) const;
         virtual bool Restore(const cv::FileNode& fn);
-
-        inline size_t GetPrimaryCameraIndex()   const { return m_priCamIdx; }
-        inline size_t GetSecondaryCameraIndex() const { return m_secCamIdx; }
 
         using SequentialFileStore<PersistentImage>::Append;
 
@@ -357,6 +288,8 @@ namespace seq2map
         virtual bool Retrieve(const Path& from, PersistentImage& dpm) const;
 
     private:
+        friend class Sequence; // for restoring camera reference
+
         struct LinearMapping
         {
             double alpha;
@@ -367,109 +300,13 @@ namespace seq2map
 
         static LinearSpacedVec<double> s_dspace16U;
 
-        size_t m_priCamIdx;
-        size_t m_secCamIdx;
         StereoMatcher::DisparitySpace m_dspace;
-        StereoMatcher::Ptr m_matcher;
+        RectifiedStereo::ConstOwn m_stereo;
+        StereoMatcher::ConstOwn   m_matcher;
 
         LinearMapping m_dspaceTo16U;
         LinearMapping m_dspaceTo32F;
     };
-
-    typedef std::vector<DisparityStore> DisparityStores;
-
-    /**
-     * .....
-     */
-    class Camera
-    : public Sensor, public Indexed
-    {
-    public:
-        typedef boost::shared_ptr<Camera> Ptr;
-        typedef boost::shared_ptr<const Camera> ConstPtr;
-
-        class IntrinsicsFactory
-        : public Factory<String, ProjectionModel>,
-          public Singleton<IntrinsicsFactory>
-        {
-            friend class Singleton<IntrinsicsFactory>;
-        protected:
-            virtual void Init();
-        };
-
-        virtual bool Store(cv::FileStorage& fn) const;
-        virtual bool Restore(const cv::FileNode& fs);
-
-        inline void SetIntrinsics(const ProjectionModel::Ptr& intrinsics) { m_intrinsics = intrinsics; }
-        inline ProjectionModel::ConstPtr GetIntrinsics() const { return m_intrinsics; }
-        inline ProjectionModel::Ptr      GetIntrinsics()       { return m_intrinsics; }
-        
-        inline void SetImageSize(const cv::Size& imageSize) { m_imageSize = imageSize; }
-        inline cv::Size GetImageSize() const { return m_imageSize; }
-
-        inline size_t GetFrames() const { return m_imageStore.GetItems(); }
-
-        ImageStore&          GetImageStore()                   { return m_imageStore; }
-        const ImageStore&    GetImageStore() const             { return m_imageStore; }
-        const FeatureStore&  GetFeatureStore(size_t idx) const { return m_featureStores[idx]; }
-        const FeatureStores& GetFeatureStores() const          { return m_featureStores; }
-
-        inline void World2Camera(const Points3D& worldPts, Points3D& cameraPts) const { GetExtrinsics().Apply(cameraPts = worldPts); };
-        void Camera2Image(const Points3D& cameraPts, Points2D& imagePts) const;
-        void World2Image(const Points3D& worldPts, Points2D& imagePts) const;
-
-    private:
-        ProjectionModel::Ptr m_intrinsics;
-        cv::Size             m_imageSize;
-        ImageStore           m_imageStore;
-        FeatureStores        m_featureStores;
-
-        friend class Sequence; // Sequence::Restore needs this to bind a scanned feature store
-    };
-
-    typedef std::vector<Camera> Cameras;
-
-    /**
-     * .....
-     */
-    class RectifiedStereo /* : public Sensor */
-    {
-    public:
-        RectifiedStereo() : m_lateral(true), m_baseline(0), m_activeStore(0) {}
-        RectifiedStereo(const Camera::ConstPtr& primary, const Camera::ConstPtr& secondary) { Create(primary, secondary); }
-        RectifiedStereo(const Camera& primary, const Camera& secondary);
-
-        bool Create(const Camera::ConstPtr& primary, const Camera::ConstPtr& secondary);
-
-        String ToString() const;
-
-        //virtual bool Store(cv::FileStorage& fn) const;
-        //virtual bool Restore(const cv::FileNode& fs);
-
-        bool SetActiveStore(size_t store);
-        const DisparityStore& GetDisparityStore(size_t idx) const { return m_stores[idx]; }
-        const DisparityStores& GetDisparityStores() const { return m_stores; }
-
-        cv::Mat GetDepthMap(size_t frame, size_t store) const;
-        inline cv::Mat GetDepthMap(size_t frame) const { return GetDepthMap(frame, m_activeStore); }
-
-        inline Camera::ConstPtr GetPrimaryCamera()   const { return m_primary;   }
-        inline Camera::ConstPtr GetSecondaryCamera() const { return m_secondary; }
-
-    private:
-        Camera::ConstPtr m_primary;
-        Camera::ConstPtr m_secondary;
-
-        bool m_lateral; // true: left-right configuration, otherwise top-bottom
-        double m_baseline;
-
-        DisparityStores m_stores;
-        size_t m_activeStore;
-
-        friend class Sequence; // Sequence::Restore needs this to bind a scanned disparity store
-    };
-
-    typedef std::vector<RectifiedStereo> RectifiedStereoPairs;
 
     /**
      * Sequence class contains information of a recorded image sequence,
@@ -478,6 +315,9 @@ namespace seq2map
     class Sequence : public Persistent<Path>
     {
     public:
+        /**
+         * A builder constructs sequence from raw data.
+         */
         class Builder : public Parameterised
         {
         public:
@@ -492,49 +332,64 @@ namespace seq2map
 
         protected:
             virtual String GetVehicleName(const Path& from) const = 0;
-            virtual bool BuildCamera(const Path& from, Cameras& cams, RectifiedStereoPairs& stereo) const = 0;
+            virtual bool BuildCamera(const Path& from, Camera::Map& cams, RectifiedStereo::Set& stereo) const = 0;
         };
 
+        //
+        // Constructor and destructor
+        //
         Sequence() { Clear(); }
         virtual ~Sequence() {}
 
-        virtual bool Store(Path& path) const;
-        virtual bool Restore(const Path& path);
-
+        //
+        // Accessor
+        //
         inline const Path GetRawPath()   const { return m_rawPath; }
         inline const Path GetRootPath()  const { return m_seqPath; }
         inline const String GetName()    const { return m_seqName; }
         inline const String GetVehicle() const { return m_vehicleName; }
         inline const String GetGrabber() const { return m_grabberName; }
 
-        inline const Camera& GetCamera(size_t idx) const { return m_cameras[idx]; }
-        inline const Cameras& GetCameras() const { return m_cameras; }
-        inline const RectifiedStereoPairs GetRectifiedStereo() const { return m_stereo; }
         inline Path GetFeatureStoreRoot() const { return m_seqPath / m_kptsDirName; }
         inline Path GetDisparityStoreRoot() const { return m_seqPath / m_dispDirName; }
-        inline size_t GetFrames() const { return m_cameras.size() > 0 ? m_cameras[0].GetFrames() : 0; }
+        inline size_t GetFrames() const { return m_cameras.size() > 0 && m_cameras.begin()->second ? m_cameras.begin()->second->GetFrames() : 0; }
 
-        bool FindFeatureStore(size_t index, FeatureStore const* &store) const;
+        inline const Camera::Map& GetCameras()                 const { return m_cameras;    }
+        inline const RectifiedStereo::Set& GetStereoPairs()    const { return m_stereo;     }
+        inline const FeatureStore::Map& GetFeatureStores()     const { return m_kptsStores; }
+        inline const DisparityStore::Map& GetDisparityStores() const { return m_dispStores; }
+
+        RectifiedStereo::ConstOwn FindStereoPair(size_t priCamIdx, size_t secCamIdx) const;
+
+        //
+        // Persistence
+        //
+        virtual bool Store(Path& path) const;
+        virtual bool Restore(const Path& path);
 
     private:
         void Clear();
         size_t ScanStores();
 
-        Path                 m_rawPath;
-        Path                 m_seqPath;
-        String               m_seqName;
-        String               m_vehicleName;
-        String               m_grabberName;
-        String               m_kptsDirName;
-        String               m_dispDirName;
-        String               m_mapsDirName;
-        Cameras              m_cameras;
-        RectifiedStereoPairs m_stereo;
+        Path   m_rawPath;
+        Path   m_seqPath;
 
-        static String        s_storeIndexFileName;
-        static String        s_featureStoreDirName;
-        static String        s_disparityStoreDirName;
-        static String        s_mapStoreDirName;
+        String m_seqName;
+        String m_vehicleName;
+        String m_grabberName;
+        String m_kptsDirName;
+        String m_dispDirName;
+        String m_mapsDirName;
+
+        Camera::Map          m_cameras;
+        RectifiedStereo::Set m_stereo;
+        FeatureStore::Map    m_kptsStores;
+        DisparityStore::Map  m_dispStores;
+
+        static String s_storeIndexFileName;
+        static String s_featureStoreDirName;
+        static String s_disparityStoreDirName;
+        static String s_mapStoreDirName;
     };
 }
 #endif // SEQUENCE_HPP

@@ -15,7 +15,7 @@ cv::Mat LeastSquaresProblem::ComputeJacobian(const VectorisableD::Vec& x, Vector
     //std::vector<boost::thread> threads;
     boost::thread_group threads;
 
-    y = y.empty() ? Evaluate(x) : y;
+    y = y.empty() ? (*this)(x) : y;
 
     // make evaluation slices for multi-threaded numerical differentiation
     std::vector<JacobianSlices> slices(m_diffThreads);
@@ -67,7 +67,7 @@ void LeastSquaresProblem::DiffThread(const LeastSquaresProblem* lsq, JacobianSli
         double dx = lsq->m_diffStep;
 
         x.at<double>(static_cast<int>(slice.var)) += dx;
-        cv::Mat dy = cv::Mat(lsq->Evaluate(x)) - y;
+        cv::Mat dy = cv::Mat((*lsq)(x)) - y;
 
         // Jk = (f(x+dx) - f(x)) / dx
         cv::divide(dy, dx, slice.col);
@@ -104,7 +104,7 @@ cv::Mat LeastSquaresProblem::ApplyUpdate(const VectorisableD::Vec& x0, const Vec
     return cv::Mat(x).clone();
 }
 
-bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& problem, const VectorisableD::Vec& x0)
+bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& f, const VectorisableD::Vec& x0)
 {
     assert(m_eta > 1.0f);
 
@@ -113,7 +113,7 @@ bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& problem, const Vect
     std::vector<double> derr;
 
     VectorisableD::Vec x_best = x0;
-    VectorisableD::Vec y_best = problem.Evaluate(x0);
+    VectorisableD::Vec y_best = f(x0);
     double e_best = rms(cv::Mat(y_best));
 
     size_t updates = 0; // iteration number
@@ -128,7 +128,7 @@ bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& problem, const Vect
     {
         while (!converged)
         {
-            cv::Mat J = problem.ComputeJacobian(x_best, y_best);
+            cv::Mat J = f.ComputeJacobian(x_best, y_best);
 
             cv::Mat H = J.t() * J; // Hessian matrix
             cv::Mat D = J.t() * cv::Mat(y_best); // error gradient
@@ -144,8 +144,8 @@ bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& problem, const Vect
                 cv::Mat A = H + lambda * cv::Mat::diag(H.diag()); // or A = N + lambda*eye(d);
                 cv::Mat x_delta = A.inv() * -D; // x_delta =  A \ -D;
 
-                VectorisableD::Vec x_try = problem.ApplyUpdate(x_best, x_delta); // = cv::Mat(cv::Mat(x_best) + x_delta);
-                VectorisableD::Vec y_try = problem.Evaluate(x_try);
+                VectorisableD::Vec x_try = f.ApplyUpdate(x_best, x_delta); // = cv::Mat(cv::Mat(x_best) + x_delta);
+                VectorisableD::Vec y_try = f(x_try);
 
                 double e_try = rms(cv::Mat(y_try));
                 double de = e_best - e_try;
@@ -194,7 +194,7 @@ bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& problem, const Vect
         return false;
     }
 
-    if (!problem.SetSolution(x_best))
+    if (!f.SetSolution(x_best))
     {
         E_ERROR << "error setting solution";
         E_ERROR << mat2string(cv::Mat(x_best), "x_best");

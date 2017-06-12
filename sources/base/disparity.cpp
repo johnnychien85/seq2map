@@ -273,23 +273,23 @@ void StereoMatcherFactory::Init()
     }
 }
 
-StereoMatcher::Ptr StereoMatcherFactory::Create(const cv::FileNode& fn)
+StereoMatcher::Own StereoMatcherFactory::Create(const cv::FileNode& fn)
 {
     String matcherName;
     fn["matcherName"] >> matcherName;
 
-    StereoMatcher::Ptr matcher = Factory::Create(matcherName);
+    StereoMatcher::Own matcher = Factory::Create(matcherName);
 
     if (!matcher)
     {
         E_ERROR << "error creating stereo matcher \"" << matcherName << "\"";
-        return StereoMatcher::Ptr();
+        return StereoMatcher::Own();
     }
 
     if (!matcher->Restore(fn))
     {
         E_ERROR << "error restoring stereo matcher from file node";
-        return StereoMatcher::Ptr();
+        return StereoMatcher::Own();
     }
 
     return matcher;

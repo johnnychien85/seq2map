@@ -23,25 +23,40 @@ namespace seq2map
     class LeastSquaresProblem
     {
     public:
+        //
+        //
+        //
         LeastSquaresProblem(size_t m, size_t n, const Indices& vars = Indices(), double dx = 1e-3, size_t diffThreads = 0)
-        : m_conds(m), m_vars(n), m_diffStep(dx),
-          m_diffThreads(diffThreads > 0 ? diffThreads : GetHardwareConcurrency())
-          { if (vars.empty() || !SetActiveVars(vars)) m_varIdx = makeIndices(0,n-1); }
+        : m_conds(m), m_vars(n), m_diffStep(dx), m_diffThreads(diffThreads > 0 ? diffThreads : GetHardwareConcurrency())
+        {
+            if (vars.empty() || !SetActiveVars(vars)) m_varIdx = makeIndices(0, n-1); 
+        }
+
+        //
+        //
+        //
         virtual VectorisableD::Vec Initialise() = 0;
-        virtual VectorisableD::Vec Evaluate(const VectorisableD::Vec& x) const = 0;
-        virtual VectorisableD::Vec Evaluate(const VectorisableD& vec) { return Evaluate(vec.ToVector()); }
+
+        virtual VectorisableD::Vec operator() (const VectorisableD::Vec& x) const = 0;
+        inline virtual VectorisableD::Vec operator() (const VectorisableD& vec) { return (*this)(vec.ToVector()); }
+
         virtual cv::Mat ComputeJacobian(const VectorisableD::Vec& x, VectorisableD::Vec& y) const;
+        
         virtual bool SetSolution(const VectorisableD::Vec& x) = 0;
+        
+        //
+        //
+        //
         bool SetActiveVars(const Indices& varIdx);
         cv::Mat ApplyUpdate(const VectorisableD::Vec& x, const VectorisableD::Vec& delta);
 
     protected:
-        size_t  m_conds;
-        size_t  m_vars;
-        Indices m_varIdx; // list of active variables
-        double  m_diffStep;
-        size_t  m_diffThreads;
-        cv::Mat m_jacobianPattern;
+        size_t        m_conds;
+        const size_t  m_vars;
+        Indices       m_varIdx; // list of active variables
+        double        m_diffStep;
+        size_t        m_diffThreads;
+        cv::Mat       m_jacobianPattern;
 
     private:
         struct JacobianSlice

@@ -3,62 +3,9 @@
 using namespace seq2map;
 
 const EuclideanTransform EuclideanTransform::Identity(cv::Mat::eye(3, 3, CV_64F), cv::Mat::zeros(3, 1, CV_64F));
-const BouguetModel BouguetModel::s_canonical(cv::Mat::eye(3, 3, CV_64F), cv::Mat::zeros(5, 1, CV_64F));
 
 namespace seq2map
 {
-    cv::Mat eucl2homo(const cv::Mat& x, bool rowMajor)
-    {
-        assert(x.channels() == 1);
-        cv::Mat y;
-
-        if (rowMajor)
-        {
-            y = cv::Mat(x.rows, x.cols + 1, x.type());
-            x.copyTo(y.colRange(0, x.cols));
-            y.col(x.cols).setTo(1);
-        }
-        else
-        {
-            y = cv::Mat(x.rows + 1, x.cols, x.type());
-            x.copyTo(y.rowRange(0, x.rows));
-            y.row(x.rows).setTo(1);
-        }
-
-        return y;
-    }
-
-    cv::Mat homo2eucl(const cv::Mat& x, bool rowMajor)
-    {
-        assert(x.channels() == 1);
-        cv::Mat y;
-
-        if (rowMajor)
-        {
-            assert(x.cols > 1);
-            size_t n = x.cols;
-            y = cv::Mat::zeros(x.rows, n - 1, x.type());
-
-            for (size_t j = 0; j < y.cols; j++)
-            {
-                y.col(j) = x.col(j) / x.col(n - 1);
-            }
-        }
-        else
-        {
-            assert(x.rows > 1);
-            size_t n = x.rows;
-            y = cv::Mat::zeros(x.rows, n - 1, x.type());
-
-            for (size_t i = 0; i < y.rows; i++)
-            {
-                y.row(i) = x.row(i) / x.row(n - 1);
-            }
-        }
-
-        return y;
-    }
-
     cv::Mat skewsymat(const cv::Mat& x)
     {
         assert(x.total() == 3);
@@ -67,14 +14,14 @@ namespace seq2map
         x.convertTo(x64f, CV_64F);
 
         // normalisation to make sure ||x|| = 1
-        x64f /= norm(x64f);
+        x64f /= cv::norm(x64f);
 
         double* v = x64f.ptr<double>();
 
         cv::Mat y64f = (cv::Mat_<double>(3, 3) <<
-             0.0f, -v[2],  v[1],
-             v[2],  0.0f, -v[0],
-            -v[1],  v[0],  0.0f);
+             0.0f,  -v[2],  v[1],
+             v[2],   0.0f, -v[0],
+            -v[1],   v[0], 0.0f);
 
         cv::Mat y;
         y64f.convertTo(y, x.type());
@@ -82,6 +29,367 @@ namespace seq2map
         return y;
     }
 }
+
+//==[ Geometry ]==============================================================//
+
+Geometry& Geometry::operator= (const Geometry& g)
+{
+    if (!Reshape(g.shape, shape, mat = g.mat))
+    {
+        // make a deep copy if mat remains a shallow copy of g.mat
+        mat = mat.clone();
+    }
+
+    return *this;
+}
+
+Geometry& Geometry::operator= (Geometry& g)
+{
+    Reshape(g.shape, shape, mat = g.mat);
+    return *this;
+}
+
+Geometry Geometry::operator- (const Geometry& g) const
+{
+    if (!IsConsistent(g)) return Geometry(shape);
+
+    Geometry d(shape);
+
+    if (shape == g.shape)
+    {
+        cv::subtract(mat, g.mat, d.mat);
+    }
+    else
+    {
+        cv::subtract(mat, g.Reshape(shape).mat, d.mat);
+    }
+
+    return d;
+}
+
+bool Geometry::IsConsistent(const Geometry& g) const
+{
+    if (GetDimension() != g.GetDimension() || GetElements() != g.GetElements())
+    {
+        E_WARNING << "inconsistent dimensionality";
+        return false;
+    }
+
+    return true;
+}
+
+size_t Geometry::GetElements() const
+{
+    switch (shape)
+    {
+    case ROW_MAJOR: return mat.rows; break;
+    case COL_MAJOR: return mat.cols; break;
+    case PACKED:    return mat.rows * mat.cols; break;
+    default:        return 0; // invalid shape
+    }
+}
+
+size_t Geometry::GetDimension() const
+{
+    switch (shape)
+    {
+    case ROW_MAJOR: return mat.cols; break;
+    case COL_MAJOR: return mat.rows; break;
+    case PACKED:    return mat.channels(); break;
+    default:        return 0; // invalid shape
+    }
+}
+
+Geometry Geometry::Reshape(const Geometry& g) const
+{
+    if (!IsConsistent(g) || g.shape != Geometry::PACKED)
+    {
+        return Reshape(g.shape);
+    }
+
+    cv::Mat m = mat;
+    
+    if (!Reshape(shape, g.shape, m, g.mat.rows))
+    {
+        m = m.clone();
+    }
+
+    return Geometry(g.shape, m);
+}
+
+Geometry Geometry::Reshape(const Geometry& g)
+{
+    if (!IsConsistent(g) || g.shape != Geometry::PACKED)
+    {
+        return Reshape(g.shape);
+    }
+
+    cv::Mat m = mat;
+    Reshape(shape, g.shape, m, g.mat.rows);
+
+    return Geometry(g.shape, m);
+}
+
+bool Geometry::Reshape(Shape src, Shape dst, cv::Mat& mat, size_t rows)
+{
+    if (src == dst) // same shape, nothing to be done
+    {
+        return false;
+    }
+
+    if (src != PACKED && dst != PACKED) // simple transpose
+    {
+        mat = mat.t(); // element cloning
+        return true;
+    }
+
+    switch (src)
+    {
+    case ROW_MAJOR:
+        mat = mat.reshape(mat.cols, static_cast<int>(rows));
+        return false;
+
+    case COL_MAJOR:
+        mat = cv::Mat(mat.t()).reshape(mat.rows, static_cast<int>(rows));
+        return true;
+    }
+
+    switch (dst)
+    {
+    case ROW_MAJOR:
+        mat = mat.reshape(1);
+        return false;
+
+    case COL_MAJOR:
+        mat = mat.reshape(1).t();
+        return true;
+    }
+
+    assert(0); // should never reach this point!
+    return false;
+}
+
+Geometry Geometry::MakeHomogeneous(const Geometry& g, double w)
+{
+    const cv::Mat& src = g.mat;
+    cv::Mat dst;
+
+    switch (g.shape)
+    {
+    case ROW_MAJOR:
+        dst = cv::Mat(src.rows, src.cols + 1, src.type());
+        src.copyTo(dst.colRange(0, src.cols));
+        dst.col(src.cols).setTo(w);
+        break;
+
+    case COL_MAJOR:
+        dst = cv::Mat(src.rows + 1, src.cols, src.type());
+        src.copyTo(dst.rowRange(0, src.rows));
+        dst.row(src.rows).setTo(w);
+        break;
+
+    case PACKED:
+        //cv::convertPointsToHomogeneous(src, dst);
+        dst = cv::Mat(src.rows, src.cols, CV_MAKETYPE(src.depth(), src.channels() + 1));
+        src.reshape(1).copyTo(dst.reshape(1).colRange(0, src.channels()));
+        dst.reshape(1).col(src.channels()).setTo(w);
+        break;
+    }
+
+    return Geometry(g.shape, dst);
+}
+
+Geometry Geometry::FromHomogeneous(const Geometry& g)
+{
+    const cv::Mat& src = g.mat;
+    cv::Mat dst;
+
+    switch (g.shape)
+    {
+    case ROW_MAJOR:
+        dst = cv::Mat(src.rows, src.cols - 1, src.type());
+        for (int j = 0; j < dst.cols; j++)
+        {
+            dst.col(j) = src.col(j) / src.col(dst.cols);
+        }
+        break;
+
+    case COL_MAJOR:
+        dst = cv::Mat(src.rows - 1, src.cols, src.type());
+        for (int i = 0; i < dst.cols; i++)
+        {
+            dst.row(i) = src.row(i) / src.row(dst.rows);
+        }
+        break;
+
+    case PACKED:
+        //cv::convertPointsFromHomogeneous(src, dst);
+        dst = cv::Mat(src.rows, src.cols, CV_MAKETYPE(src.depth(), src.channels() - 1));
+        dst = dst.reshape(1); // to row major order
+        for (int j = 0; j < dst.cols; j++)
+        {
+            dst.col(j) = src.col(j) / src.col(dst.cols);
+        }
+        dst = dst.reshape(src.channels() - 1, src.rows);
+        break;
+    }
+
+    return Geometry(g.shape, dst);
+}
+
+Geometry& Geometry::Dehomogenise()
+{
+    if (shape == PACKED)
+    {
+        this->Reshape(ROW_MAJOR).Dehomogenise(); // operate on a shallow copy of myself
+        return *this;
+    }
+
+    const int n = static_cast<int>(GetDimension()) - 1;
+
+    switch (shape)
+    {
+    case ROW_MAJOR:
+        for (int j = 0; j < mat.cols; j++)
+        {
+            mat.col(j) = mat.col(j) / mat.col(n);
+        }
+        break;
+
+    case COL_MAJOR:
+        for (int i = 0; i < mat.rows; i++)
+        {
+            mat.row(i) = mat.row(i) / mat.row(n);
+        }
+        break;
+    }
+
+    return *this;
+}
+
+//==[ Metric ]================================================================//
+
+//==[ EuclideanMetric ]=======================================================//
+
+Geometry EuclideanMetric::operator() (const Geometry& x, const Geometry& y) const
+{
+    return (*this)(x - y);
+}
+
+Geometry EuclideanMetric::operator() (const Geometry& x) const
+{
+    if (x.GetDimension() == 1)
+    {
+        return Geometry(x.shape, cv::abs(x.mat));
+    }
+
+    if (x.shape != Geometry::ROW_MAJOR)
+    {
+        return (*this)(x.Reshape(Geometry::ROW_MAJOR)).Reshape(x.shape);
+    }
+
+    cv::Mat d;
+
+    // work only for row-major shape
+    for (int j = 0; j < x.mat.cols; j++)
+    {
+        cv::Mat dj;
+        
+        cv::multiply(x.mat.col(j), x.mat.col(j), dj); // dj = dj .^ 2
+        cv::add(d, dj, d);                            // d  = d + dj
+    }
+
+    cv::sqrt(d, d); // d = sqrt(d)
+
+    return Geometry(x.shape, d);
+}
+
+//==[ MahalanobisMetric ]=====================================================//
+
+Geometry MahalanobisMetric::operator() (const Geometry& x, const Geometry& y) const
+{
+    return (*this)(x - y);
+}
+
+Geometry MahalanobisMetric::operator() (const Geometry& x) const
+{
+    if (x.shape != Geometry::ROW_MAJOR)
+    {
+        return (*this)(x.Reshape(Geometry::ROW_MAJOR)).Reshape(x.shape);
+    }
+
+    /*
+    const size_t d0 = err.rows;
+    const size_t d1 = icv.GetDimension();
+
+    const size_t n0 = err.cols;
+    const size_t n1 = icv.GetElements();
+
+    if (n1 == 0)
+    {
+        return err;
+    }
+
+    bool perElementEval = n1 != 1;
+
+    cv::Mat dist = cv::Mat::zeros(1, n0, err.type());
+    cv::Mat isgm = icv.mat;
+
+    isgm.convertTo(isgm, CV_64F);
+
+    if (!perElementEval)
+    {
+        if (d1 == 1)
+        {
+            for (size_t i = 0; i < d0; i++)
+            {
+                cv::Mat x = err.mat.row(i);
+                dist += x.mul(x);
+            }
+
+            dist = dist * isgm.at<double>
+        }
+        else if (d1 == d0)
+        {
+
+        }
+    }
+    else
+    {
+        if (n0 != n1)
+        {
+            E_ERROR << "number of icv elements (n=" << n1 << ") does not match the length of error vector (n=" << n0 << ")";
+            return err;
+        }
+
+        if (d1 == 1)
+        {
+
+        }
+    }
+
+    return dist;
+    */
+
+    throw std::exception("not implemented");
+    return Geometry(x.shape);
+}
+
+//==[ GeometricTransform ]====================================================//
+
+Points3F& GeometricTransform::operator() (Points3F& pts) const
+{
+    (*this)(Geometry(Geometry::PACKED, cv::Mat(pts))).mat.copyTo(cv::Mat(pts));
+    return pts;
+}
+
+Points3D& GeometricTransform::operator() (Points3D& pts) const
+{
+    (*this)(Geometry(Geometry::PACKED, cv::Mat(pts))).mat.copyTo(cv::Mat(pts));
+    return pts;
+}
+
+//==[ EuclideanTransform ]====================================================//
 
 EuclideanTransform::EuclideanTransform(const cv::Mat& rotation, const cv::Mat& tvec) : EuclideanTransform()
 {
@@ -95,25 +403,6 @@ EuclideanTransform::EuclideanTransform(const cv::Mat& rotation, const cv::Mat& t
     }
 
     SetTranslation(tvec);
-}
-
-void EuclideanTransform::Apply(Point3D& pt) const
-{
-    const double* m = m_matrix.ptr<double>();
-
-    pt = Point3D(
-        m[0] * pt.x + m[1] * pt.y + m[2]  * pt.z + m[3],
-        m[4] * pt.x + m[5] * pt.y + m[6]  * pt.z + m[7],
-        m[8] * pt.x + m[9] * pt.y + m[10] * pt.z + m[11]
-    );
-}
-
-void EuclideanTransform::Apply(Points3D& pts) const
-{
-    cv::Mat G;
-    cv::convertPointsToHomogeneous(pts, G);
-    G = G.reshape(1) * GetTransformMatrix(false, false);
-    G.reshape(3).copyTo(cv::Mat(pts));
 }
 
 bool EuclideanTransform::SetRotationMatrix(const cv::Mat& rmat)
@@ -181,34 +470,104 @@ bool EuclideanTransform::SetTransformMatrix(const cv::Mat& matrix)
     return SetRotationMatrix(rmat) && SetTranslation(tvec);
 }
 
-cv::Mat EuclideanTransform::GetTransformMatrix(bool sqrMat, bool preMult) const
+cv::Mat EuclideanTransform::GetTransformMatrix(bool sqrMat, bool preMult, int type) const
 {
-    if (!sqrMat && preMult) return m_matrix;
+    if (!sqrMat && preMult) return m_matrix.clone(); // this is the intrinsic form
 
-    cv::Mat matrix;
+    cv::Mat matrix = cv::Mat::eye(sqrMat ? 4 : 3, 4, m_matrix.type());
+    m_matrix.copyTo(matrix.rowRange(0, 3).colRange(0, 4));
 
-    if (sqrMat)
+    if (matrix.type() != type)
     {
-        matrix = cv::Mat::eye(4, 4, m_matrix.type());
-        m_matrix.copyTo(matrix.rowRange(0, 3).colRange(0, 4));
-    }
-    else
-    {
-        matrix = m_matrix;
+        matrix.convertTo(matrix, type);
     }
 
     return preMult ? matrix : matrix.t();
 }
 
-cv::Mat EuclideanTransform::GetEssentialMatrix() const
+cv::Mat EuclideanTransform::ToEssentialMatrix() const
 {
     return skewsymat(m_tvec) * m_rmat;
+}
+
+bool EuclideanTransform::FromEssentialMatrix(const cv::Mat& E, const GeometricMapping& m)
+{
+    // TODO: finish this
+    // ...
+    // ..
+    // .
+
+    throw std::exception("not implemented");
+
+    return false;
 }
 
 EuclideanTransform EuclideanTransform::GetInverse() const
 {
     cv::Mat Rt = m_rmat.t();
     return EuclideanTransform(Rt, -Rt*m_tvec);
+}
+
+Point3F& EuclideanTransform::operator() (Point3F& pt) const
+{
+    const double* m = m_matrix.ptr<double>();
+
+    pt = Point3F(
+        (float)(m[0] * pt.x + m[3] * pt.y + m[6] * pt.z + m[9]),
+        (float)(m[1] * pt.x + m[4] * pt.y + m[7] * pt.z + m[10]),
+        (float)(m[2] * pt.x + m[5] * pt.y + m[8] * pt.z + m[11])
+    );
+
+    return pt;
+}
+
+Point3D& EuclideanTransform::operator() (Point3D& pt) const
+{
+    const double* m = m_matrix.ptr<double>();
+
+    pt = Point3D(
+        m[0] * pt.x + m[3] * pt.y + m[6] * pt.z + m[9],
+        m[1] * pt.x + m[4] * pt.y + m[7] * pt.z + m[10],
+        m[2] * pt.x + m[5] * pt.y + m[8] * pt.z + m[11]
+    );
+
+    return pt;
+}
+
+Geometry& EuclideanTransform::operator() (Geometry& g) const
+{
+    const size_t d = g.GetDimension();
+    const int    m = g.mat.rows; // for reshaping a packed geometry
+
+    if (d != 3 && d != 4)
+    {
+        E_ERROR << "geometry matrix must store either Euclidean 3D or homogeneous 4D coordinates (d=" << d << ")";
+        return g;
+    }
+
+    bool homogeneous = (d == 4);
+
+    if (!homogeneous)
+    {
+        g = Geometry::MakeHomogeneous(g);
+    }
+
+    switch (g.shape)
+    {
+    case Geometry::ROW_MAJOR:
+        g.mat = g.mat * GetTransformMatrix(homogeneous, false, g.mat.type());
+        break;
+    case Geometry::COL_MAJOR:
+        g.mat = GetTransformMatrix(homogeneous, true, g.mat.type()) * g.mat;
+        break;
+    case Geometry::PACKED:
+        g.mat = g.mat.reshape(1);
+        g.mat = g.mat * GetTransformMatrix(homogeneous, false, g.mat.type());
+        g.mat = g.mat.reshape(homogeneous ? 4 : 3, m);
+        break;
+    }
+
+    return g;
 }
 
 bool EuclideanTransform::Store(cv::FileStorage& fs) const
@@ -234,8 +593,8 @@ VectorisableD::Vec EuclideanTransform::ToVector() const
     Vec v(6);
     size_t i = 0;
 
-    for (size_t j = 0; j < 3; j++) v[i++] = m_rvec.at<double>(j);
-    for (size_t j = 0; j < 3; j++) v[i++] = m_tvec.at<double>(j);
+    for (int j = 0; j < 3; j++) v[i++] = m_rvec.at<double>(j);
+    for (int j = 0; j < 3; j++) v[i++] = m_tvec.at<double>(j);
 
     return v;
 }
@@ -249,11 +608,13 @@ bool EuclideanTransform::FromVector(const Vec& v)
 
     size_t i = 0;
 
-    for (size_t j = 0; j < 3; j++) rvec.at<double>(j) = v[i++];
-    for (size_t j = 0; j < 3; j++) tvec.at<double>(j) = v[i++];
+    for (int j = 0; j < 3; j++) rvec.at<double>(j) = v[i++];
+    for (int j = 0; j < 3; j++) tvec.at<double>(j) = v[i++];
 
     return SetRotationVector(rvec) && SetTranslation(tvec);
 }
+
+//==[ Motion ]================================================================//
 
 size_t Motion::Update(const EuclideanTransform& tform)
 {
@@ -320,385 +681,461 @@ bool Motion::Restore(const Path& path)
     return true;
 }
 
-VectorisableD::Vec MotionEstimation::Initialise()
+//==[ ProjectionModel ]=======================================================//
+
+//==[ PinholeModel ]==========================================================//
+
+Point3F& PinholeModel::operator() (Point3F& pt) const
 {
-    if (0 /*m_pnp.GetSize() > m_epi.GetSize()*/)
-    {
-        cv::Mat rvec, tvec;
-        cv::solvePnP(m_pnp.From(), m_pnp.To(), m_cameraMatrix, cv::Mat(), rvec, tvec, false, CV_EPNP);
-        m_transform.SetRotationVector(rvec);
-        m_transform.SetTranslation(tvec);
-    }
-    else
-    {
-        cv::Mat E = cv::findEssentialMat(m_epi.From(), m_epi.To(), m_cameraMatrix);
-        cv::Mat rmat, tvec;
-        cv::recoverPose(E, m_epi.From(), m_epi.To(), m_cameraMatrix, rmat, tvec);
-        m_transform.SetRotationMatrix(rmat);
-        m_transform.SetTranslation(tvec);
-    }
+    const double* m = m_matrix.ptr<double>();
 
-    //cv::Mat x0 = cv::Mat::zeros(6, 1, CV_64F);
-    //m_transform.GetRotationVector().copyTo(x0.rowRange(0, 3));
-    //m_transform.GetTranslation().copyTo(x0.rowRange(3, 6));
+    pt = Point3F(
+        (float)(m[0] * pt.x / pt.z + m[2]),
+        (float)(m[4] * pt.y / pt.z + m[5]),
+        pt.z != 0 ? pt.z : 0
+    );
 
-    m_invCameraMatrix = m_cameraMatrix.inv();
-    m_conds = GetEvaluationSize();
-
-    //cv::Mat W_pnp = cv::Mat(m_wpnp);
-    //cv::Mat(W_pnp / cv::sum(W_pnp)[0] * m_wpnp.size()).copyTo(W_pnp);
-
-    //cv::Mat x64f;
-    //x0.convertTo(x64f, CV_64F);
-
-    return m_transform.ToVector(); //x64f;
+    return pt;
 }
 
-size_t MotionEstimation::GetEvaluationSize() const
+Point3D& PinholeModel::operator() (Point3D& pt) const
 {
-    size_t m = 0;
+    const double* m = m_matrix.ptr<double>();
 
-    if (m_alpha < 1) m += m_separatedRpe ? m_pnp.GetSize() * 2 : m_pnp.GetSize();
-    if (m_alpha > 0) m += m_sampsonError ? m_epi.GetSize() : m_epi.GetSize() * 2;
+    pt = Point3D(
+        m[0] * pt.x / pt.z + m[2],
+        m[4] * pt.y / pt.z + m[5],
+        pt.z != 0 ? pt.z : 0
+    );
 
-    return m;
+    return pt;
 }
 
-VectorisableD::Vec MotionEstimation::Evaluate(const VectorisableD::Vec& x) const
+Geometry PinholeModel::Project(const Geometry& g, ProjectiveSpace space) const
 {
-    EuclideanTransform transform;
+    Geometry proj(g.shape);
 
-    transform.FromVector(x);
-
-    //transform.SetRotationVector(x.rowRange(0, 3));
-    //transform.SetTranslation(x.rowRange(3, 6));
-
-    double a_rpe = 1 - m_alpha;
-    double a_epi = m_alpha;
-
-    a_rpe = a_rpe; ///** (m_pnp.GetSize() + m_epi.GetSize())*/ / m_pnp.GetSize();
-    a_epi = a_epi; ///** (m_pnp.GetSize() + m_epi.GetSize())*/ / m_epi.GetSize();
-
-    assert(a_rpe >= 0 && a_epi >= 0);
-
-    cv::Mat rpe = a_rpe > 0 ? a_rpe * EvalReprojectionConds(transform) : cv::Mat();
-    cv::Mat epi = a_epi > 0 ? a_epi * EvalEpipolarConds(transform)     : cv::Mat();
-
-    if (rpe.empty()) return epi;
-    if (epi.empty()) return rpe;
-
-    cv::Mat y;
-    cv::vconcat(rpe, epi, y);
-
-    return y;
-}
-
-cv::Mat MotionEstimation::EvalEpipolarConds(const EuclideanTransform& transform) const
-{
-    cv::Mat x0 = cv::Mat(m_epi.From()).reshape(1);
-    cv::Mat x1 = cv::Mat(m_epi.To()).reshape(1);
-
-    cv::Mat K_inv = m_invCameraMatrix;
-    cv::Mat F = K_inv.t() * transform.GetEssentialMatrix() * K_inv;
-    cv::Mat Fx0 = eucl2homo(x0) * F.t();
-    cv::Mat Fx1 = eucl2homo(x1) * F;
-    cv::Mat nn0 = Fx0.col(0).mul(Fx0.col(0)) + Fx0.col(1).mul(Fx0.col(1));
-    cv::Mat nn1 = Fx1.col(0).mul(Fx1.col(0)) + Fx1.col(1).mul(Fx1.col(1));
-    cv::Mat xFx = Fx0.col(0).mul(x1.col(0)) + Fx0.col(1).mul(x1.col(1)) + Fx0.col(2);
-
-    if (m_sampsonError)
+    if (g.GetDimension() != 3)
     {
-        // Sampson Approximation:
-        //
-        //              x0' * F * x1
-        // ---------------------------------------
-        // sqrt(Fx00^2 + Fx01^2 + Fx10^2 + Fx11^2)
-
-        cv::Mat nn; cv::sqrt(nn0 + nn1, nn);
-
-        return xFx.mul(1 / nn);
-    }
-    else
-    {
-        // Symmetric Geometric Error
-        //
-        //        x0' * F * x1              x0' * F * x1
-        // ( ---------------------- , ---------------------- )
-        //    sqrt(Fx00^2 + Fx01^2)    sqrt(Fx10^2 + Fx11^2)
-
-        cv::Mat gerr = cv::Mat(xFx.rows, 2, xFx.type());
-        cv::sqrt(nn0, nn0);
-        cv::sqrt(nn1, nn1);
-
-        gerr.col(0) = xFx.mul(1 / nn0);
-        gerr.col(1) = xFx.mul(1 / nn1);
-
-        return gerr.reshape(1, gerr.total());
-    }
-}
-
-cv::Mat MotionEstimation::EvalReprojectionConds(const EuclideanTransform& transform) const
-{
-    Points3D pts3d = m_pnp.From();
-    Points2D pts2d(m_pnp.GetSize());
-
-    cv::projectPoints(pts3d, transform.GetRotationVector(), transform.GetTranslation(), m_cameraMatrix, cv::Mat(), pts2d);
-
-    cv::Mat rpe = cv::Mat(cv::Mat(pts2d) - cv::Mat(m_pnp.To())).reshape(1);
-
-    rpe.col(0) = rpe.col(0).mul(cv::Mat(m_wpnp));
-    rpe.col(1) = rpe.col(1).mul(cv::Mat(m_wpnp));
-
-    if (m_separatedRpe)
-    {
-        return rpe.reshape(1, rpe.total());
+        E_ERROR << "given geometry has to be 3D Euclidean (d=" << g.GetDimension() << ")";
+        return proj;
     }
 
-    cv::multiply(rpe, rpe, rpe);
-    cv::sqrt(cv::Mat(rpe.col(0) + rpe.col(1)), rpe);
+    cv::Mat K = m_matrix;
 
-    //rpe.convertTo(rpe, CV_64F);
+    if (K.type() != g.mat.type())
+    {
+        K.convertTo(K, g.mat.type());
+    }
 
-    return rpe;
+    // compute projection
+    switch (g.shape)
+    {
+    case Geometry::ROW_MAJOR:
+        proj.mat = g.mat * K.t();
+        break;
+
+    case Geometry::COL_MAJOR:
+        proj.mat = K * g.mat;
+        break;
+
+    case Geometry::PACKED:
+        proj.mat = cv::Mat(g.mat.reshape(1) * K.t()).reshape(3, g.mat.rows);
+        break;
+    }
+
+    // de-homogenisation
+    switch (space)
+    {
+    case EUCLIDEAN_3D:
+        // no need to do normalisation
+        break;
+
+    case EUCLIDEAN_2D:
+        // dehomonise and remove the last dimension
+        proj = Geometry::FromHomogeneous(proj);
+        break;
+
+    case HOMOGENEOUS_3D:
+        // economy in-place dehomonisation
+        proj.Dehomogenise();
+        break;
+    }
+
+    return proj;
 }
 
-/*
-bool MotionEstimation::SetSolution(const VectorisableD::Vec& x)
+Geometry PinholeModel::Backproject(const Geometry& g) const
 {
-    //if (x.rows != 6 || x.cols != 1) return false;
+    const size_t d = g.GetDimension();
 
-    //cv::Mat x32f;
-    //x.convertTo(x32f, CV_32F);
+    if (d != 2 || d != 3)
+    {
+        E_ERROR << "geometry matrix must store either Euclidean 2D or homogeneous 3D coordinates (d=" << d << ")";
+        return Geometry(g.shape);
+    }
 
-    //m_transform.SetRotationVector(x.rowRange(0, 3));
-    //m_transform.SetTranslation(x.rowRange(3, 6));
+    // the forward projection of the inverse camera would do the work
+    return PinholeModel(GetInverseCameraMatrix()).Project(
+        d == 2 ? Geometry::MakeHomogeneous(g) : g,
+        EUCLIDEAN_3D
+    );
+}
 
-    return x; // x32f
-}*/
-
-bool MotionEstimation::Store(Path& path) const
+cv::Mat PinholeModel::ToProjectionMatrix(const EuclideanTransform& tform) const
 {
-    std::ofstream of(path.string().c_str(), std::ios::out);
+    cv::Mat P = m_matrix * tform.GetTransformMatrix(true, true, m_matrix.type());
+    return P;
+}
 
-    of << mat2string(m_cameraMatrix, "egomo.K") << std::endl;
-    of << mat2string(m_invCameraMatrix, "egomo.K_inv") << std::endl;
-    of << mat2string(cv::Mat(m_pnp.From()).reshape(1), "egomo.pnp.src") << std::endl;
-    of << mat2string(cv::Mat(m_pnp.To()  ).reshape(1), "egomo.pnp.dst") << std::endl;
-    of << mat2string(cv::Mat(m_wpnp      ).reshape(1), "egomo.pnp.w")   << std::endl;
-    of << mat2string(cv::Mat(m_upnp      ).reshape(1), "egomo.pnp.uid") << std::endl;
-    of << mat2string(cv::Mat(m_epi.From()).reshape(1), "egomo.epi.src") << std::endl;
-    of << mat2string(cv::Mat(m_epi.To()  ).reshape(1), "egomo.epi.dst") << std::endl;
-    of << mat2string(cv::Mat(m_uepi      ).reshape(1), "egomo.epi.uid") << std::endl;
-    of << mat2string(m_transform.GetTransformMatrix(), "egomo.M") << std::endl;
+bool PinholeModel::FromProjectionMatrix(const cv::Mat& P, const EuclideanTransform& tform)
+{
+    cv::Mat K = P * tform.GetInverse().GetTransformMatrix(true, true, P.type());
+    return SetCameraMatrix(P);
+}
+
+bool PinholeModel::SetCameraMatrix(const cv::Mat& K)
+{
+    if (K.rows != 3 || K.cols != 3 || K.channels() != 1)
+    {
+        E_ERROR << "given matrix has wrong size of " << size2string(K.size()) << " rather than 3x3x1";
+        return false;
+    }
+
+    cv::Mat K64f;
+    K.convertTo(K64f, CV_64F);
+
+    if (K64f.at<double>(0, 1) != 0 ||
+        K64f.at<double>(1, 0) != 0 ||
+        K64f.at<double>(2, 0) != 0 ||
+        K64f.at<double>(2, 1) != 0 ||
+        K64f.at<double>(2, 2) != 1)
+    {
+        E_ERROR << "the matrix has to follow the form:";
+        E_ERROR << "| fx,  0, cx |";
+        E_ERROR << "|  0, fy, cy |";
+        E_ERROR << "|  0,  0,  1 |";
+
+        return false;
+    }
+
+    m_matrix = K64f;
+    return true;
+}
+
+cv::Mat PinholeModel::GetInverseCameraMatrix() const
+{
+    double fx, fy, cx, cy;
+    GetValues(fx, fy, cx, cy);
+
+    return cv::Mat_<double>(3, 3) << 1.0f / fx, 0, 0, 0, 1.0f / fy, -cx / fx, -cy / fy, 1;
+}
+
+void PinholeModel::SetValues(double fx, double fy, double cx, double cy)
+{
+    m_matrix.at<double>(0, 0) = fx;
+    m_matrix.at<double>(1, 1) = fy;
+    m_matrix.at<double>(0, 2) = cx;
+    m_matrix.at<double>(1, 2) = cy;
+}
+
+void PinholeModel::GetValues(double& fx, double& fy, double& cx, double& cy) const
+{
+    fx = m_matrix.at<double>(0, 0);
+    fy = m_matrix.at<double>(1, 1);
+    cx = m_matrix.at<double>(0, 2);
+    cy = m_matrix.at<double>(1, 2);
+}
+
+bool PinholeModel::Store(cv::FileStorage& fs) const
+{
+    Point2D f, c;
+
+    GetValues(f.x, f.y, c.x, c.y);
+
+    fs << "focalLengths"   << f;
+    fs << "principalPoint" << c;
 
     return true;
 }
 
-void OptimalTriangulator::Triangulate(const PointMap2Dto2D& map, Points3D& pts, std::vector<double>& err)
+bool PinholeModel::Restore(const cv::FileNode& fn)
 {
-    size_t n = map.GetSize();
+    Point2D f, c;
 
-    pts.clear();
-    pts.resize(n);
+    fn["focalLengths"]   >> f;
+    fn["principalPoint"] >> c;
 
-    err.clear();
-    err.resize(n);
+    SetValues(f.x, f.y, c.x, c.y);
 
-    cv::Mat x4h, x3d(pts);
-    cv::triangulatePoints(m_projMatrix0, m_projMatrix1, map.From(), map.To(), x4h);
-
-    x3d = x3d.reshape(1);
-
-    // convert homogeneous coordinates to Euclidean
-    homo2eucl(x4h.t()).copyTo(x3d);
-
-    for (size_t i = 0; i < n; i++)
-    {
-        err[i] = 0.0f;
-    }
+    return true;
 }
 
-void MidPointTriangulator::DecomposeProjMatrix(const cv::Mat& P, cv::Mat& KRinv, cv::Mat& c)
+VectorisableD::Vec PinholeModel::ToVector() const
 {
-    cv::Mat KR = P.rowRange(0, 3).colRange(0, 3);
-    KRinv = KR.inv();
-    c = -KRinv * P.rowRange(0, 3).col(3);
+    Vec v(4);
+    GetValues(v[0], v[1], v[2], v[3]);
+
+    return v;
 }
 
-void MidPointTriangulator::Triangulate(const PointMap2Dto2D& map, Points3D& pts, std::vector<double>& err)
+bool PinholeModel::FromVector(const Vec& v)
 {
-    size_t n = map.GetSize();
+    if (v.size() != GetDimension()) return false;
 
-    pts.clear();
-    pts.resize(n);
-
-    err.clear();
-    err.resize(n);
-
-    cv::Mat x3d = cv::Mat(pts).reshape(1);
-
-    cv::Mat KRinv0, c0;
-    cv::Mat KRinv1, c1;
-
-    DecomposeProjMatrix(m_projMatrix0, KRinv0, c0);
-    DecomposeProjMatrix(m_projMatrix1, KRinv1, c1);
-
-    //std::ofstream of("tri.m");
-    //of << mat2string(cv::Mat(map.From()).reshape(1), "x0") << std::endl;
-    //of << mat2string(cv::Mat(map.To())  .reshape(1), "x1") << std::endl;
-
-    cv::Mat t = c1 - c0;
-    cv::Mat m = c0 + c1;
-    cv::Mat x0 = eucl2homo(cv::Mat(map.From()).reshape(1)) * KRinv0.t();
-    cv::Mat x1 = eucl2homo(cv::Mat(map.To()  ).reshape(1)) * KRinv1.t();
-
-    //x0.convertTo(x0, CV_64F);
-    //x1.convertTo(x1, CV_64F);
-    //t.convertTo(t, CV_64F);
-    //m.convertTo(m, CV_64F);
-
-    //of << mat2string(m_projMatrix0, "P0") << std::endl;
-    //of << mat2string(m_projMatrix1, "P1") << std::endl;
-    //of << mat2string(x0, "x0_h") << std::endl;
-    //of << mat2string(x1, "x1_h") << std::endl;
-
-    for (size_t i = 0; i < map.GetSize(); i++)
-    {
-        cv::Mat Bt = cv::Mat(2, 3, x0.type());
-        x0.row(i).copyTo(Bt.row(0));
-        x1.row(i).copyTo(Bt.row(1));
-
-        cv::Mat At = Bt.clone();
-        At.row(1) = -Bt.row(1);
-
-        cv::Mat A = At.t();
-        cv::Mat B = Bt.t();
-        cv::Mat k = (At * A).inv() * At * t;
-        cv::Mat g = (B * k + m) * 0.5f;
-        cv::Mat d = (A * k - t);
-
-        //g.convertTo(g, CV_32F);
-
-        //if (i == 0)
-        //{
-        //    of << mat2string(A, "A0") << std::endl;
-        //    of << mat2string((At*A).inv(), "A0Ai") << std::endl;
-        //    of << mat2string(k, "k0") << std::endl;
-        //}
-
-        x3d.row(i) = g.t();
-        err[i] = cv::norm(d);
-    }
-
-    //of << mat2string(x3d, "g") << std::endl;
+    SetValues(v[0], v[1], v[2], v[3]);
+    return true;
 }
+
+//==[ BouguetModel ]==========================================================//
 
 BouguetModel::BouguetModel(const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs)
 {
-    if (!SetCameraMatrix(cameraMatrix)) E_ERROR << "error setting camera matrix";
-    if (!SetDistCoeffs  (distCoeffs  )) E_ERROR << "error setting distortion coefficients";
+    if (!SetCameraMatrix(cameraMatrix))   E_ERROR << "error setting camera matrix";
+    if (!SetDistortionCoeffs(distCoeffs)) E_ERROR << "error setting distortion coefficients";
 }
 
-bool BouguetModel::SetCameraMatrix(const cv::Mat& cameraMatrix)
+Point3F& BouguetModel::operator() (Point3F& pt) const
 {
-    if (cameraMatrix.rows != 3 || cameraMatrix.cols != 3)
+    throw std::exception("not implemented");
+    return pt;
+}
+
+Point3D& BouguetModel::operator() (Point3D& pt) const
+{
+    throw std::exception("not implemented");
+    return pt;
+}
+
+Geometry BouguetModel::Project(const Geometry& g, ProjectiveSpace space) const
+{
+    Geometry proj(g.shape);
+
+    if (g.GetDimension() != 3)
     {
-        E_ERROR << "given matrix has wrong size of " << size2string(cameraMatrix.size()) << " rather than 3x3";
-        return false;
+        E_ERROR << "given geometry has to be 3D Euclidean (d=" << g.GetDimension() << ")";
+        return proj;
     }
 
-    cameraMatrix.convertTo(m_cameraMatrix, m_cameraMatrix.empty() ? cameraMatrix.type() : m_cameraMatrix.type());
+    cv::projectPoints(g.shape == Geometry::PACKED ? g.mat.reshape(1) : g.mat,
+        EuclideanTransform::Identity.GetRotationMatrix(),
+        EuclideanTransform::Identity.GetTranslation(),
+        m_matrix, m_distCoeffs, proj.mat);
+
+    if (g.shape == Geometry::PACKED)
+    {
+        proj.mat = proj.mat.reshape(3, g.mat.rows); // restore to a MxNx3 matrix
+    }
+
+    switch (space)
+    {
+    case HOMOGENEOUS_3D:
+    case EUCLIDEAN_3D:
+        return Geometry::MakeHomogeneous(proj);
+    }
+
+    return proj;
+}
+
+Geometry BouguetModel::Backproject(const Geometry& g) const
+{
+    throw std::exception("not implemented");
+    return Geometry(g.shape);
+}
+
+bool BouguetModel::SetDistortionCoeffs(const cv::Mat& D)
+{
+    cv::Mat D64f = D;
+    Vec d;
+
+    if (D.type() != CV_64F)
+    {
+        D.convertTo(D64f, CV_64F);
+    }
+
+    d.assign(D64f.datastart, D64f.dataend);
+
+    double fx, fy, cx, cy;
+    GetValues(fx, fy, cx, cy);
+
+    switch (d.size())
+    {
+    case RADIAL_TANGENTIAL_DISTORTION:
+        SetValues(fx, fy, cx, cy, d[0], d[1], d[2], d[3]);
+        break;
+    case HIGH_RADIAL_DISTORTION:
+        SetValues(fx, fy, cx, cy, d[0], d[1], d[2], d[3], d[4]);
+        break;
+    case RATIONAL_RADIAL_DISTORTION:
+        SetValues(fx, fy, cx, cy, d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]);
+        break;
+    case THIN_PSISM_DISTORTION:
+        SetValues(fx, fy, cx, cy, d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9], d[10], d[11]);
+        break;
+    case TILTED_SENSOR_DISTORTION:
+        SetValues(fx, fy, cx, cy, d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9], d[10], d[11], d[12], d[13]);
+        break;
+    default:
+        E_ERROR << "given matrix has " << d.size() << " element(s) instead of 4, 5, 8, 12 or 14";
+        return false;
+    }
 
     return true;
 }
 
-bool BouguetModel::SetDistCoeffs(const cv::Mat& distCoeffs)
+cv::Mat BouguetModel::GetDistortionCoeffs() const
 {
-    switch (distCoeffs.total())
+    int dof = static_cast<int>(m_distModel);
+    return cv::Mat(m_distCoeffs).rowRange(0, dof).clone();
+}
+
+void BouguetModel::SetValues(double fx, double fy, double cx, double cy, double k1, double k2, double p1, double p2)
+{
+    SetValues(fx, fy, cx, cy);
+    SetDistortionModel(RADIAL_TANGENTIAL_DISTORTION);
+
+    m_distCoeffs[0] = k1;
+    m_distCoeffs[1] = k2;
+    m_distCoeffs[2] = p1;
+    m_distCoeffs[3] = p2;
+}
+
+void BouguetModel::SetValues(double fx, double fy, double cx, double cy, double k1, double k2, double p1, double p2, double k3)
+{
+    SetValues(fx, fy, cx, cy, k1, k2, p1, p2);
+    SetDistortionModel(HIGH_RADIAL_DISTORTION);
+
+    m_distCoeffs[4] = k3;
+}
+
+void BouguetModel::SetValues(double fx, double fy, double cx, double cy, double k1, double k2, double p1, double p2, double k3, double k4, double k5, double k6)
+{
+    SetValues(fx, fy, cx, cy, k1, k2, p1, p2, k3);
+    SetDistortionModel(RATIONAL_RADIAL_DISTORTION);
+
+    m_distCoeffs[5] = k4;
+    m_distCoeffs[6] = k5;
+    m_distCoeffs[7] = k6;
+}
+
+void BouguetModel::SetValues(double fx, double fy, double cx, double cy, double k1, double k2, double p1, double p2, double k3, double k4, double k5, double k6, double s1, double s2, double s3, double s4)
+{
+    SetValues(fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6);
+    SetDistortionModel(THIN_PSISM_DISTORTION);
+
+    m_distCoeffs[8]  = s1;
+    m_distCoeffs[9]  = s2;
+    m_distCoeffs[10] = s3;
+    m_distCoeffs[11] = s4;
+}
+
+void BouguetModel::SetValues(double fx, double fy, double cx, double cy, double k1, double k2, double p1, double p2, double k3, double k4, double k5, double k6, double s1, double s2, double s3, double s4, double taux, double tauy)
+{
+    SetValues(fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6, s1, s2, s3, s4);
+    SetDistortionModel(TILTED_SENSOR_DISTORTION);
+
+    m_distCoeffs[12] = taux;
+    m_distCoeffs[13] = tauy;
+}
+
+void BouguetModel::GetValues(double& fx, double& fy, double& cx, double& cy, double& k1, double& k2, double& p1, double& p2) const
+{
+    GetValues(fx, fy, cx, cy);
+
+    k1 = m_distCoeffs[0];
+    k2 = m_distCoeffs[1];
+    p1 = m_distCoeffs[2];
+    p2 = m_distCoeffs[3];
+}
+
+void BouguetModel::GetValues(double& fx, double& fy, double& cx, double& cy, double& k1, double& k2, double& p1, double& p2, double& k3) const
+{
+    GetValues(fx, fy, cx, cy, k1, k2, p1, p2);
+
+    if (m_distModel < HIGH_RADIAL_DISTORTION)
     {
-    case 4:
-    case 5:
-    case 8:
-        distCoeffs.convertTo(m_distCoeffs, m_distCoeffs.empty() ? distCoeffs.type() : m_distCoeffs.type());
-        return true;
-    default:
-        m_distCoeffs = s_canonical.m_distCoeffs.clone();
-        return false;
+        k3 = 0.0f;
+    }
+    else
+    {
+        k3 = m_distCoeffs[4];
     }
 }
 
-void BouguetModel::SetValues(double fu, double fv, double uc, double vc, double k1, double k2, double p1, double p2, double k3)
+void BouguetModel::GetValues(double& fx, double& fy, double& cx, double& cy, double& k1, double& k2, double& p1, double& p2, double& k3, double& k4, double& k5, double& k6) const
 {
-    m_cameraMatrix.at<double>(0, 0) = fu;
-    m_cameraMatrix.at<double>(1, 1) = fv;
-    m_cameraMatrix.at<double>(0, 2) = uc;
-    m_cameraMatrix.at<double>(1, 2) = vc;
-    m_distCoeffs.at<double>(0) = k1;
-    m_distCoeffs.at<double>(1) = k2;
-    m_distCoeffs.at<double>(2) = p1;
-    m_distCoeffs.at<double>(3) = p2;
-    m_distCoeffs.at<double>(4) = k3;
+    GetValues(fx, fy, cx, cy, k1, k2, p1, p2, k3);
+
+    if (m_distModel < RATIONAL_RADIAL_DISTORTION)
+    {
+        k4 = k5 = k6 = 0.0f;
+    }
+    else
+    {
+        k4 = m_distCoeffs[5];
+        k5 = m_distCoeffs[6];
+        k6 = m_distCoeffs[7];
+    }
 }
 
-void BouguetModel::GetValues(double& fu, double& fv, double& uc, double& vc, double& k1, double& k2, double& p1, double& p2, double& k3) const
+void BouguetModel::GetValues(double& fx, double& fy, double& cx, double& cy, double& k1, double& k2, double& p1, double& p2, double& k3, double& k4, double& k5, double& k6, double& s1, double& s2, double& s3, double& s4) const
 {
-    fu = m_cameraMatrix.at<double>(0, 0);
-    fv = m_cameraMatrix.at<double>(1, 1);
-    uc = m_cameraMatrix.at<double>(0, 2);
-    vc = m_cameraMatrix.at<double>(1, 2);
-    k1 = m_distCoeffs.at<double>(0);
-    k2 = m_distCoeffs.at<double>(1);
-    p1 = m_distCoeffs.at<double>(2);
-    p2 = m_distCoeffs.at<double>(3);
-    k3 = m_distCoeffs.at<double>(4);
+    GetValues(fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6);
+
+    if (m_distModel < THIN_PSISM_DISTORTION)
+    {
+        s1 = s2 = s3 = s4 = 0.0f;
+    }
+    else
+    {
+        s1 = m_distCoeffs[8];
+        s2 = m_distCoeffs[9];
+        s3 = m_distCoeffs[10];
+        s4 = m_distCoeffs[11];
+    }
 }
 
-cv::Mat BouguetModel::MakeProjectionMatrix(const EuclideanTransform& pose) const
+void BouguetModel::GetValues(double& fx, double& fy, double& cx, double& cy, double& k1, double& k2, double& p1, double& p2, double& k3, double& k4, double& k5, double& k6, double& s1, double& s2, double& s3, double& s4, double& taux, double& tauy) const
 {
-    cv::Mat P = cv::Mat::eye(3, 4, m_cameraMatrix.type());
-    m_cameraMatrix.copyTo(P.rowRange(0, 3).colRange(0, 3));
+    GetValues(fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6, s1, s2, s3, s4);
 
-    return cv::Mat(P * pose.GetTransformMatrix(true, true));
+    if (m_distModel < TILTED_SENSOR_DISTORTION)
+    {
+        taux = tauy = 0.0f;
+    }
+    else
+    {
+        taux = m_distCoeffs[12];
+        tauy = m_distCoeffs[13];
+    }
 }
 
 bool BouguetModel::Store(cv::FileStorage & fs) const
 {
-    fs << "cameraMatrix" << m_cameraMatrix;
-    fs << "distCoeffs"   << m_distCoeffs;
+    if (!PinholeModel::Store(fs)) return false;
+    fs << "distCoeffs" << GetDistortionCoeffs();
 
     return true;
 }
 
 bool BouguetModel::Restore(const cv::FileNode & fn)
 {
-    cv::Mat cameraMatrix, distCoeffs;
+    if (!PinholeModel::Restore(fn)) return false;
 
-    fn["cameraMatrix"] >> cameraMatrix;
-    fn["distCoeffs"]   >> distCoeffs;
+    cv::Mat distCoeffs;
+    fn["distCoeffs"]>> distCoeffs;
 
-    return SetCameraMatrix(cameraMatrix) && SetDistCoeffs(distCoeffs);
-}
-
-void BouguetModel::Project(const Points3D& pts3d, Points2D& pts2d) const
-{
-    cv::projectPoints(pts3d,
-        EuclideanTransform::Identity.GetRotationMatrix(),
-        EuclideanTransform::Identity.GetTranslation(),
-        m_cameraMatrix, m_distCoeffs, pts2d);
+    return SetDistortionCoeffs(distCoeffs);
 }
 
 VectorisableD::Vec BouguetModel::ToVector() const
 {
-    Vec v(9);
-    GetValues(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8]);
-
-    return v;
+    throw std::exception("not implemented");
+    return Vec();
 }
 
 bool BouguetModel::FromVector(const Vec& v)
 {
-    assert(v.size() == GetDimension());
-    SetValues(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8]);
-
-    return true;
+    throw std::exception("not implemented");
+    return false;
 }

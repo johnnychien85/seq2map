@@ -7,10 +7,11 @@
 #include <boost/program_options.hpp>
 #include <boost/timer/timer.hpp>
 #include <boost/date_time/posix_time/posix_time_types.hpp>
+#include <boost/enable_shared_from_this.hpp>
 #include <opencv2/opencv.hpp>
 
 /**
- * macros for logging
+ * Macros for logging
  */
 #if defined ( WIN32 )
 #define __func__ __FUNCTION__
@@ -24,7 +25,7 @@
 #define E_FATAL		E_LOG(fatal)
 
 /**
- * type definitions
+ * Type definitions
  */
 namespace seq2map
 {
@@ -52,7 +53,7 @@ namespace seq2map
 }
 
 /**
- * helper functions
+ * Helper functions
  */
 namespace seq2map
 {
@@ -96,7 +97,7 @@ namespace seq2map
 }
 
 /**
- * classes
+ * Classes
  */
 namespace seq2map
 {
@@ -118,6 +119,148 @@ namespace seq2map
     private:
         size_t m_index;
     };
+
+    /**
+     * An interface for referenced element.
+     */
+    template<typename T>
+    class Referenced : public boost::enable_shared_from_this<T>
+    {
+    public:
+        typedef T* Ptr;
+        typedef const T* ConstPtr;
+
+        typedef boost::shared_ptr<T> Own;
+        typedef boost::shared_ptr<const T> ConstOwn;
+
+        typedef boost::weak_ptr<T> Ref;
+        typedef boost::weak_ptr<const T> ConstRef;
+    };
+
+    /**
+     * An compound interface for indexed and referenced classes.
+     */
+    template<typename T>
+    class IndexReferenced
+    : public Indexed, public Referenced<T>
+    {
+    public:
+        struct Less
+        {
+            bool operator() (const Own& lhs, const Own& rhs)
+            {
+                return *lhs < *rhs; // refer to Indexed::operator<
+            }
+        };
+
+        typedef std::map<size_t, Own> Map;
+        typedef std::set<Own, Less> Set;
+
+        static Own New(size_t index) { return Own(new T(index)); }
+
+        IndexReferenced(size_t index) : Indexed(index) {}
+
+        // disallow change of index
+        virtual void SetIndex(size_t index) { E_ERROR << "index-referenced item cannot set index after creation"; }
+
+        bool Join(Map& map) { return map.insert(Map::value_type(GetIndex(), shared_from_this())).second; }
+
+        static const T Null;
+    };
+
+    template<class T> bool IndexReferenced<T>::Null(INVALID_INDEX);
+
+
+    /**
+    * Templated factory class to instantiate an object derived from Base
+    * given a key indicating its concrete class.
+    */
+    template<class Key, class Base> class Factory
+    {
+    public:
+        typedef boost::shared_ptr<Base> BasePtr;
+        typedef BasePtr(*CtorType)();
+        typedef std::vector<Key> Keys;
+
+        BasePtr Create(const Key& key) const
+        {
+            typename Registry::const_iterator itr = m_ctors.find(key);
+
+            if (itr == m_ctors.end())
+            {
+                E_ERROR << "unknown key " << key;
+                return BasePtr();
+            }
+
+            return itr->second();
+        }
+
+        Keys GetRegisteredKeys() const
+        {
+            Keys keys;
+            BOOST_FOREACH (typename Registry::value_type v, m_ctors)
+            {
+                keys.push_back(v.first);
+            }
+
+            return keys;
+        }
+
+    protected:
+        template<class Derived> static BasePtr Constructor()
+        {
+            return BasePtr(new Derived());
+        }
+
+        template<class Derived> void Register(const Key& key)
+        {
+            CtorType ctor = &Factory::Constructor<Derived>;
+
+            bool unique = m_ctors.insert(typename Registry::value_type(key, ctor)).second;
+
+            if (!unique)
+            {
+                E_WARNING << "duplicated key " << key;
+            }
+        }
+
+    private:
+        typedef std::map<Key, CtorType> Registry;
+        Registry m_ctors;
+    };
+
+    /**
+    * Templated singleton class to create the only one static instance of class T.
+    */
+    template<class T> class Singleton
+    {
+    public:
+        Singleton(Singleton const&);         // deleted - no copy constructor allowed
+        void operator=(Singleton<T> const&); // deleted - no copying allowed
+
+        static T& GetInstance()
+        {
+            static T instance;
+
+            if (!s_init)
+            {
+                instance.Init();
+                s_init = true;
+            }
+
+            return instance;
+        }
+
+    protected:
+        Singleton()  {}
+        ~Singleton() {}
+
+        virtual void Init() {}
+
+        static bool s_init;
+    };
+
+    template<class T> bool Singleton<T>::s_init = false;
 
     /**
      * A common interface for parameterised objects.
@@ -186,25 +329,14 @@ namespace seq2map
     };
 
     /**
-     * A wrapper of cv::Mat with disk storage backend.
-     */
-    class PersistentImage : public Persistent<Path>
-    {
-    public:
-        virtual bool Store(Path& path) const { return cv::imwrite(path.string(), im); };
-        virtual bool Restore(const Path& path) { return !(im = cv::imread(path.string())).empty(); };
-
-        cv::Mat im;
-    };
-
-    /**
      * A class to measure the output of a process in unit time.
      */
     class Speedometre
     {
     public:
-        /* ctor */ Speedometre(const String& name = "Unamed Speedometre", const String& unit = "unit/s")
-            : m_displayName(name), m_displayUnit(unit) { Reset(); }
+        Speedometre(const String& name = "Unamed Speedometre", const String& unit = "unit/s")
+        : m_displayName(name), m_displayUnit(unit) { Reset(); }
+
         void Start();
         void Stop(size_t amount);
         void Update(size_t amount);
@@ -214,6 +346,7 @@ namespace seq2map
         inline double GetSpeed() const {return (double)m_accumulated / GetElapsedSeconds(); }
         inline double GetFrequency() const { return (double)m_freq / GetElapsedSeconds(); }
         String ToString() const;
+
     protected:
         String m_displayName;
         String m_displayUnit;
@@ -236,97 +369,6 @@ namespace seq2map
         Speedometre& m_metre;
         const size_t m_amount;
     };
-
-    /**
-     * Templated factory class to instantiate an object derived from Base
-     * given a key indicating its concrete class.
-     */
-    template<class Key, class Base> class Factory
-    {
-    public:
-        typedef boost::shared_ptr<Base> BasePtr;
-        typedef BasePtr(*CtorType)();
-        typedef std::vector<Key> Keys;
-
-        BasePtr Create(const Key& key) const
-        {
-            typename Registry::const_iterator itr = m_ctors.find(key);
-
-            if (itr == m_ctors.end())
-            {
-                E_ERROR << "unknown key " << key;
-                return BasePtr();
-            }
-
-            return itr->second();
-        }
-
-        Keys GetRegisteredKeys() const
-        {
-            Keys keys;
-            BOOST_FOREACH (typename Registry::value_type v, m_ctors)
-            {
-                keys.push_back(v.first);
-            }
-
-            return keys;
-        }
-
-    protected:
-        template<class Derived> static BasePtr Constructor()
-        {
-            return BasePtr(new Derived());
-        }
-
-        template<class Derived> void Register(const Key& key)
-        {
-            CtorType ctor = &Factory::Constructor<Derived>;
-
-            bool unique = m_ctors.insert(typename Registry::value_type(key, ctor)).second;
-
-            if (!unique)
-            {
-                E_WARNING << "duplicated key " << key;
-            }
-        }
-
-    private:
-        typedef std::map<Key, CtorType> Registry;
-        Registry m_ctors;
-    };
-
-    /**
-     * Templated singleton class to create the only one static instance of class T.
-     */
-    template<class T> class Singleton
-    {
-    public:
-        Singleton(Singleton const&);         // deleted - no copy constructor allowed
-        void operator=(Singleton<T> const&); // deleted - no copying allowed
-
-        static T& GetInstance()
-        {
-            static T instance;
-
-            if (!s_init)
-            {
-                instance.Init();
-                s_init = true;
-            }
-            
-            return instance;
-        }
-
-    protected:
-        Singleton()  {}
-        ~Singleton() {}
-
-        virtual void Init() {}
-
-        static bool s_init;
-    };
-
-    template<class T> bool Singleton<T>::s_init = false;
 
     /**
      * Chained operation.

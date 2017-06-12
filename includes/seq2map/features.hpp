@@ -86,28 +86,28 @@ namespace seq2map
     /**
      * Feature detector and extractor interfaces
      */
-    class FeatureDetector : public virtual Parameterised
+    class FeatureDetector
+    : public Referenced<FeatureDetector>,
+      public virtual Parameterised
     {
     public:
-        typedef boost::shared_ptr<FeatureDetector> Ptr;
         virtual KeyPoints DetectFeatures(const cv::Mat& im) const = 0;
     };
 
-    class FeatureExtractor : public virtual Parameterised
+    class FeatureExtractor
+    : public Referenced<FeatureExtractor>,
+      public virtual Parameterised
     {
     public:
-        typedef boost::shared_ptr<FeatureExtractor> Ptr;
         virtual ImageFeatureSet ExtractFeatures(const cv::Mat& im, KeyPoints& keypoints) const = 0;
     };
 
     class FeatureDetextractor
-    : public virtual Parameterised,
+    : public Referenced<FeatureDetextractor>,
+      public virtual Parameterised,
       public Persistent<cv::FileStorage, cv::FileNode>
     {
     public:
-        typedef boost::shared_ptr<FeatureDetextractor> Ptr;
-        typedef boost::shared_ptr<const FeatureDetextractor> ConstPtr;
-
         inline String GetKeypointName()   const { return m_keypointType;   }
         inline String GetDescriptorName() const { return m_descriptorType; }
 
@@ -128,7 +128,7 @@ namespace seq2map
     class HetergeneousDetextractor : public FeatureDetextractor
     {
     public:
-        /* ctor */ HetergeneousDetextractor(FeatureDetector::Ptr detector, FeatureExtractor::Ptr extractor)
+        /* ctor */ HetergeneousDetextractor(FeatureDetector::Own& detector, FeatureExtractor::Own& extractor)
             : m_detector(detector), m_extractor(extractor) {}
         /* dtor */ virtual ~HetergeneousDetextractor() {}
         virtual ImageFeatureSet DetectAndExtractFeatures(const cv::Mat& im) const;
@@ -139,8 +139,8 @@ namespace seq2map
     protected:
         static const String s_detectorFileNodeName;
         static const String s_extractorFileNodeName;
-        FeatureDetector::Ptr  m_detector;
-        FeatureExtractor::Ptr m_extractor;
+        FeatureDetector::Own  m_detector;
+        FeatureExtractor::Own m_extractor;
     };
 
     /**
@@ -148,16 +148,14 @@ namespace seq2map
      * from a given name string.
      */
 
-    class FeatureDetectorFactory :
-        public Factory<String, FeatureDetector>
+    class FeatureDetectorFactory : public Factory<String, FeatureDetector>
     {
     public:
         /* ctor */ FeatureDetectorFactory();
         /* dtor */ virtual ~FeatureDetectorFactory() {}
     };
 
-    class FeatureExtractorFactory :
-        public Factory<String, FeatureExtractor>
+    class FeatureExtractorFactory : public Factory<String, FeatureExtractor>
     {
     public:
         /* ctor */ FeatureExtractorFactory();
@@ -171,8 +169,8 @@ namespace seq2map
     public:
         friend class Singleton<FeatureDetextractorFactory>;
 
-        FeatureDetextractor::Ptr Create(const String& detectorName, const String& extractorName);
-        FeatureDetextractor::Ptr Create(const cv::FileNode& fn);
+        FeatureDetextractor::Own Create(const String& detectorName, const String& extractorName);
+        FeatureDetextractor::Own Create(const cv::FileNode& fn);
         inline const FeatureDetectorFactory&  GetDetectorFactory()  const { return m_detectorFactory; }
         inline const FeatureExtractorFactory& GetExtractorFactory() const { return m_extractorFactory; }
 
@@ -240,12 +238,18 @@ namespace seq2map
         friend class FeatureMatcher;
     };
 
+    /**
+     * Interface to filter out outliers from a feature map.
+     */
     class FeatureMatchFilter
     {
     public:
         virtual bool Filter(ImageFeatureMap& map, Indices& inliers) = 0;
     };
 
+    /**
+     * Feature matching from descriptors.
+     */
     class FeatureMatcher
     {
     public:

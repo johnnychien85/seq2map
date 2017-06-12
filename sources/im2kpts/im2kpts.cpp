@@ -7,7 +7,7 @@ namespace po = boost::program_options;
 class MyApp : public App
 {
 public:
-    MyApp(int argc, char* argv[]) : App(argc, argv) {}
+    MyApp(int argc, char* argv[]) : m_featureStore(INVALID_INDEX), App(argc, argv) {}
 
 protected:
     virtual void SetOptions(Options&, Options&, Positional&);
@@ -49,7 +49,7 @@ void MyApp::ShowHelp(const Options& o) const
 
     if (!m_detector.empty())
     {
-        FeatureDetector::Ptr detector = dxtorFactory.GetDetectorFactory().Create(m_detector);
+        FeatureDetector::Own detector = dxtorFactory.GetDetectorFactory().Create(m_detector);
 
         if (detector)
         {
@@ -64,7 +64,7 @@ void MyApp::ShowHelp(const Options& o) const
 
     if (!m_xtractor.empty())
     {
-        FeatureExtractor::Ptr xtractor = dxtorFactory.GetExtractorFactory().Create(m_xtractor);
+        FeatureExtractor::Own xtractor = dxtorFactory.GetExtractorFactory().Create(m_xtractor);
 
         if (xtractor)
         {
@@ -100,15 +100,15 @@ void MyApp::SetOptions(Options& o, Options& h, Positional& p)
         ("detect,k",  po::value<String>(&m_detector )->default_value(         ""), detectorDesc.c_str())
         ("extract,x", po::value<String>(&m_xtractor )->default_value(         ""), xtractorDesc.c_str())
         ("index",     po::value<String>(&m_index    )->default_value("index.yml"), "Path to where the index of generated feature files to be written. Set to empty to disable index generation. This option is ignored for IN-SEQ mode.")
-        ("out",       po::value<String>(&m_outPath  )->default_value(         ""), "Output folder in where the detected and extracted features are written. This option is ignored for IN-SEQ mode.")
         ("cam,c",     po::value<int>   (&m_camIdx   )->default_value(         -1), "Select camera from a sequence database to enable IN-SEQ mode.")
         ("ext,e",     po::value<String>(&m_extension)->default_value(     ".dat"), "The extension name of the output feature files.");
 
     // two positional arguments - input and output directories
     h.add_options()
-        ("in",        po::value<String>(&m_seqPath  )->default_value(         ""), "Input folder containing images or sequence index file with ");
+        ("in",        po::value<String>(&m_seqPath  )->default_value(         ""), "Input folder containing images or sequence index file with ")
+        ("out",       po::value<String>(&m_outPath  )->default_value(         ""), "Output folder in where the detected and extracted features are written. This option is ignored for IN-SEQ mode.");
 
-    p.add("in", 1);
+    p.add("in", 1).add("out", 1);
 }
 
 bool MyApp::ProcessUnknownArgs(const Strings& args)
@@ -162,13 +162,14 @@ bool MyApp::Init()
 {
     bool inSeqMode = m_camIdx >= 0;
     Sequence seq;
+    Camera::ConstOwn cam;
 
     // set image store for input
     if (inSeqMode)
     {
-        size_t cam = static_cast<size_t>(m_camIdx);
+        size_t camIdx = static_cast<size_t>(m_camIdx);
 
-        E_INFO << "IN-SEQ mode selected, trying to use camera " << cam << " from " << m_seqPath;
+        E_INFO << "IN-SEQ mode selected, trying to use camera " << camIdx << " from " << m_seqPath;
 
         if (!seq.Restore(m_seqPath))
         {
@@ -176,13 +177,16 @@ bool MyApp::Init()
             return false;
         }
 
-        if (cam >= seq.GetCameras().size())
+        Camera::Map::const_iterator itr = seq.GetCameras().find(camIdx);
+
+        if (itr == seq.GetCameras().end() || !itr->second)
         {
-            E_ERROR << "camera index out of bound (idx=" << cam << ",size=" << seq.GetCameras().size() << ")";
+            E_ERROR << "camera " << camIdx << " not found";
             return false;
         }
 
-        m_imageStore = seq.GetCamera(cam).GetImageStore();
+        cam = itr->second;
+        m_imageStore = cam->GetImageStore(); // copy image store
     }
     else
     {
@@ -232,7 +236,7 @@ bool MyApp::Init()
 
     Path outPath = Path(m_outPath);
 
-    if (!m_featureStore.Create(m_outPath, inSeqMode ? static_cast<size_t>(m_camIdx) : 0, m_dxtor))
+    if (!m_featureStore.Create(m_outPath, cam, m_dxtor))
     {
         E_ERROR << "error creating feature store " << outPath;
         return false;
@@ -245,17 +249,20 @@ bool MyApp::Execute()
 {
     try
     {
+        ImageStore&   srcStore = m_imageStore;
+        FeatureStore& dstStore = m_featureStore;
+
         Speedometre metre("Image Feature Detection & Extraction", "px/s");
         size_t frames = 0, features = 0, bytes = 0;
 
-        E_INFO << "feature extraction procedure starts for " << m_imageStore.GetItems() << " file(s)";
-        E_INFO << "source folder set to " << fullpath(m_imageStore.GetRoot());
-        E_INFO << "output folder set to " << fullpath(m_featureStore.GetRoot());
+        E_INFO << "feature extraction procedure starts for " << srcStore.GetItems() << " file(s)";
+        E_INFO << "source folder set to " << fullpath(srcStore.GetRoot());
+        E_INFO << "output folder set to " << fullpath(dstStore.GetRoot());
 
         for (size_t i = 0; i < m_imageStore.GetItems(); i++)
         {
-            Path src(m_imageStore.GetItemPath(i));
-            Path dst(m_featureStore.GetItemPath(i));
+            Path src(srcStore.GetItemPath(i));
+            Path dst(src.filename());
 
             dst.replace_extension(m_extension);
 
@@ -273,7 +280,7 @@ bool MyApp::Execute()
             ImageFeatureSet f = m_dxtor->DetectAndExtractFeatures(im);
             metre.Stop(im.total());
 
-            if (!m_featureStore.Append(dst.filename().string(), f))
+            if (!dstStore.Append(dst.filename().string(), f))
             {
                 E_FATAL << "error writing features to " << dst;
                 return false;
@@ -283,18 +290,19 @@ bool MyApp::Execute()
             ss << std::fixed << std::setprecision(2) << metre.GetSpeed() << " " << metre.GetUnit();
 
             frames++;
+
             features += f.GetSize();
-            bytes += filesize(dst);
+            bytes += filesize(dstStore.GetItemPath(i));
 
             E_INFO << "processed " << src.filename() << " -> " << dst.filename() << " [" << ss.str() << "]";
         }
 
         if (!m_index.empty())
         {
-            Path to = m_featureStore.GetRoot() / Path(m_index);
+            Path to = dstStore.GetRoot() / Path(m_index);
             cv::FileStorage fs(to.string(), cv::FileStorage::WRITE);
 
-            if (!m_featureStore.Store(fs))
+            if (!dstStore.Store(fs))
             {
                 E_ERROR << "error storing index to " << to;
                 return false;

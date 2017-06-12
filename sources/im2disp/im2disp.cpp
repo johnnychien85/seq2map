@@ -6,7 +6,7 @@ namespace po = boost::program_options;
 class MyApp : public App
 {
 public:
-    MyApp(int argc, char* argv[]) : App(argc, argv) {}
+    MyApp(int argc, char* argv[]) : m_dispStore(INVALID_INDEX), App(argc, argv) {}
 
 protected:
     virtual void SetOptions(Options&, Options&, Positional&);
@@ -130,6 +130,7 @@ bool MyApp::Init()
 {
     bool inSeqMode = m_priCamIdx >= 0 && m_secCamIdx >= 0;
     Sequence seq;
+    RectifiedStereo::ConstOwn pair;
 
     // set image store for input
     if (inSeqMode)
@@ -146,27 +147,16 @@ bool MyApp::Init()
             return false;
         }
 
-        bool found = false;
+        pair = seq.FindStereoPair(priCamIdx, secCamIdx);
 
-        BOOST_FOREACH (const RectifiedStereo& pair, seq.GetRectifiedStereo())
+        if (!pair)
         {
-            found = pair.GetPrimaryCamera()  ->GetIndex() == priCamIdx &&
-                    pair.GetSecondaryCamera()->GetIndex() == secCamIdx;
-
-            if (found)
-            {
-                m_priImageStore = pair.GetPrimaryCamera()  ->GetImageStore();
-                m_secImageStore = pair.GetSecondaryCamera()->GetImageStore();
-
-                break;
-            }
-        }
-
-        if (!found)
-        {
-            E_ERROR << "cannot find stereo pair (" << m_priCamIdx << "," << m_secCamIdx << ")";
+            E_ERROR << "cannot find stereo pair (" << priCamIdx << "," << secCamIdx << ")";
             return false;
         }
+
+        m_priImageStore = pair->GetPrimaryCamera()->GetImageStore();
+        m_secImageStore = pair->GetSecondaryCamera()->GetImageStore();
     }
     else
     {
@@ -226,9 +216,8 @@ bool MyApp::Init()
     }
 
     Path outPath = Path(m_outPath);
-    bool success = m_dispStore.Create(m_outPath, m_priCamIdx, m_secCamIdx, m_matcher);
 
-    if (!success)
+    if (!m_dispStore.Create(m_outPath, pair, StereoMatcher::ConstOwn(m_matcher)))
     {
         E_ERROR << "error creating disparity store " << outPath;
         return false;

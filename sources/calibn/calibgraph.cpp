@@ -240,7 +240,7 @@ bool CalibGraph::Calibrate(bool pairwiseOptim)
             double rpe = cv::calibrateCamera(objectPoints, imagePoints, vxcam->imageSize, cameraMatrix, distCoeffs, rvecs, tvecs, 0, fastTerm);
         
             vxcam->intrinsics.SetCameraMatrix(cameraMatrix);
-            vxcam->intrinsics.SetDistCoeffs(distCoeffs);
+            vxcam->intrinsics.SetDistortionCoeffs(distCoeffs);
 
             for (size_t i = 0; i < viewIdx.size(); i++)
             {
@@ -320,8 +320,8 @@ bool CalibGraph::Calibrate(bool pairwiseOptim)
 
         cv::Mat cameraMatrix1 = camvtx1->intrinsics.GetCameraMatrix();
         cv::Mat cameraMatrix2 = camvtx2->intrinsics.GetCameraMatrix();
-        cv::Mat distCoeffs1   = camvtx1->intrinsics.GetDistCoeffs();
-        cv::Mat distCoeffs2   = camvtx2->intrinsics.GetDistCoeffs();
+        cv::Mat distCoeffs1   = camvtx1->intrinsics.GetDistortionCoeffs();
+        cv::Mat distCoeffs2   = camvtx2->intrinsics.GetDistortionCoeffs();
         cv::Mat rmat, tvec, emat, fmat;
 
         double rpe = cv::stereoCalibrate(objectPoints, imagePoints1, imagePoints2,
@@ -396,7 +396,7 @@ bool CalibGraph::Calibrate(bool pairwiseOptim)
 
         bool solved = cv::solvePnP(
             viewvtx->objectPoints, o.imagePoints,
-            camvtx->intrinsics.GetCameraMatrix(), camvtx->intrinsics.GetDistCoeffs(),
+            camvtx->intrinsics.GetCameraMatrix(), camvtx->intrinsics.GetDistortionCoeffs(),
             rvec, tvec, true, CV_ITERATIVE);
 
         if (!solved)
@@ -499,7 +499,7 @@ bool CalibGraph::WriteParams(const Path& calPath) const
         }
 
         rect[i].K = camvtx[i]->intrinsics.GetCameraMatrix();
-        rect[i].D = camvtx[i]->intrinsics.GetDistCoeffs();
+        rect[i].D = camvtx[i]->intrinsics.GetDistortionCoeffs();
         rect[i].R = camvtx[i]->extrinsics.GetRotationMatrix();
         rect[i].T = camvtx[i]->extrinsics.GetTranslation();
         rect[i].S = camvtx[i]->imageSize;
@@ -607,7 +607,7 @@ bool CalibGraph::WriteMFile(const Path& mfilePath) const
         of << "cam(" << (cam + 1) << ").connected = " << (camvtx->connected ? "true" : "false") << ";" << std::endl;
         of << "cam(" << (cam + 1) << ").imageSize = " << "[" << camvtx->imageSize.height << ", " << camvtx->imageSize.width << "];" << std::endl;
         of << "cam(" << (cam + 1) << ").K         = " << mat2string(camvtx->intrinsics.GetCameraMatrix()) << std::endl;
-        of << "cam(" << (cam + 1) << ").D         = " << mat2string(camvtx->intrinsics.GetDistCoeffs()) << std::endl;
+        of << "cam(" << (cam + 1) << ").D         = " << mat2string(camvtx->intrinsics.GetDistortionCoeffs()) << std::endl;
         of << "cam(" << (cam + 1) << ").R         = " << mat2string(camvtx->extrinsics.GetRotationMatrix()) << std::endl;
         of << "cam(" << (cam + 1) << ").t         = " << mat2string(camvtx->extrinsics.GetTranslation()) << std::endl;
     }

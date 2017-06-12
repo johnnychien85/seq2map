@@ -20,7 +20,7 @@ protected:
     static size_t ParseIndex(const String& varname, size_t offset = 1);
 
     virtual String GetVehicleName(const Path& from) const { return "KITTI CAR"; }
-    virtual bool BuildCamera(const Path& from, Cameras& cams, RectifiedStereoPairs& stereo) const;
+    virtual bool BuildCamera(const Path& from, Camera::Map& cams, RectifiedStereo::Set& stereo) const;
 
     friend class KittiRawDataBuilder;
 
@@ -56,7 +56,7 @@ public:
 
 protected:
     virtual String GetVehicleName(const Path& from) const { return "KITTI CAR"; }
-    virtual bool BuildCamera(const Path& from, Cameras& cams, RectifiedStereoPairs& stereo) const;
+    virtual bool BuildCamera(const Path& from, Camera::Map& cams, RectifiedStereo::Set& stereo) const;
 
 private:
     /**
@@ -123,7 +123,7 @@ public:
 
 protected:
     virtual String GetVehicleName(const Path& from) const;
-    virtual bool BuildCamera(const Path& from, Cameras& cams, RectifiedStereoPairs& stereo) const;
+    virtual bool BuildCamera(const Path& from, Camera::Map& cams, RectifiedStereo::Set& stereo) const;
 
     static bool ReadConfig(const Path& fromm, cv::FileStorage& to);
 };

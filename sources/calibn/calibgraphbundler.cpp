@@ -194,7 +194,7 @@ size_t CalibGraphBundler::GetPoints(const Views& views)
     return n;
 }
 
-VectorisableD::Vec CalibGraphBundler::Evaluate(const VectorisableD::Vec& x) const
+VectorisableD::Vec CalibGraphBundler::operator() (const VectorisableD::Vec& x) const
 {
     size_t cams = m_params.intrinsics.size(); // = m_params.extrinsics.size()
     BundleParams params(cams, m_views.size());
@@ -214,18 +214,16 @@ VectorisableD::Vec CalibGraphBundler::Evaluate(const VectorisableD::Vec& x) cons
         BOOST_FOREACH(const Projections& proj, view.projections)
         {
             EuclideanTransform tform = params.poses[v] << params.extrinsics[proj.cam];
-            Points3D pts3d = view.objectPoints;
-            Points2D pts2d;
+            Points3D p = view.objectPoints;
 
-            tform.Apply(pts3d);
-            params.intrinsics[proj.cam].Project(pts3d, pts2d);
+            params.intrinsics[proj.cam](tform(p));
 
             assert(pts2d.size() == proj.imagePoints.size());
 
-            for (size_t i = 0; i < pts2d.size(); i++)
+            for (size_t i = 0; i < p.size(); i++)
             {
-                y.push_back(proj.imagePoints[i].x - pts2d[i].x);
-                y.push_back(proj.imagePoints[i].y - pts2d[i].y);
+                y.push_back(proj.imagePoints[i].x - p[i].x);
+                y.push_back(proj.imagePoints[i].y - p[i].y);
             }
         }
     }

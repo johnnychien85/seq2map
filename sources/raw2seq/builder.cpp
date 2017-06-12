@@ -109,7 +109,7 @@ Parameterised::Options KittiOdometryBuilder::GetOptions(int flag)
     return o;
 }
 
-bool KittiOdometryBuilder::BuildCamera(const Path& from, Cameras& cams, RectifiedStereoPairs& stereo) const
+bool KittiOdometryBuilder::BuildCamera(const Path& from, Camera::Map& cams, RectifiedStereo::Set& stereo) const
 {
     Path calPath = from / "calib.txt";
 
@@ -129,33 +129,29 @@ bool KittiOdometryBuilder::BuildCamera(const Path& from, Cameras& cams, Rectifie
 
     E_INFO << "found " << calib.P.size() << " camera(s)";
 
-    // KITTI odometry dataset should come with 2 cameras
+    // KITTI odometry dataset should come with 2 rectified cameras
     assert(calib.P.size() == 2);
 
-    const size_t ref = 0; // index of the referenced camera; KITTI uses the first camera (idx=0)
+    const size_t ref = 0; // index of the referenced camera; KITTI uses the first camera (cam0)
     const cv::Mat K = calib.P[ref].rowRange(0, 3).colRange(0, 3);
     const cv::Mat K_inv = K.inv();
 
-    cams.resize(calib.P.size());
+    cams.clear();
 
     for (size_t i = 0; i < calib.P.size(); i++)
     {
         E_INFO << "scanning files for camera " << i << "..";
 
-        Camera& cam = cams.at(i);
+        Camera::Own cam = Camera::New(i);
 
         // intrinsic parameters..
-        BouguetModel::Ptr intrinsics = BouguetModel::Ptr(new BouguetModel());
-        intrinsics->SetCameraMatrix(K);
-
-        cam.SetIntrinsics(intrinsics);
+        cam->SetIntrinsics(PinholeModel::Own(new PinholeModel(K)));
 
         // extrinsic parameters..
-        //  only cameras other than the referenced one need
+        // only cameras other than the referenced one need this
         if (i != ref)
         {
-            cv::Mat RT = K_inv * calib.P[i];
-            cam.GetExtrinsics().SetTransformMatrix(RT);
+            cam->GetExtrinsics().SetTransformMatrix(K_inv * calib.P[i]);
         }
 
         // search for images
@@ -164,7 +160,7 @@ bool KittiOdometryBuilder::BuildCamera(const Path& from, Cameras& cams, Rectifie
         Path imageDirPath = from / imageDirName;
         const String imageFileExt = ".png";
 
-        cam.SetName(imageDirName);
+        cam->SetName(imageDirName);
 
         if (!dirExists(imageDirPath))
         {
@@ -174,7 +170,7 @@ bool KittiOdometryBuilder::BuildCamera(const Path& from, Cameras& cams, Rectifie
 
         Paths imageFiles = enumerateFiles(imageDirPath, imageFileExt);
         Strings filelist;
-        ImageStore& imageStore = cam.GetImageStore();
+        ImageStore& imageStore = cam->GetImageStore();
 
         BOOST_FOREACH(const Path& imageFile, imageFiles)
         {
@@ -184,14 +180,16 @@ bool KittiOdometryBuilder::BuildCamera(const Path& from, Cameras& cams, Rectifie
         imageStore.Create(imageDirPath, filelist);
 
         // try to retrieve the first frame
-        PersistentImage frame = cam.GetImageStore()[0];
-        cam.SetImageSize(frame.im.size());
+        PersistentImage frame = cam->GetImageStore()[0];
+        cam->SetImageSize(frame.im.size());
 
         E_INFO << imageStore.GetItems() << " image(s) located for camera " << i;
+
+        cam->Join(cams);
     }
 
     // create the left-right stereo pair
-    stereo.push_back(RectifiedStereo(cams[0], cams[1]));
+    stereo.insert(RectifiedStereo::Create(cams[0], cams[1]));
 
     return true;
 }
@@ -359,7 +357,7 @@ Parameterised::Options KittiRawDataBuilder::GetOptions(int flag)
     return o;
 }
 
-bool KittiRawDataBuilder::BuildCamera(const Path& from, Cameras& cams, RectifiedStereoPairs& stereo) const
+bool KittiRawDataBuilder::BuildCamera(const Path& from, Camera::Map& cams, RectifiedStereo::Set& stereo) const
 {
     CalibCam2Cam cam2cam(m_cam2cam);
     CalibRigid imu2lid(m_imu2lid);
@@ -401,41 +399,41 @@ bool KittiRawDataBuilder::BuildCamera(const Path& from, Cameras& cams, Rectified
     const cv::Mat K = cam2cam.data[ref].P_rect.rowRange(0, 3).colRange(0, 3);
     const cv::Mat K_inv = K.inv();
 
-    cams.resize(ncams);
+    cams.clear();
 
     for (size_t i = 0; i < ncams; i++)
     {
         E_INFO << "scanning files for camera " << i << "..";
 
-        Camera& cam = cams.at(i);
-
-        cam.SetIndex(i);
+        Camera::Own cam = Camera::New(i);
 
         // intrinsic parameters..
-        BouguetModel::Ptr intrinsics = BouguetModel::Ptr(new BouguetModel());
-
-        if (!rectified)
+        if (rectified)
         {
+            PinholeModel* intrinsics = new PinholeModel;
+
             intrinsics->SetCameraMatrix(cam2cam.data[i].K);
-            intrinsics->SetDistCoeffs(cam2cam.data[i].D);
+            cam->SetIntrinsics(PinholeModel::Own(intrinsics));
         }
         else
         {
-            intrinsics->SetCameraMatrix(K);
+            BouguetModel* intrinsics = new BouguetModel;
+            
+            intrinsics->SetCameraMatrix(cam2cam.data[i].K);
+            intrinsics->SetDistortionCoeffs(cam2cam.data[i].D);
+            cam->SetIntrinsics(BouguetModel::Own(intrinsics));
         }
-
-        cam.SetIntrinsics(intrinsics);
 
         // extrinsic parameters..
         if (!rectified)
         {
-            cam.GetExtrinsics().SetRotationMatrix(cam2cam.data[i].R);
-            cam.GetExtrinsics().SetTranslation(cam2cam.data[i].T);
+            cam->GetExtrinsics().SetRotationMatrix(cam2cam.data[i].R);
+            cam->GetExtrinsics().SetTranslation(cam2cam.data[i].T);
         }
         else if (i != ref)
         {
             cv::Mat RT = K_inv * cam2cam.data[i].P_rect;
-            cam.GetExtrinsics().SetTransformMatrix(RT);
+            cam->GetExtrinsics().SetTransformMatrix(RT);
 
             // TODO: take R_rect into account
             // ...
@@ -447,8 +445,8 @@ bool KittiRawDataBuilder::BuildCamera(const Path& from, Cameras& cams, Rectified
         const Path   imageDirPath = from / imageDirName / "data";
         const String imageFileExt = ".png";
 
-        cam.SetName(imageDirName);
-        cam.SetModel(i < 2 ? "Point Grey Flea 2 (FL2-14S3M-C)" : "Point Grey Flea 2 (FL2-14S3C-C)");
+        cam->SetName(imageDirName);
+        cam->SetModel(i < 2 ? "Point Grey Flea 2 (FL2-14S3M-C)" : "Point Grey Flea 2 (FL2-14S3C-C)");
 
         if (!dirExists(imageDirPath))
         {
@@ -456,22 +454,24 @@ bool KittiRawDataBuilder::BuildCamera(const Path& from, Cameras& cams, Rectified
             continue;
         }
 
-        cam.GetImageStore().FromExistingFiles(imageDirPath, imageFileExt);
+        cam->GetImageStore().FromExistingFiles(imageDirPath, imageFileExt);
 
         cv::Mat S = rectified ? cam2cam.data[i].S_rect : cam2cam.data[i].S;
         cv::Size imageSize((int) S.at<float>(0), (int) S.at<float>(1));
-        cam.SetImageSize(imageSize);
+        cam->SetImageSize(imageSize);
 
-        E_INFO << cam.GetImageStore().GetItems() << " image(s) located for camera " << i;
+        E_INFO << cam->GetImageStore().GetItems() << " image(s) located for camera " << i;
+
+        cam->Join(cams);
     }
 
     // create six possible stereo pairs
-    stereo.push_back(RectifiedStereo(cams[0], cams[1])); // canonical pair 0
-    stereo.push_back(RectifiedStereo(cams[2], cams[3])); // canonical pair 1
-    stereo.push_back(RectifiedStereo(cams[0], cams[3])); // long-baseline cross-pair 0
-    stereo.push_back(RectifiedStereo(cams[2], cams[1])); // long-baseline cross-pair 1
-    stereo.push_back(RectifiedStereo(cams[2], cams[0])); // short-baseline cross-pair 0
-    stereo.push_back(RectifiedStereo(cams[3], cams[1])); // short-baseline cross-pair 1
+    stereo.insert(RectifiedStereo::Create(cams[0], cams[1])); // canonical pair 0
+    stereo.insert(RectifiedStereo::Create(cams[2], cams[3])); // canonical pair 1
+    stereo.insert(RectifiedStereo::Create(cams[0], cams[3])); // long-baseline cross-pair 0
+    stereo.insert(RectifiedStereo::Create(cams[2], cams[1])); // long-baseline cross-pair 1
+    stereo.insert(RectifiedStereo::Create(cams[2], cams[0])); // short-baseline cross-pair 0
+    stereo.insert(RectifiedStereo::Create(cams[3], cams[1])); // short-baseline cross-pair 1
 
     return true;
 }
@@ -511,7 +511,7 @@ String EurocMavBuilder::GetVehicleName(const Path& from) const
     return fs["comment"];
 }
 
-bool EurocMavBuilder::BuildCamera(const Path& from, Cameras& cams, RectifiedStereoPairs& stereo) const
+bool EurocMavBuilder::BuildCamera(const Path& from, Camera::Map& cams, RectifiedStereo::Set& stereo) const
 {
     for (size_t k = 0; k < 2; k++)
     {
@@ -536,7 +536,7 @@ bool EurocMavBuilder::BuildCamera(const Path& from, Cameras& cams, RectifiedSter
             return false;
         }
 
-        Camera cam;
+        Camera::Own cam = Camera::New(k);
         String modelName;
         cv::Size imageSize;
         std::vector<double> extrinsics, intrinsics, distCoeffs;
@@ -566,25 +566,27 @@ bool EurocMavBuilder::BuildCamera(const Path& from, Cameras& cams, RectifiedSter
             return false;
         }
 
+        E_INFO << cv::Mat(distCoeffs).total();
+
+
         cameraMatrix.at<double>(0, 0) = intrinsics[0];
         cameraMatrix.at<double>(1, 1) = intrinsics[1];
         cameraMatrix.at<double>(0, 2) = intrinsics[2];
         cameraMatrix.at<double>(1, 2) = intrinsics[3];
 
-        cam.SetIndex(k);
-        cam.SetName(ss.str());
-        cam.SetModel(modelName);
-        cam.SetImageSize(imageSize);
-        cam.GetExtrinsics().SetTransformMatrix(cv::Mat(extrinsics).reshape(1, 4));
-        cam.SetIntrinsics(BouguetModel::Ptr(new BouguetModel(cameraMatrix, cv::Mat(distCoeffs))));
+        cam->SetName(ss.str());
+        cam->SetModel(modelName);
+        cam->SetImageSize(imageSize);
+        cam->GetExtrinsics().SetTransformMatrix(cv::Mat(extrinsics).reshape(1, 4));
+        cam->SetIntrinsics(BouguetModel::Own(new BouguetModel(cameraMatrix, cv::Mat(distCoeffs))));
 
         const Path imageDirPath = from / ss.str() / "data";
         const String imageFileExt = ".png";
 
-        cam.GetImageStore().FromExistingFiles(imageDirPath, imageFileExt);
-        E_INFO << cam.GetImageStore().GetItems() << " image(s) located for camera " << k;
+        cam->GetImageStore().FromExistingFiles(imageDirPath, imageFileExt);
+        E_INFO << cam->GetImageStore().GetItems() << " image(s) located for camera " << k;
 
-        cams.push_back(cam);
+        cam->Join(cams);
     }
 
     return true;

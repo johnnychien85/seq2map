@@ -21,7 +21,7 @@ public:
 
     // Inherited via LeastSquaresProblem
     virtual VectorisableD::Vec Initialise() { return m_params.ToVector(); }
-    virtual VectorisableD::Vec Evaluate(const VectorisableD::Vec& x) const;
+    virtual VectorisableD::Vec operator() (const VectorisableD::Vec& x) const;
     virtual bool SetSolution(const VectorisableD::Vec& x) { return m_params.FromVector(x); }
 
 private:

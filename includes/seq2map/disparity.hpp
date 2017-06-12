@@ -7,11 +7,11 @@
 namespace seq2map
 {
     class StereoMatcher
-    : public virtual Parameterised,
+    : public Referenced<StereoMatcher>,
+      public virtual Parameterised,
       public Persistent<cv::FileStorage, cv::FileNode>
     {
     public:
-        typedef boost::shared_ptr<StereoMatcher> Ptr;
         typedef LinearSpacedVec<double> DisparitySpace;
         
         virtual void WriteParams(cv::FileStorage& f) const = 0;
@@ -127,7 +127,7 @@ namespace seq2map
     public:
         friend class Singleton<StereoMatcherFactory>;
         using Factory<String, StereoMatcher>::Create;
-        StereoMatcher::Ptr Create(const cv::FileNode& fn);
+        StereoMatcher::Own Create(const cv::FileNode& fn);
     protected:
         virtual void Init();
     };

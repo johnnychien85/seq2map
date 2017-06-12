@@ -1,3 +1,4 @@
+#include <boost/date_time/posix_time/posix_time_io.hpp>
 #include "recorder.hpp"
 
 String BufferRecorder::GetDateTimeString(const String& format, const Time& when)

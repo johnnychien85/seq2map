@@ -246,9 +246,9 @@ bool ImageFeatureSet::Restore(const Path& path)
     return true;
 }
 
-FeatureDetextractor::Ptr FeatureDetextractorFactory::Create(const seq2map::String& detectorName, const seq2map::String& extractorName)
+FeatureDetextractor::Own FeatureDetextractorFactory::Create(const seq2map::String& detectorName, const seq2map::String& extractorName)
 {
-    FeatureDetextractor::Ptr dxtor;
+    FeatureDetextractor::Own dxtor;
 
     if (detectorName == extractorName)
     {
@@ -259,15 +259,15 @@ FeatureDetextractor::Ptr FeatureDetextractorFactory::Create(const seq2map::Strin
     }
     else
     {
-        FeatureDetector::Ptr  detector = m_detectorFactory.Create(detectorName);
-        FeatureExtractor::Ptr xtractor = m_extractorFactory.Create(extractorName);
+        FeatureDetector::Own  detector = m_detectorFactory.Create(detectorName);
+        FeatureExtractor::Own xtractor = m_extractorFactory.Create(extractorName);
 
         if (!detector) E_ERROR << "feature detector unknown: " << detectorName;
         if (!xtractor) E_ERROR << "descriptor extractor unknown: " << extractorName;
 
         if (detector && xtractor)
         {
-            dxtor = FeatureDetextractor::Ptr(new HetergeneousDetextractor(detector, xtractor));
+            dxtor = FeatureDetextractor::Own(new HetergeneousDetextractor(detector, xtractor));
         }
     }
 
@@ -280,9 +280,9 @@ FeatureDetextractor::Ptr FeatureDetextractorFactory::Create(const seq2map::Strin
     return dxtor;
 }
 
-FeatureDetextractor::Ptr FeatureDetextractorFactory::Create(const cv::FileNode& fn)
+FeatureDetextractor::Own FeatureDetextractorFactory::Create(const cv::FileNode& fn)
 {
-    FeatureDetextractor::Ptr dxtor;
+    FeatureDetextractor::Own dxtor;
     String keypointType, descriptorType;
 
     try

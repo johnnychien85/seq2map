@@ -63,43 +63,102 @@ bool MyApp::Execute()
 
     E_INFO << "sequence succesfully restored from " << from;
 
+    std::cout << "== SEQUENCE ====================================================================" << std::endl;
+
     // show sequence summary
-    std::cout << "Database:        " << seq.GetRootPath().string() << std::endl;
-    std::cout << "Source:          " << seq.GetRawPath().string()  << std::endl;
-    std::cout << "Vehicle:         " << seq.GetVehicle()           << std::endl;
-    std::cout << "Grabber:         " << seq.GetGrabber()           << std::endl;
-    std::cout << "Frames:          " << seq.GetFrames()            << std::endl;
-    std::cout << "Cameras:         " << seq.GetCameras().size()    << std::endl;
+    std::cout << " Database:         " << seq.GetRootPath().string()      << std::endl;
+    std::cout << " Source:           " << seq.GetRawPath().string()       << std::endl;
+    std::cout << " Vehicle:          " << seq.GetVehicle()                << std::endl;
+    std::cout << " Grabber:          " << seq.GetGrabber()                << std::endl;
+    std::cout << " Frames:           " << seq.GetFrames()                 << std::endl;
+    std::cout << " Cameras:          " << seq.GetCameras().size()         << std::endl;
+    std::cout << " Stereo Pairs:     " << seq.GetStereoPairs().size()     << std::endl;
+    std::cout << " Feature Stores:   " << seq.GetFeatureStores().size()   << std::endl;
+    std::cout << " Disparity Stores: " << seq.GetDisparityStores().size() << std::endl;
 
-    BOOST_FOREACH (const Camera& cam, seq.GetCameras())
+    std::cout << std::endl;
+    std::cout << "== CAMERAS =====================================================================" << std::endl;
+
+    BOOST_FOREACH (const Camera::Map::value_type& pair, seq.GetCameras())
     {
-        std::cout << " Cam " << cam.GetIndex() << std::endl;
-        std::cout << "  Name:          " << cam.GetName()      << std::endl;
-        std::cout << "  Model:         " << cam.GetModel()     << std::endl;
-        std::cout << "  Projection:    " << (cam.GetIntrinsics() ? cam.GetIntrinsics()->GetModelName() : "UNKNOWN!!") << std::endl;
-        std::cout << "  Image size:    " << cam.GetImageSize() << std::endl;;
-        std::cout << "  Extrinsics:    " << mat2string(cam.GetExtrinsics().GetTransformMatrix()) << std::endl;
-        std::cout << "  Frames:        " << cam.GetFrames() << std::endl;;;
-        std::cout << "  Feature store: " << cam.GetFeatureStores().size() << std::endl;;
-
-        size_t i = 0;
-
-        BOOST_FOREACH (const FeatureStore& fs, cam.GetFeatureStores())
+        if (!pair.second)
         {
-            std::cout << "   Store " << (i++) << std::endl;
-            std::cout << "    Index:       " << fs.GetIndex() << std::endl;
-            std::cout << "    Root:        " << fs.GetRoot()  << std::endl;
-            std::cout << "    Items:       " << fs.GetItems() << std::endl;
-            std::cout << "    Keypoint:    " << (fs.GetFeatureDetextractor() ? fs.GetFeatureDetextractor()->GetKeypointName()   : "UNKNOWN!!") << std::endl;
-            std::cout << "    Descriptor:  " << (fs.GetFeatureDetextractor() ? fs.GetFeatureDetextractor()->GetDescriptorName() : "UNKNOWN!!") << std::endl;
+            std::cout << " Cam " << pair.first << " missing!!" << std::endl;
+            continue;
         }
+
+        const Camera& cam = *pair.second;
+        ProjectionModel::ConstOwn intrinsics = cam.GetIntrinsics();
+        cv::Mat pose = cam.GetExtrinsics().GetTransformMatrix();
+
+        std::cout << " Cam " << cam.GetIndex() << std::endl;
+        std::cout << "  Name:            " << cam.GetName()      << std::endl;
+        std::cout << "  Model:           " << cam.GetModel()     << std::endl;
+        std::cout << "  Projection:      " << (intrinsics ? intrinsics->GetModelName() : "UNKNOWN") << std::endl;
+        std::cout << "  Image size:      " << cam.GetImageSize() << std::endl;;
+        std::cout << "  Extrinsics:      " << mat2string(pose)   << std::endl;
+        std::cout << "  Frames:          " << cam.GetFrames()    << std::endl;;;
     }
 
-    std::cout << "Stereo pairs: " << seq.GetRectifiedStereo().size() << std::endl;
-    BOOST_FOREACH (const RectifiedStereo& stereo, seq.GetRectifiedStereo())
+    std::cout << std::endl;
+    std::cout << "== STEREO PAIRS ================================================================" << std::endl;
+
+    BOOST_FOREACH (const RectifiedStereo::Set::value_type& pair, seq.GetStereoPairs())
     {
-        std::cout << " Pair " << stereo.ToString() << " ]" << std::endl;
+        std::cout << " Pair " << (pair ? pair->ToString() : "missing!!") << std::endl;
     }
+
+    std::cout << std::endl;
+    std::cout << "== FEATURE STORES ==============================================================" << std::endl;
+
+    BOOST_FOREACH (const FeatureStore::Map::value_type& pair, seq.GetFeatureStores())
+    {
+        if (!pair.second)
+        {
+            std::cout << " Store " << pair.first << " missing!!" << std::endl;
+            continue;
+        }
+        
+        const FeatureStore& store = *pair.second;
+        Camera::ConstOwn camera = store.GetCamera();
+        FeatureDetextractor::ConstOwn dxtor = store.GetFeatureDetextractor();
+
+        std::cout << " Store " << store.GetIndex() << std::endl;
+
+        if (camera) std::cout << "  Camera:          " << camera->GetIndex() << std::endl;
+        else        std::cout << "  Camera:          " << "UNKNOWN"          << std::endl;
+
+        std::cout << "  Root:            " << store.GetRoot()  << std::endl;
+        std::cout << "  Items:           " << store.GetItems() << std::endl;
+        std::cout << "  Keypoint:        " << (dxtor ? dxtor->GetKeypointName()   : "UNKNOWN") << std::endl;
+        std::cout << "  Descriptor:      " << (dxtor ? dxtor->GetDescriptorName() : "UNKNOWN") << std::endl;
+    }
+
+    std::cout << std::endl;
+    std::cout << "== DISPARITY MAP STORES ========================================================" << std::endl;
+
+    BOOST_FOREACH (const DisparityStore::Map::value_type& pair, seq.GetDisparityStores())
+    {
+        if (!pair.second)
+        {
+            std::cout << " Store " << pair.first << " missing!!" << std::endl;
+            continue;
+        }
+
+        const DisparityStore& store = *pair.second;
+        RectifiedStereo::ConstOwn stereo = store.GetStereoPair();
+        StereoMatcher::ConstOwn  matcher = store.GetMatcher();
+
+        std::cout << " Store " << store.GetIndex() << std::endl;
+
+        if (stereo) std::cout << "  Stereo pair:     " << stereo->ToString() << std::endl;
+        else        std::cout << "  Stereo pair:     " << "UNKNOWN"          << std::endl;
+
+        std::cout << "  Root:            " << store.GetRoot()  << std::endl;
+        std::cout << "  Items:           " << store.GetItems() << std::endl;
+        std::cout << "  Matcher:         " << (matcher ? matcher->GetMatcherName() : "UNKNOWN") << std::endl;
+    }
+
     std::cout << std::endl;
 
     if (!m_checkStores)
@@ -109,8 +168,12 @@ bool MyApp::Execute()
 
     std::cout << "Initiating store check.." << std::endl;
 
-    BOOST_FOREACH (const Camera& cam, seq.GetCameras())
+    BOOST_FOREACH (const Camera::Map::value_type& pair, seq.GetCameras())
     {
+        if (!pair.second) continue;
+
+        const Camera& cam = *pair.second;
+
         std::cout << "Checking camera " << cam.GetIndex() << "..";
 
         for (size_t i = 0; i < cam.GetFrames(); i++)
@@ -120,36 +183,97 @@ bool MyApp::Execute()
             if (im.empty())
             {
                 std::cout << "..FAILED" << std::endl;
-                std::cout << "error reading frame " << i << std::endl;
+                std::cout << "Error reading frame " << i << std::endl;
+
                 return false;
-            }
-
-            BOOST_FOREACH (const FeatureStore& fs, cam.GetFeatureStores())
-            {
-                ImageFeatureSet fset;
-
-                if (!fs.Retrieve(i, fset))
-                {
-                    std::cout << "..FAILED" << std::endl;
-                    std::cout << "error reading feature set " << i << " from feature store " << fs.GetIndex() << std::endl;
-                    return false;
-                }
-
-                if (m_show)
-                {
-                    cv::drawKeypoints(im, fset.GetKeyPoints(), im, cv::Scalar(0, 255, 0), cv::DrawMatchesFlags::DEFAULT);
-                }
-            }
-
-            if ((i % (cam.GetFrames() / 10)) == 0)
-            {
-                std::cout << ".." << i;
             }
 
             if (m_show)
             {
                 cv::imshow("chkseq", im);
                 cv::waitKey(1);
+            }
+
+            if ((i % (cam.GetFrames() / 10)) == 0)
+            {
+                std::cout << ".." << i;
+            }
+        }
+
+        std::cout << "..DONE" << std::endl;
+    }
+
+    BOOST_FOREACH (const FeatureStore::Map::value_type& pair, seq.GetFeatureStores())
+    {
+        if (!pair.second) continue;
+
+        const FeatureStore& store = *pair.second;
+        Camera::ConstOwn camera = store.GetCamera();
+
+        std::cout << "Checking feature store " << store.GetIndex() << "..";
+
+        for (size_t i = 0; i < store.GetItems(); i++)
+        {
+            ImageFeatureSet fset;
+            cv::Mat im = (m_show && camera) ? camera->GetImageStore()[i].im : cv::Mat();
+
+            if (!store.Retrieve(i, fset))
+            {
+                std::cout << "..FAILED" << std::endl;
+                std::cout << "Error reading feature set " << i << " from feature store" << std::endl;
+
+                return false;
+            }
+
+            if (!im.empty())
+            {
+                cv::drawKeypoints(im, fset.GetKeyPoints(), im, cv::Scalar(0, 255, 0), cv::DrawMatchesFlags::DEFAULT);
+                cv::imshow("chkseq", im);
+                cv::waitKey(1);
+            }
+
+            if ((i % (store.GetItems() / 10)) == 0)
+            {
+                std::cout << ".." << i;
+            }
+        }
+
+        std::cout << "..DONE" << std::endl;
+    }
+
+    BOOST_FOREACH (const DisparityStore::Map::value_type& pair, seq.GetDisparityStores())
+    {
+        if (!pair.second)
+        {
+            std::cout << " Store " << pair.first << " missing!!" << std::endl;
+            continue;
+        }
+
+        const DisparityStore& store = *pair.second;
+
+        std::cout << "Checking disparity store " << store.GetIndex() << "..";
+
+        for (size_t i = 0; i < store.GetItems(); i++)
+        {
+            cv::Mat im = store[i].im;
+
+            if (im.empty())
+            {
+                std::cout << "..FAILED" << std::endl;
+                std::cout << "Error reading frame " << i << std::endl;
+
+                return false;
+            }
+
+            if (m_show)
+            {
+                cv::imshow("chkseq", im);
+                cv::waitKey(1);
+            }
+
+            if ((i % (store.GetItems() / 10)) == 0)
+            {
+                std::cout << ".." << i;
             }
         }
 

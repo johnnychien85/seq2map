@@ -70,15 +70,18 @@ add_library   (base        includes/seq2map/common.hpp           # Shared compon
                            includes/seq2map/features.hpp         # 
                            includes/seq2map/features_opencv.hpp  # 
                            includes/seq2map/geometry.hpp         # 
+                           includes/seq2map/geometry_problems.hpp# 
                            includes/seq2map/mapping.hpp          # 
+                           includes/seq2map/seq_file_store.hpp   # 
                            includes/seq2map/sequence.hpp         # 
                            includes/seq2map/solve.hpp            # 
-                           includes/seq2map/spamap.hpp           # 
+                           includes/seq2map/sparse_node.hpp      # 
                            sources/base/common.cpp               # 
                            sources/base/disparity.cpp            # 
                            sources/base/features.cpp             # 
                            sources/base/features_opencv.cpp      #
                            sources/base/geometry.cpp             # 
+                           sources/base/geometry_problems.cpp    # 
                            sources/base/mapping.cpp              # 
                            sources/base/sequence.cpp             # 
                            sources/base/solve.cpp               )# 

@@ -108,9 +108,9 @@ bool Sensor::Restore(const cv::FileNode& fn)
 
 //==[ FeatureStore ]==========================================================//
 
-bool FeatureStore::Create(const Path& root, size_t cam, FeatureDetextractor::Ptr dxtor)
+bool FeatureStore::Create(const Path& root, Camera::ConstOwn& camera, FeatureDetextractor::Own& dxtor)
 {
-    m_camIdx = cam;
+    m_cam    = camera;
     m_dxtor  = dxtor;
 
     return SequentialFileStore<ImageFeatureSet>::Create(root);
@@ -128,7 +128,7 @@ bool FeatureStore::Store(cv::FileStorage& fs) const
         return true;
     }
 
-    fs << "camIdx" << m_camIdx;
+    fs << "camIdx" << (m_cam ? m_cam->GetIndex() : INVALID_INDEX);
 
     fs << "dxtor" << "{";
     bool dxtorStored = m_dxtor->Store(fs);
@@ -148,8 +148,6 @@ bool FeatureStore::Restore(const cv::FileNode& fn)
     {
         return false;
     }
-
-    fn["camIdx"] >> m_camIdx;
 
     cv::FileNode dxtorNode = fn["dxtor"];
 
@@ -186,11 +184,10 @@ bool DisparityStore::Create(const Path& root, size_t priCamIdx, size_t secCamIdx
 }
 */
 
-bool DisparityStore::Create(const Path& root, size_t priCamIdx, size_t secCamIdx, StereoMatcher::Ptr matcher)
+bool DisparityStore::Create(const Path& root, RectifiedStereo::ConstOwn& stereo, StereoMatcher::ConstOwn& matcher)
 {
-    m_priCamIdx = priCamIdx;
-    m_secCamIdx = secCamIdx;
-    m_matcher   = matcher;
+    m_stereo  = stereo;
+    m_matcher = matcher;
 
     if (m_matcher)
     {
@@ -208,8 +205,11 @@ bool DisparityStore::Store(cv::FileStorage& fs) const
         return false;
     }
 
-    fs << "priCamIdx" << m_priCamIdx;
-    fs << "secCamIdx" << m_secCamIdx;
+    Camera::ConstOwn priCam = m_stereo ? m_stereo->GetPrimaryCamera()   : Camera::ConstOwn();
+    Camera::ConstOwn secCam = m_stereo ? m_stereo->GetSecondaryCamera() : Camera::ConstOwn();
+
+    fs << "priCamIdx" << (priCam ? priCam->GetIndex() : INVALID_INDEX);
+    fs << "secCamIdx" << (secCam ? secCam->GetIndex() : INVALID_INDEX);
 
     fs << "dspace" << "{";
     {
@@ -246,9 +246,6 @@ bool DisparityStore::Restore(const cv::FileNode& fn)
 
     try
     {
-        fn["priCamIdx"] >> m_priCamIdx;
-        fn["secCamIdx"] >> m_secCamIdx;
-
         cv::FileNode dspaceNode = fn["dspace"];
         dspaceNode["begin"] >> m_dspace.begin;
         dspaceNode["end"]   >> m_dspace.end;
@@ -308,7 +305,7 @@ bool DisparityStore::Append(Path& to, const PersistentImage& data) const
 
 bool DisparityStore::Retrieve(const Path& from, PersistentImage& data) const
 {
-    cv::Mat dpm16U = cv::imread(from.string());
+    cv::Mat dpm16U = cv::imread(from.string(), cv::IMREAD_UNCHANGED);
 
     if (dpm16U.empty())
     {
@@ -341,9 +338,11 @@ void DisparityStore::UpdateMappings()
 
 void Camera::IntrinsicsFactory::Init()
 {
+    Register<PinholeModel>("PINHOLE");
     Register<BouguetModel>("BOUGUET");
 }
 
+/*
 void Camera::World2Image(const Points3D& worldPts, Points2D& imagePts) const
 {
     Points3D cameraPts;
@@ -362,6 +361,7 @@ void Camera::Camera2Image(const Points3D& cameraPts, Points2D& imagePts) const
 
     m_intrinsics->Project(cameraPts, imagePts);
 }
+*/
 
 bool Camera::Store(cv::FileStorage& fs) const
 {
@@ -409,7 +409,11 @@ bool Camera::Restore(const cv::FileNode& fn)
     fn["projection"] >> projectionModel;
     fn["imageSize"]  >> m_imageSize;
 
-    SetIndex(index);
+    if (index != GetIndex())
+    {
+        E_ERROR << "index not matched";
+        return false;
+    }
 
     if (projectionModel.empty())
     {
@@ -438,15 +442,10 @@ bool Camera::Restore(const cv::FileNode& fn)
 
 //==[ RectifiedStereo ]=======================================================//
 
-RectifiedStereo::RectifiedStereo(const Camera& primary, const Camera& secondary)
+bool RectifiedStereo::Create(Camera::ConstOwn& cam0, Camera::ConstOwn& cam1)
 {
-    Create(boost::make_shared<const Camera>(primary), boost::make_shared<const Camera>(secondary));
-}
-
-bool RectifiedStereo::Create(const Camera::ConstPtr& primary, const Camera::ConstPtr& secondary)
-{
-    m_primary = primary;
-    m_secondary = secondary;
+    m_priCam = cam0;
+    m_secCam = cam1;
 
     // Calculate geometric parameters..
     // ...
@@ -459,42 +458,12 @@ bool RectifiedStereo::Create(const Camera::ConstPtr& primary, const Camera::Cons
 String RectifiedStereo::ToString() const
 {
     std::stringstream ss;
-    ss << "(" << m_primary->GetIndex() << "," << m_secondary->GetIndex() << ")";
+    ss << "(" << m_priCam->GetIndex() << "," << m_secCam->GetIndex() << ")";
 
     return ss.str();
 }
 
-bool RectifiedStereo::SetActiveStore(size_t store)
-{
-    if (store >= m_stores.size())
-    {
-        E_WARNING << "index out of bound (idx=" << store << ", items=" << m_stores.size() << ")";
-        return false;
-    }
-
-    m_activeStore = store;
-    return true;
-}
 /*
-bool RectifiedStereo::Store(cv::FileStorage& fn) const
-{
-    if (!m_primary || !m_secondary)
-    {
-        E_ERROR << "missing camera(s)";
-        return false;
-    }
-
-    fn << "primary"   << m_primary->GetIndex();
-    fn << "secondary" << m_secondary->GetIndex();
-
-    return true;
-}
-
-bool RectifiedStereo::Restore(const cv::FileNode& fs)
-{
-
-}
-*/
 cv::Mat RectifiedStereo::GetDepthMap(size_t frame, size_t store) const
 {
     if (store >= m_stores.size())
@@ -517,6 +486,7 @@ cv::Mat RectifiedStereo::GetDepthMap(size_t frame, size_t store) const
 
     return dp;
 }
+*/
 
 //==[ Sequence ]==============================================================//
 
@@ -539,6 +509,26 @@ void Sequence::Clear()
 
     m_cameras.clear();
     m_stereo.clear();
+    m_kptsStores.clear();
+    m_dispStores.clear();
+}
+
+RectifiedStereo::ConstOwn Sequence::FindStereoPair(size_t priCamIdx, size_t secCamIdx) const
+{
+    BOOST_FOREACH(RectifiedStereo::ConstOwn pair, m_stereo)
+    {
+        if (!pair) continue;
+
+        Camera::ConstOwn cam0 = pair->GetPrimaryCamera();
+        Camera::ConstOwn cam1 = pair->GetSecondaryCamera();
+
+        if (cam0 && cam1 && cam0->GetIndex() == priCamIdx && cam1->GetIndex() == secCamIdx)
+        {
+            return pair;
+        }
+    }
+
+    return RectifiedStereo::ConstOwn();
 }
 
 bool Sequence::Store(Path& path) const
@@ -565,8 +555,11 @@ bool Sequence::Store(Path& path) const
     fs << "map"       << m_mapsDirName;
 
     fs << "cameras" << "[";
-    BOOST_FOREACH(const Camera& cam, m_cameras)
+    BOOST_FOREACH(const Camera::Map::value_type& pair, m_cameras)
     {
+        if (!pair.second) continue; // ignore invalid reference
+        const Camera& cam = *pair.second;
+
         fs << "{";
         if (!cam.Store(fs))
         {
@@ -578,20 +571,23 @@ bool Sequence::Store(Path& path) const
     fs << "]";
 
     fs << "stereo" << "[";
-    BOOST_FOREACH(const RectifiedStereo& stereo, m_stereo)
+    BOOST_FOREACH(const RectifiedStereo::Own& ptr, m_stereo)
     {
-        fs << "{";
-        /*if (!stereo.Store(fs))
+        if (!ptr) continue; // ignore invalid reference
+
+        const RectifiedStereo& stereo = *ptr;
+        const Camera::ConstOwn& pri = stereo.m_priCam;
+        const Camera::ConstOwn& sec = stereo.m_secCam;
+
+        if (!pri || !sec)
         {
-            E_ERROR << "error storing stereo pair " << stereo;
-            return false;
-        }*/
-        if (stereo.m_primary && stereo.m_secondary)
-        {
-            fs << "primary"   << (int) stereo.m_primary->GetIndex();
-            fs << "secondary" << (int) stereo.m_secondary->GetIndex();
+            E_ERROR << "stereo pair " << stereo.ToString() << " referencing missing camera(s)";;
+            continue;
         }
 
+        fs << "{";
+        fs << "primary"   << pri->GetIndex();
+        fs << "secondary" << sec->GetIndex();
         fs << "}";
     }
     fs << "]";
@@ -627,22 +623,24 @@ bool Sequence::Restore(const Path& path)
         // restore cameras
         cv::FileNode camsNode = fs["cameras"];
 
-        m_cameras = Cameras(camsNode.size());
-
         for (cv::FileNodeIterator itr = camsNode.begin(); itr != camsNode.end(); itr++)
         {
-            int idx;
+            size_t idx;
             (*itr)["index"] >> idx;
 
-            if (idx >= m_cameras.size())
+            Camera::Own& cam = m_cameras[idx];
+
+            if (cam)
             {
-                E_ERROR << "camera index out of bound (idx=" << idx << ", size=" << m_cameras.size() << ")";
+                E_ERROR << "camera " << cam->GetIndex() << " already exists";
                 return false;
             }
 
-            if (!m_cameras[idx].Restore(*itr))
+            cam = Camera::New(idx);
+
+            if (!cam->Restore(*itr))
             {
-                E_ERROR << "error restoring camera from file node";
+                E_ERROR << "error restoring camera " << cam->GetIndex() << " from file node";
                 return false;
             }
 
@@ -651,22 +649,33 @@ bool Sequence::Restore(const Path& path)
 
         // restore stereo pairs
         cv::FileNode stereoNode = fs["stereo"];
+
         for (cv::FileNodeIterator itr = stereoNode.begin(); itr != stereoNode.end(); itr++)
         {
-            int primary, secondary;
-            (*itr)["primary"]   >> primary;
-            (*itr)["secondary"] >> secondary;
+            size_t priCamIdx, secCamIdx;
+            (*itr)["primary"]   >> priCamIdx;
+            (*itr)["secondary"] >> secCamIdx;
 
-            if (primary   < 0 || primary   >= m_cameras.size() ||
-                secondary < 0 || secondary >= m_cameras.size())
+            Camera::Own& priCam = m_cameras[priCamIdx];
+            Camera::Own& secCam = m_cameras[secCamIdx];
+
+            if (!priCam)
             {
-                E_WARNING << "stereo pair (" << primary << "," << secondary << ") out of bound";
-                E_WARNING << "#camera: " << m_cameras.size();
-
-                continue;
+                E_ERROR << "referecing to a missing primary camera";
             }
 
-            m_stereo.push_back(RectifiedStereo(m_cameras[primary], m_cameras[secondary]));
+            if (!secCam)
+            {
+                E_ERROR << "referencing to a missing secondary camera";
+            }
+
+            RectifiedStereo::Own stereo = RectifiedStereo::Own(new RectifiedStereo(Camera::ConstOwn(priCam), Camera::ConstOwn(secCam)));
+            std::pair<RectifiedStereo::Set::iterator, bool> result = m_stereo.insert(stereo);
+
+            if (!result.second)
+            {
+                E_WARNING << "stereo pair " << stereo->ToString() << " already exists";
+            }
         }
     }
     catch (std::exception& ex)
@@ -683,140 +692,109 @@ bool Sequence::Restore(const Path& path)
     return true;
 }
 
-bool Sequence::FindFeatureStore(size_t index, FeatureStore const* &store) const
-{
-    store = NULL;
-
-    BOOST_FOREACH (const Camera& cam, m_cameras)
-    {
-        BOOST_FOREACH (const FeatureStore& f, cam.GetFeatureStores())
-        {
-            if (f.GetIndex() == index)
-            {
-                store = &f;
-                return true;
-            }
-        }
-    }
-
-    return false;
-}
-
 size_t Sequence::ScanStores()
 {
-    size_t featureStores = 0, dispStores = 0;
-
-    // remove all bound stores first
-    BOOST_FOREACH(Camera& cam, m_cameras)
-    {
-        cam.m_featureStores.clear();
-    }
-
-    BOOST_FOREACH(RectifiedStereo& pair, m_stereo)
-    {
-        pair.m_stores.clear();
-    }
-
     const Path featureStorePath   = m_seqPath / m_kptsDirName;
     const Path disparityStorePath = m_seqPath / m_dispDirName;
 
     // scan feature stores
-    E_INFO << "scanning feature stores " << featureStorePath;
     Paths featureDirs = enumerateDirs(featureStorePath);
+    E_INFO << "scanning " << featureDirs.size() << " feature store(s) in " << featureStorePath;
 
     BOOST_FOREACH (const Path& dir, featureDirs)
     {
-        E_INFO << "trying " << dir;
+        E_INFO << "processing " << dir;
 
-        FeatureStore store;
+        FeatureStore::Own store = FeatureStore::New(m_kptsStores.size());
         const Path from = dir / s_storeIndexFileName;
 
-        if (!((Persistent<Path>&)store).Restore(from))
+        cv::FileStorage fs(from.string(), cv::FileStorage::READ);
+        cv::FileNode fn = fs.root();
+
+        if (!fs.isOpened() || !store->Restore(fn))
         {
+            E_INFO << "failed restoring from " << from;
             continue;
         }
 
-        size_t camIdx = store.GetCameraIndex();
+        size_t camIdx;
+        fn["camIdx"] >> camIdx;
 
-        if (camIdx >= m_cameras.size())
+        Camera::ConstOwn cam = m_cameras[camIdx];
+
+        if (!cam)
         {
             E_INFO << "feature store restored but abandoned";
-            E_INFO << "reason being the owning camera index out of bound(idx = " << camIdx << ", size = " << m_cameras.size() << ")";
+            E_INFO << "reason being the owning camera is missing (idx = " << camIdx << ")";
 
             continue;
         }
             
-        Camera& cam = m_cameras[camIdx];
-
-        if (store.GetItems() != cam.GetFrames())
+        if (store->GetItems() != cam->GetFrames())
         {
             E_INFO << "feature store restored but abandoned";
-            E_INFO << "reason being mismatch of frame numbers (items=" << store.GetItems() << ", frames=" << cam.GetFrames() << ")";
+            E_INFO << "reason being mismatch of frame numbers (items=" << store->GetItems() << ", frames=" << cam->GetFrames() << ")";
 
             continue;
         }
 
-        store.SetIndex(featureStores);
-        cam.m_featureStores.push_back(store);
-        featureStores++;
+        store->m_cam = cam;
+        m_kptsStores[store->GetIndex()] = store;
 
-        E_INFO << "feature store loaded to camera " << cam.GetIndex();
+        E_INFO << "feature store " << store->GetIndex() << " loaded to camera " << cam->GetIndex();
     }
 
     // scan disparity stores
-    E_INFO << "scanning disparity stores " << disparityStorePath;
     Paths disparityDirs = enumerateDirs(disparityStorePath);
+    E_INFO << "scanning " << disparityDirs.size() << " disparity store(s) in " << disparityStorePath;
 
     BOOST_FOREACH (const Path& dir, disparityDirs)
     {
-        E_INFO << "trying " << dir;
+        E_INFO << "processing " << dir;
 
-        DisparityStore store;
+        DisparityStore::Own store = DisparityStore::New(m_dispStores.size());
         const Path from = dir / s_storeIndexFileName;
 
-        if (!((Persistent<Path>&)store).Restore(from))
+        cv::FileStorage fs(from.string(), cv::FileStorage::READ);
+        cv::FileNode fn = fs.root();
+
+        if (!fs.isOpened() || !store->Restore(fn))
         {
+            E_INFO << "failed restoring from " << from;
             continue;
         }
 
-        size_t priCamIdx = store.GetPrimaryCameraIndex();
-        size_t secCamIdx = store.GetSecondaryCameraIndex();
+        size_t priCamIdx, secCamIdx;
+
+        fn["priCamIdx"] >> priCamIdx;
+        fn["secCamIdx"] >> secCamIdx;
 
         // search for the owning stereo pair
-        bool found = false;
-        BOOST_FOREACH (RectifiedStereo& pair, m_stereo)
-        {
-            if (pair.m_primary  ->GetIndex() == priCamIdx &&
-                pair.m_secondary->GetIndex() == secCamIdx)
-            {
-                found = true;
+        RectifiedStereo::ConstOwn pair = FindStereoPair(priCamIdx, secCamIdx);
 
-                if (store.GetItems() == pair.m_primary->GetFrames())
-                {
-                    store.SetIndex(dispStores);
-                    pair.m_stores.push_back(store);
-                    dispStores++;
-
-                    E_INFO << "disparity store loaded to stereo pair " << pair.ToString();
-                }
-                else
-                {
-                    E_INFO << "disparity store restored but abandoned";
-                    E_INFO << "reason being mismatch of frame numbers (items=" << store.GetItems() << ", frames=" << pair.m_primary->GetFrames() << ")";
-                }
-
-                break;
-            }
-        }
-
-        if (!found)
+        if (!pair)
         {
             E_INFO << "disparity store restored but abandoned";
             E_INFO << "reason being missing stereo pair (" << priCamIdx << "," << secCamIdx << ")";
+
+            continue;
         }
+
+        if (store->GetItems() != GetFrames())
+        {
+            E_INFO << "disparity store restored but abandoned";
+            E_INFO << "reason being mismatch of frame numbers (items=" << store->GetItems() << ", frames=" << GetFrames() << ")";
+
+            continue;
+        }
+
+        store->m_stereo = pair;
+        m_dispStores[store->GetIndex()] = store;
+
+        E_INFO << "disparity store " << store->GetIndex() << " loaded to stereo pair " << pair->ToString();
     }
 
-    return featureStores + dispStores;
+    return m_kptsStores.size() + m_dispStores.size();
 }
 
 //==[ Sequence::Builder ]=====================================================//
