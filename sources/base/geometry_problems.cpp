@@ -232,7 +232,7 @@ cv::Mat PhotometricObjective::operator() (const EuclideanTransform& tform) const
     cv::Mat y;
     cv::remap(m_dst, y, m_proj->Project(tform(x), ProjectionModel::EUCLIDEAN_2D).mat.reshape(2), cv::Mat(), cv::INTER_NEAREST);
     
-    return d(m_data.dst, Geometry(x.shape, y.reshape(1))).mat;
+    return d(m_data.dst, Geometry(x.shape, y.reshape(1, static_cast<int>(x.GetElements())))).mat;
 }
 
 //==[ RigidObjective ]========================================================//
@@ -307,10 +307,11 @@ VectorisableD::Vec MultiObjectivePoseEstimation::Initialise()
     // TODO: improve the initialisation
     //
     //
-
+    VectorisableD::Vec v;
+    m_transform.Store(v);
     m_conds = GetConds();
 
-    return m_transform.ToVector();
+    return v;
 }
 
 size_t MultiObjectivePoseEstimation::GetConds() const
@@ -329,7 +330,7 @@ size_t MultiObjectivePoseEstimation::GetConds() const
 VectorisableD::Vec MultiObjectivePoseEstimation::operator()(const VectorisableD::Vec & x) const
 {
     EuclideanTransform tform;
-    tform.FromVector(x);
+    tform.Restore(x);
 
     VectorisableD::Vec y;
     size_t m = 0;
@@ -343,7 +344,7 @@ VectorisableD::Vec MultiObjectivePoseEstimation::operator()(const VectorisableD:
         cv::Mat yi = (*obj)(tform);
         size_t  mi = static_cast<size_t>(yi.total());
 
-        assert(yi.type == CV_64F);
+        assert(yi.type() == CV_64F);
         assert(m + mi <= m_conds);
 
         y.insert(y.end(), (double*)yi.datastart, (double*)yi.dataend);

@@ -8,6 +8,19 @@ size_t LeastSquaresProblem::GetHardwareConcurrency()
     return boost::thread::hardware_concurrency();
 }
 
+VectorisableD::Vec LeastSquaresProblem::operator() (const VectorisableD& vec) const
+{
+    VectorisableD::Vec v;
+
+    if (!vec.Store(v))
+    {
+        E_ERROR << "vectorisation failed";
+        return VectorisableD::Vec();
+    }
+
+    return (*this)(v);
+}
+
 cv::Mat LeastSquaresProblem::ComputeJacobian(const VectorisableD::Vec& x, VectorisableD::Vec& y) const
 {
     cv::Mat J = cv::Mat::zeros(static_cast<int>(m_conds), static_cast<int>(m_varIdx.size()), CV_64F);

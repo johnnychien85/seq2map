@@ -2,7 +2,6 @@
 #define GEOMETRY_HPP
 
 #include <seq2map/common.hpp>
-#include <seq2map/solve.hpp>
 
 namespace seq2map
 {
@@ -16,9 +15,9 @@ namespace seq2map
     public:
         enum Shape
         {
-            ROW_MAJOR, // M elements in D-dimension space are arrnaged row-by-row, forming a M-by-D matrix.
-            COL_MAJOR, // M elements in D-dimension space are arranged column-by-column, forming a D-by-M matrix.
-            PACKED     // M-by-N elements in D-dimension space are arranged as a M-by-N-by-D matrix.
+            ROW_MAJOR, ///< M elements in D-dimension space are arrnaged row-by-row, forming a M-by-D matrix.
+            COL_MAJOR, ///< M elements in D-dimension space are arranged column-by-column, forming a D-by-M matrix.
+            PACKED     ///< M-by-N elements in D-dimension space are arranged as a M-by-N-by-D matrix.
         };
 
         //
@@ -212,6 +211,19 @@ namespace seq2map
          * Transform a set of points in matrix form
          */
         virtual Geometry& operator() (Geometry& g) const = 0;
+
+        //
+        // Persistence
+        //
+        virtual bool Store(cv::FileStorage& fs) const = 0;
+        virtual bool Restore(const cv::FileNode& fn) = 0;
+
+        //
+        // Vectorisation and de-vectorisation
+        //
+        virtual bool Store(Vec& v) const = 0;
+        virtual bool Restore(const Vec& v) = 0;
+        virtual size_t GetDimension() const = 0;
     };
 
     /**
@@ -353,8 +365,8 @@ namespace seq2map
         //
         // Vectorisation and de-vectorisation
         //
-        virtual Vec ToVector() const;
-        virtual bool FromVector(const Vec& v);
+        virtual bool Store(Vec& v) const;
+        virtual bool Restore(const Vec& v);
         virtual size_t GetDimension() const { return 6; }
 
         static const EuclideanTransform Identity;
@@ -436,6 +448,19 @@ namespace seq2map
         // Accessors
         //
         virtual String GetModelName() const = 0;
+
+        //
+        // Persistence
+        //
+        virtual bool Store(cv::FileStorage& fs) const = 0;
+        virtual bool Restore(const cv::FileNode& fn) = 0;
+
+        //
+        // Vectorisation and de-vectorisation
+        //
+        virtual bool Store(Vec& v) const = 0;
+        virtual bool Restore(const Vec& v) = 0;
+        virtual size_t GetDimension() const = 0;
     };
 
     /**
@@ -444,7 +469,7 @@ namespace seq2map
     class PosedProjection : public ProjectionModel
     { 
     public:
-        PosedProjection(const EuclideanTransform& pose, const ProjectionModel& proj) : pose(pose), proj(proj) {}
+        PosedProjection(const EuclideanTransform& pose, ProjectionModel& proj) : pose(pose), proj(proj) {}
 
         virtual Point3F& operator() (Point3F& pt) const { return proj(pose(pt)); }
         virtual Point3D& operator() (Point3D& pt) const { return proj(pose(pt)); }
@@ -453,7 +478,7 @@ namespace seq2map
         virtual Geometry Backproject(const Geometry& g) const { return pose.GetInverse()(Geometry::MakeHomogeneous(proj.Backproject(g), 0.0f)); }
 
         const EuclideanTransform& pose;
-        const ProjectionModel& proj;
+        ProjectionModel& proj;
 
         virtual String GetModelName() const { return proj.GetModelName(); }
 
@@ -463,9 +488,9 @@ namespace seq2map
         //
         // Vectorisation and de-vectorisation
         //
-        virtual Vec ToVector() const { return Vec(0); }
-        virtual bool FromVector(const Vec&) { return false; }
-        virtual size_t GetDimension() const { return 0; }
+        virtual bool Store(Vec& v) const { return proj.Store(v); }
+        virtual bool Restore(const Vec& v) { return proj.Restore(v); }
+        virtual size_t GetDimension() const { return proj.GetDimension(); }
     };
 
     /**
@@ -485,6 +510,12 @@ namespace seq2map
         //
         cv::Mat ToProjectionMatrix(const EuclideanTransform& tform) const;
         bool FromProjectionMatrix(const cv::Mat& P, const EuclideanTransform& tform);
+
+        //
+        // Comparison
+        //
+        virtual bool operator== (const PinholeModel& rhs) const;
+        virtual bool operator!= (const PinholeModel& rhs) const { return !(*this == rhs); }
 
         //
         // Accessors
@@ -520,8 +551,8 @@ namespace seq2map
         //
         // Vectorisation and de-vectorisation
         //
-        virtual Vec ToVector() const;
-        virtual bool FromVector(const Vec&);
+        virtual bool Store(Vec& v) const;
+        virtual bool Restore(const Vec& v);
         virtual size_t GetDimension() const { return 4; }
 
     protected:
@@ -601,8 +632,8 @@ namespace seq2map
         //
         // Vectorisation and de-vectorisation
         //
-        virtual Vec ToVector() const;
-        virtual bool FromVector(const Vec& v);
+        virtual bool Store(Vec& v) const;
+        virtual bool Restore(const Vec& v);
         virtual size_t GetDimension() const { return PinholeModel::GetDimension() + static_cast<size_t>(m_distModel); }
 
     protected:

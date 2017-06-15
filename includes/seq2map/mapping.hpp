@@ -78,8 +78,8 @@ namespace seq2map
         Map() : m_newLandmarkId(0) {}
         virtual ~Map() {}
 
-        void RegisterSource(FeatureStore::ConstOwn& store);
         Landmark& AddLandmark();
+        Landmark& MergeLandmark(Landmark& li, Landmark& lj);
 
         inline Landmark& GetLandmark(size_t index) { return Dim0(index); }
         inline Frame&    GetFrame   (size_t index) { return Dim1(index); }
@@ -134,6 +134,16 @@ namespace seq2map
          *
          */
         bool InRange(size_t t, size_t tn) const;
+
+        /**
+         *
+         */
+        bool IsCrossed() const;
+
+        /**
+         *
+         */
+        bool IsSynchronised() const { return src.offset == dst.offset; }
 
         /**
          *

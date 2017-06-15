@@ -64,18 +64,17 @@ bool MyApp::Execute()
     MultiFrameFeatureIntegration mapper;
     Map map;
 
-    //mapper.AddMatchingPath(seq.FindFeatureStore()  );
+    FeatureStore::ConstOwn f0 = seq.GetFeatureStore(0);
+    FeatureStore::ConstOwn f1 = seq.GetFeatureStore(1);
 
-    mapper.SetMergePolicy(MultiFrameFeatureIntegration::REJECT);
-    mapper.AddPathway(0, 0, 0, 1);
-    mapper.AddPathway(0, 1, 1, 1);
-    mapper.AddPathway(1, 1, 1, 0);
-    mapper.AddPathway(1, 0, 0, 0);
-    //mapper.AddPathway(1, 1, 0, 1);
-    //mapper.AddPathway(0, 1, 0, 1);
-    //mapper.AddPathway(1, 0, 0, 1);
+    FeatureMatching::FramedStore f00(f0, 0), f01(f0, 1), f10(f1, 0), f11(f1, 1);
+
+    mapper.AddMatching(FeatureMatching(f00, f01));
+    mapper.AddMatching(FeatureMatching(f01, f10));
+    mapper.AddMatching(FeatureMatching(f10, f11));
+    mapper.AddMatching(FeatureMatching(f11, f00));
     
-    if (!mapper.SLAM(seq, map))
+    if (!mapper.SLAM(map, 0, seq.GetFrames()))
     {
         E_ERROR << "error mapping sequence " << m_seqPath;
         return false;

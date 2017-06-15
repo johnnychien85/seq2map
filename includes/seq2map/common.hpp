@@ -157,6 +157,12 @@ namespace seq2map
         typedef std::set<Own, Less> Set;
 
         static Own New(size_t index) { return Own(new T(index)); }
+        
+        static ConstOwn Find(const Map& map, size_t index)
+        {
+            Map::const_iterator itr = map.find(index);
+            return (itr == map.end()) ? ConstOwn() : itr->second;
+        }
 
         IndexReferenced(size_t index) : Indexed(index) {}
 
@@ -170,11 +176,10 @@ namespace seq2map
 
     template<class T> bool IndexReferenced<T>::Null(INVALID_INDEX);
 
-
     /**
-    * Templated factory class to instantiate an object derived from Base
-    * given a key indicating its concrete class.
-    */
+     * Templated factory class to instantiate an object derived from Base
+     * given a key indicating its concrete class.
+     */
     template<class Key, class Base> class Factory
     {
     public:
@@ -230,8 +235,8 @@ namespace seq2map
     };
 
     /**
-    * Templated singleton class to create the only one static instance of class T.
-    */
+     * Templated singleton class to create the only one static instance of class T.
+     */
     template<class T> class Singleton
     {
     public:
@@ -289,6 +294,58 @@ namespace seq2map
     };
 
     /**
+     *
+     */
+    class PersistentMat : Persistent<Path>
+    {
+    public:
+        PersistentMat(cv::Mat& mat) : mat(mat) {}
+
+        virtual bool Store(Path& to) const;
+        virtual bool Restore(const Path& from);
+
+        static String CvDepthToString(int depth);
+        static int    StringToCvDepth(const String& depth);
+
+        static void Dump(const cv::Mat& mat, std::ostream& os);
+        static void Dump(std::istream& is, cv::Mat& mat);
+
+        cv::Mat mat;
+
+    private:
+        static const String s_magicString;
+    };
+
+    /**
+     * An interface to represent any class that can be serialised into
+     * an array of type T.
+     */
+    template<typename T>
+    class Vectorisable : public Persistent<std::vector<T>>
+    {
+    public:
+        typedef std::vector<T> Vec;
+
+        virtual bool Store(Vec& v) const = 0;
+        virtual bool Restore(const Vec& v) = 0;
+
+        Vec ToVector() const
+        {
+            Vec v;
+            return Store(v) ? v : Vec();
+        }
+
+        /**
+         * Get the dimension of the vector represent of class.
+         * \return size_t Number of elements needed to store the class.
+         */
+        virtual size_t GetDimension() const = 0;
+    };
+
+    typedef Vectorisable<float>  VectorisableF;
+    typedef Vectorisable<double> VectorisableD;
+
+    /**
      * Linearily spaced vector.
      */
     template<typename T>
@@ -326,6 +383,22 @@ namespace seq2map
         T begin;
         T end;
         size_t segs;
+    };
+
+    /**
+     * Progress display.
+     */
+    class Progress
+    {
+    public:
+        Progress(size_t tasks, size_t freq = 10)
+        : m_divisor(static_cast<size_t>(std::ceil(static_cast<float>(tasks) / static_cast<float>(freq)))) {}
+
+        inline bool IsMilestone(size_t i) const { return (i % m_divisor) == 0; }
+
+    private:
+        size_t m_tasks;
+        size_t m_divisor;
     };
 
     /**
@@ -369,58 +442,6 @@ namespace seq2map
         Speedometre& m_metre;
         const size_t m_amount;
     };
-
-    /**
-     * Chained operation.
-     */
-    /*
-    template<typename T>
-    class ChainedOp
-    {
-    public:
-        typedef boost::shared_ptr<ChainedOp> Ptr;
-
-        ChainedOp() : m_next(NULL) {}
-
-        ChainedOp& operator>>(ChainedOp& nextOp)
-        {
-            return *(m_next = nextOp.Create());
-        }
-
-        virtual T& operator()(T& x) = 0;
-
-        T& Forward(T& x)
-        {
-            return m_next ? m_next->Forward((*this)(x)) : (*this)(x);
-        }
-
-        T& Backward(T& x)
-        {
-            return m_next ? (*this)(m_next->Backward(x)) : (*this)(x);
-        }
-
-    protected:
-        virtual Ptr Create() const = 0;
-
-    private:
-        Ptr m_next;
-    }; */
-
-    /*
-    class Flipping : public ChainedOp<cv::Mat>
-    {
-    public:
-        Flipping(bool flipX, bool flipY)
-        {
-
-        }
-
-        cv::Mat operator(cv::Mat& im)
-        {
-
-        }
-    };
-    */
 
     /**
      * Application class to provide an unified interface for seq2map utilities.
@@ -483,5 +504,7 @@ namespace cv
         value = fn.empty() ? default_value : seq2map::Path(x.c_str());
     }
 }
+
+#include<seq2map/common_impl.hpp>
 
 #endif //COMMON_HPP

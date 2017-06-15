@@ -106,6 +106,18 @@ bool MyApp::Execute()
     BOOST_FOREACH (const RectifiedStereo::Set::value_type& pair, seq.GetStereoPairs())
     {
         std::cout << " Pair " << (pair ? pair->ToString() : "missing!!") << std::endl;
+
+        std::cout << "  Configuration:   ";
+        switch (pair->GetConfiguration())
+        {
+        case RectifiedStereo::LEFT_RIGHT:   std::cout << "Left-right";   break;
+        case RectifiedStereo::TOP_BOTTOM:   std::cout << "Top-bottom";   break;
+        case RectifiedStereo::BACK_FORWARD: std::cout << "Back-forward"; break;
+        case RectifiedStereo::UNKNOWN:      std::cout << "Unknown";      break;
+        }
+        std::cout << std::endl;
+
+        std::cout << "  Baseline:        " << pair->GetBaseline() << " world units" << std::endl;
     }
 
     std::cout << std::endl;
@@ -173,6 +185,7 @@ bool MyApp::Execute()
         if (!pair.second) continue;
 
         const Camera& cam = *pair.second;
+        Progress progress(cam.GetFrames());
 
         std::cout << "Checking camera " << cam.GetIndex() << "..";
 
@@ -194,7 +207,7 @@ bool MyApp::Execute()
                 cv::waitKey(1);
             }
 
-            if ((i % (cam.GetFrames() / 10)) == 0)
+            if (progress.IsMilestone(i))
             {
                 std::cout << ".." << i;
             }
@@ -209,6 +222,7 @@ bool MyApp::Execute()
 
         const FeatureStore& store = *pair.second;
         Camera::ConstOwn camera = store.GetCamera();
+        Progress progress(store.GetItems());
 
         std::cout << "Checking feature store " << store.GetIndex() << "..";
 
@@ -232,7 +246,7 @@ bool MyApp::Execute()
                 cv::waitKey(1);
             }
 
-            if ((i % (store.GetItems() / 10)) == 0)
+            if (progress.IsMilestone(i))
             {
                 std::cout << ".." << i;
             }
@@ -250,6 +264,7 @@ bool MyApp::Execute()
         }
 
         const DisparityStore& store = *pair.second;
+        Progress progress(store.GetItems());
 
         std::cout << "Checking disparity store " << store.GetIndex() << "..";
 
@@ -271,7 +286,7 @@ bool MyApp::Execute()
                 cv::waitKey(1);
             }
 
-            if ((i % (store.GetItems() / 10)) == 0)
+            if (progress.IsMilestone(i))
             {
                 std::cout << ".." << i;
             }

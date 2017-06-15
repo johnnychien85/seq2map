@@ -342,6 +342,27 @@ void Camera::IntrinsicsFactory::Init()
     Register<BouguetModel>("BOUGUET");
 }
 
+template<typename T> 
+Geometry Camera::GetImagePoints() const
+{
+    Geometry g(Geometry::PACKED);
+
+    int type = CV_MAKE_TYPE(cv::DataType<T>::depth, 3);
+    g.mat = cv::Mat(m_imageSize.height, m_imageSize.width, type);
+
+    typedef cv::Point3_<T> ptype;
+
+    for (int i = 0; i < g.mat.rows; i++)
+    {
+        for (int j = 0; j < g.mat.cols; j++)
+        {
+            g.mat.at<ptype>(i, j) = ptype(j, i, 1);
+        }
+    }
+
+    return g;
+}
+
 /*
 void Camera::World2Image(const Points3D& worldPts, Points2D& imagePts) const
 {
@@ -442,17 +463,192 @@ bool Camera::Restore(const cv::FileNode& fn)
 
 //==[ RectifiedStereo ]=======================================================//
 
-bool RectifiedStereo::Create(Camera::ConstOwn& cam0, Camera::ConstOwn& cam1)
+RectifiedStereo::Configuration RectifiedStereo::GetConfiguration(const EuclideanTransform& rel, double& baseline)
 {
-    m_priCam = cam0;
-    m_secCam = cam1;
+    static const double EPS = 1e-2;
 
-    // Calculate geometric parameters..
-    // ...
-    // ..
-    // .
+    cv::Mat rvec = rel.GetRotationVector();
+    cv::Mat tvec = rel.GetTranslation();
 
+    if (cv::norm(rvec) > EPS)
+    {
+        E_WARNING << "inconsistent rotational extrinsics";
+        return UNKNOWN;
+    }
+
+    // determine configuration
+    double t[3];
+    t[0] = tvec.at<double>(0);
+    t[1] = tvec.at<double>(1);
+    t[2] = tvec.at<double>(2);
+
+    if (t[0] > 0 && t[0] > t[1] && t[0] > t[1])
+    {
+        double ty = std::abs(t[1]);
+        double tz = std::abs(t[2]);
+
+        if (ty > EPS)
+        {
+            E_WARNING << "invalid left-right geometry : the length of ty = " << ty << " is not zero";
+            return UNKNOWN;
+        }
+
+        if (tz > EPS)
+        {
+            E_WARNING << "invalid left-right geometry : the length of tz = " << tz << " is not zero";
+            return UNKNOWN;
+        }
+
+        baseline = t[0];
+        return LEFT_RIGHT;
+    }
+    else if (t[1] > 0 && t[1] > t[0] && t[1] > t[2])
+    {
+        double tx = std::abs(t[0]);
+        double tz = std::abs(t[2]);
+
+        if (tx > EPS)
+        {
+            E_WARNING << "invalid top-down geometry : the length of tz = " << tx << " is not zero";
+            return UNKNOWN;
+        }
+
+        if (tz > EPS)
+        {
+            E_WARNING << "invalid top-down geometry : the length of tz = " << tz << " is not zero";
+            return UNKNOWN;
+        }
+
+        baseline = t[1];
+        return TOP_BOTTOM;
+    }
+    else if (t[2] > 0)
+    {
+        double tx = std::abs(t[0]);
+        double ty = std::abs(t[1]);
+
+        if (tx > EPS)
+        {
+            E_WARNING << "invalid back-forward geometry : the length of tz = " << tx << " is not zero";
+            return UNKNOWN;
+        }
+
+        if (ty > EPS)
+        {
+            E_WARNING << "invalid back-forward geometry : the length of ty = " << ty << " is not zero";
+            return UNKNOWN;
+        }
+
+        baseline = t[2];
+        return BACK_FORWARD;
+    }
+
+    E_WARNING << "unable to determine the geometric configuration";
+    return UNKNOWN;
+}
+
+Geometry RectifiedStereo::Backproject(const cv::Mat& dp) const
+{
+    if (dp.rows != m_rays.mat.rows || dp.cols != m_rays.mat.cols || dp.channels() != 1)
+    {
+        E_ERROR << "given disparity map has an invalid dimension of " << dp.rows << "x" << dp.cols << "x" << dp.channels();
+        E_ERROR << "expected " << m_rays.mat.rows << "x" << m_rays.mat.cols << "x1";
+
+        return Geometry(m_rays.shape);
+    }
+
+    const int m = static_cast<int>(m_rays.GetElements());
+
+    const cv::Mat src = m_rays.mat.reshape(1, m);
+    /***/ cv::Mat dpm = dp.reshape(1, m);
+    /***/ cv::Mat dst = cv::Mat(src.rows, src.cols, src.type());
+
+    if (dpm.depth() != dst.depth())
+    {
+        dpm.convertTo(dpm, dst.depth());
+    }
+
+    cv::divide(src.col(2), dpm, dst.col(2));          // z = k/d
+    cv::multiply(src.col(0), dst.col(2), dst.col(0)); // x = z*x
+    cv::multiply(src.col(1), dst.col(2), dst.col(1)); // y = z*y
+
+    return Geometry(Geometry::ROW_MAJOR, dst).Reshape(m_rays);
+}
+
+bool RectifiedStereo::Create(Camera::ConstOwn& pri, Camera::ConstOwn& sec)
+{
+    Clear();
+
+    // check pointers valadity
+    if (!pri || !sec)
+    {
+        E_WARNING << "missing camera(s)";
+        return false;
+    }
+
+    m_priCam = pri;
+    m_secCam = sec;
+
+    // check intrinsics
+    boost::shared_ptr<const PinholeModel> priProj = boost::dynamic_pointer_cast<const PinholeModel>(pri->GetIntrinsics());
+    boost::shared_ptr<const PinholeModel> secProj = boost::dynamic_pointer_cast<const PinholeModel>(sec->GetIntrinsics());
+
+    if (!priProj || !secProj)
+    {
+        E_WARNING << "missing intrinsics";
+        return false;
+    }
+
+    if (*priProj != *secProj)
+    {
+        E_WARNING << "inconsistent pinhole projection parameters";
+        return false;
+    }
+
+    // check extrinsics
+    // find the relative transform from the secondary camera to the primary
+    EuclideanTransform rel = pri->GetExtrinsics() - sec->GetExtrinsics();
+
+    // try to identify geometric configuration and the baseline
+    if ((m_config = GetConfiguration(rel, m_baseline)) == UNKNOWN)
+    {
+        E_WARNING << "invalid geometrical configuration";
+        return false;
+    }
+
+    // calculate corresponding disparity-depth conversion factor
+    double fx, fy, cx, cy;
+    priProj->GetValues(fx, fy, cx, cy);
+
+    switch (m_config)
+    {
+    case LEFT_RIGHT:
+        m_depthDispRatio = m_baseline * fx; // z = \frac{bf}{d}
+        break;
+    case TOP_BOTTOM:
+        m_depthDispRatio = m_baseline * fy; // z = \frac{bf}{d}
+        break;
+    case BACK_FORWARD:
+        throw std::exception("not implemented");
+        break;
+    }
+
+    // calculate back-projected rays
+    m_rays = priProj->Backproject(pri->GetImagePoints<double>());
+    m_rays.Reshape(Geometry::ROW_MAJOR).mat.col(2).setTo(m_depthDispRatio);
+
+    // all good
     return true;
+}
+
+void RectifiedStereo::Clear()
+{
+    m_priCam.reset();
+    m_secCam.reset();
+
+    m_config = UNKNOWN;
+    m_baseline = 0;
+    m_depthDispRatio = 0;
 }
 
 String RectifiedStereo::ToString() const
@@ -462,31 +658,6 @@ String RectifiedStereo::ToString() const
 
     return ss.str();
 }
-
-/*
-cv::Mat RectifiedStereo::GetDepthMap(size_t frame, size_t store) const
-{
-    if (store >= m_stores.size())
-    {
-        E_ERROR << "store index " << store << " out of bound";
-        return cv::Mat();
-    }
-
-    PersistentImage data;
-    const SequentialFileStore<PersistentImage>& dpStore = m_stores[store];
-
-    if (!dpStore.Retrieve(frame, data))
-    {
-        E_ERROR << "error restoring disparity map from store " << store << " frame " << frame;
-        return cv::Mat();
-    }
-
-    // convert to disparities to a depth map
-    cv::Mat dp = data.im;
-
-    return dp;
-}
-*/
 
 //==[ Sequence ]==============================================================//
 
@@ -513,7 +684,7 @@ void Sequence::Clear()
     m_dispStores.clear();
 }
 
-RectifiedStereo::ConstOwn Sequence::FindStereoPair(size_t priCamIdx, size_t secCamIdx) const
+RectifiedStereo::ConstOwn Sequence::GetStereoPair(size_t priCamIdx, size_t secCamIdx) const
 {
     BOOST_FOREACH(RectifiedStereo::ConstOwn pair, m_stereo)
     {
@@ -770,7 +941,7 @@ size_t Sequence::ScanStores()
         fn["secCamIdx"] >> secCamIdx;
 
         // search for the owning stereo pair
-        RectifiedStereo::ConstOwn pair = FindStereoPair(priCamIdx, secCamIdx);
+        RectifiedStereo::ConstOwn pair = GetStereoPair(priCamIdx, secCamIdx);
 
         if (!pair)
         {

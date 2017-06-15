@@ -1,12 +1,15 @@
 cmake_minimum_required(VERSION 2.6)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/")
 
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+
 # Build Option(s)
-set(MONOLITHIC TRUE  CACHE BOOL "Build big standalone executables statically linked against thirt-party libraries")
-set(WITH_EBUS  FALSE CACHE BOOL "Build the grabber with the support of Pleora's cameras")
-set(WITH_PYLON FALSE CACHE BOOL "Build the grabber with the support of Basler's cameras")
-set(WITH_STCAM FALSE CACHE BOOL "Build the grabber with the support of Sentech's cameras")
-set(BUILD_DOCS FALSE CACHE BOOL "Build documentation (requires Doxygen)")
+set(MONOLITHIC  TRUE  CACHE BOOL "Build big standalone executables statically linked against thirt-party libraries")
+set(WITH_EBUS   FALSE CACHE BOOL "Build the grabber with the support of Pleora's cameras")
+set(WITH_PYLON  FALSE CACHE BOOL "Build the grabber with the support of Basler's cameras")
+set(WITH_STCAM  FALSE CACHE BOOL "Build the grabber with the support of Sentech's cameras")
+set(BUILD_DOCS  FALSE CACHE BOOL "Build documentation (requires Doxygen)")
+set(BUILD_TESTS FALSE CACHE BOOL "Build unit tests")
 
 # The project version number.
 set(VERSION_MAJOR 0 CACHE STRING "Project major version number.")
@@ -16,8 +19,8 @@ mark_as_advanced(VERSION_MAJOR VERSION_MINOR VERSION_PATCH)
 
 # Pleora's eBUS library
 if(WITH_EBUS)
-    set(eBUS_INCLUDE_DIR ${eBUS_INCLUDE_DIR} CACHE PATH "The directory containing eBUS header files." FORCE)
-    set(eBUS_LIBRARY_DIR ${eBUS_LIBRARY_DIR} CACHE PATH "The directory containing eBUS libraries."    FORCE)
+    set(eBUS_INCLUDE_DIR ${eBUS_INCLUDE_DIR} CACHE PATH "The directory containing eBUS header files.")
+    set(eBUS_LIBRARY_DIR ${eBUS_LIBRARY_DIR} CACHE PATH "The directory containing eBUS libraries."   )
     
     if(NOT EXISTS "${eBUS_INCLUDE_DIR}/PvBase.h")
         message(SEND_ERROR "eBUS includes missing")
@@ -33,8 +36,8 @@ endif()
 
 # Basler's Pylon library
 if(WITH_PYLON)
-    set(Pylon_INCLUDE_DIR ${Pylon_INCLUDE_DIR} CACHE PATH "The directory containing Pylon header files." FORCE)
-    set(Pylon_LIBRARY_DIR ${Pylon_LIBRARY_DIR} CACHE PATH "The directory containing Pylon libraries."    FORCE)
+    set(Pylon_INCLUDE_DIR ${Pylon_INCLUDE_DIR} CACHE PATH "The directory containing Pylon header files.")
+    set(Pylon_LIBRARY_DIR ${Pylon_LIBRARY_DIR} CACHE PATH "The directory containing Pylon libraries."   )
     
     if(NOT EXISTS "${Pylon_INCLUDE_DIR}/pylon/PylonIncludes.h")
         message(SEND_ERROR "Pylon includes missing")
@@ -49,8 +52,8 @@ endif()
 
 # SenTech's StCamUSB library
 if(WITH_STCAM)
-    set(StCam_INCLUDE_DIR ${StCam_INCLUDE_DIR} CACHE PATH "The directory containing StCamUSB header files." FORCE)
-    set(StCam_LIBRARY_DIR ${StCam_LIBRARY_DIR} CACHE PATH "The directory containing StCamUSB library."      FORCE)
+    set(StCam_INCLUDE_DIR ${StCam_INCLUDE_DIR} CACHE PATH "The directory containing StCamUSB header files.")
+    set(StCam_LIBRARY_DIR ${StCam_LIBRARY_DIR} CACHE PATH "The directory containing StCamUSB library."     )
 
     if(NOT EXISTS "${StCam_INCLUDE_DIR}/StCamD.h")
         message(SEND_ERROR "StCamUSB includes missing")
@@ -66,6 +69,7 @@ endif()
 # Executables Configuration
 project(seq2map CXX)
 add_library   (base        includes/seq2map/common.hpp           # Shared components
+                           includes/seq2map/common_impl.hpp      # 
                            includes/seq2map/disparity.hpp        # 
                            includes/seq2map/features.hpp         # 
                            includes/seq2map/features_opencv.hpp  # 
@@ -122,6 +126,12 @@ add_executable(disp2pts    sources/miscs/disp2pts.cpp           )# Converion fro
 add_executable(imcvt       sources/miscs/imcvt.cpp              )# Image conversion utility
 add_executable(imfuse      sources/miscs/imfuse.cpp             )# Multi-camera image fusion utility
 add_executable(imrect      sources/miscs/imrect.cpp             )# Image rectification utility
+
+set_target_properties(chkseq   PROPERTIES FOLDER "miscs")
+set_target_properties(disp2pts PROPERTIES FOLDER "miscs")
+set_target_properties(imcvt    PROPERTIES FOLDER "miscs")
+set_target_properties(imfuse   PROPERTIES FOLDER "miscs")
+set_target_properties(imrect   PROPERTIES FOLDER "miscs")
 
 target_link_libraries(calibn   base)
 target_link_libraries(im2kpts  base)
@@ -186,7 +196,12 @@ else()
 	message(SEND_ERROR "OpenCV not found")
 endif()
 
-find_package(Boost REQUIRED COMPONENTS log_setup log filesystem thread timer date_time chrono program_options system)
+if(BUILD_TESTS)
+    find_package(Boost REQUIRED COMPONENTS log_setup log filesystem thread timer date_time chrono program_options system unit_test_framework)
+else()
+    find_package(Boost REQUIRED COMPONENTS log_setup log filesystem thread timer date_time chrono program_options system)
+endif()
+
 mark_as_advanced(CLEAR BOOST_INCLUDEDIR BOOST_LIBRARYDIR)
 if(Boost_FOUND)
 	include_directories(${Boost_INCLUDE_DIRS})
@@ -206,6 +221,27 @@ else()
 	set(BOOST_INCLUDEDIR ${Boost_INCLUDE_DIRS} CACHE PATH "The directory containing boost headers folder 'boost'." FORCE)
 	set(BOOST_LIBRARYDIR ${Boost_LIBRARY_DIRS} CACHE PATH "The directory containing boost libraries." FORCE)
 	message(SEND_ERROR "boost not found")
+endif()
+
+# Unit test
+if(BUILD_TESTS)
+    enable_testing()
+    
+    set(TEST_DATA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/data CACHE PATH "The directory containing test data")
+    file(GLOB TEST_SOURCES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} sources/tests/*.cpp)
+    
+    foreach(src ${TEST_SOURCES})
+        get_filename_component(test ${src} NAME_WE)
+        add_executable(${test} ${src})
+        set_target_properties(${test} PROPERTIES FOLDER "tests")
+        target_link_libraries(${test} base ${OpenCV_LIBS} ${Boost_LIBRARIES})
+        add_test(
+            NAME ${test}
+            WORKING_DIRECTORY ${TEST_DATA_DIR}
+            COMMAND ${test}
+        )
+        message(STATUS "Test added: ${test}")
+    endforeach(src)
 endif()
 
 # Documentation

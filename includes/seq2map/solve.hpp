@@ -5,20 +5,8 @@
 
 namespace seq2map
 {
-    template<typename T> class Vectorisable
-    {
-    public:
-        typedef std::vector<T> Vec;
-        virtual Vec ToVector() const = 0;
-        virtual bool FromVector(const Vec& v) = 0;
-        virtual size_t GetDimension() const = 0;
-    };
-
-    typedef Vectorisable<float>  VectorisableF;
-    typedef Vectorisable<double> VectorisableD;
-
     /**
-     * Non-linear Least Squares Problem
+     * Non-linear least squares problem.
      */
     class LeastSquaresProblem
     {
@@ -38,7 +26,7 @@ namespace seq2map
         virtual VectorisableD::Vec Initialise() = 0;
 
         virtual VectorisableD::Vec operator() (const VectorisableD::Vec& x) const = 0;
-        inline virtual VectorisableD::Vec operator() (const VectorisableD& vec) { return (*this)(vec.ToVector()); }
+        VectorisableD::Vec operator() (const VectorisableD& vec) const;
 
         virtual cv::Mat ComputeJacobian(const VectorisableD::Vec& x, VectorisableD::Vec& y) const;
         

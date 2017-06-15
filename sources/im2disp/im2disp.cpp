@@ -76,7 +76,7 @@ void MyApp::SetOptions(Options& o, Options& h, Positional& p)
         ("sec",       po::value<int>   (&m_secCamIdx  )->default_value(         -1), "Index of the secondary camera for IN-SEQ mode.")
     //  ("geometry",  po::value<String>(&m_geometry   )->default_value(       "LR"), "Configuration of stereo cameras. This option is automatically determined for IN-SEQ mode.")
         ("ext,e",     po::value<String>(&m_extension  )->default_value(     ".png"), "The extension name of the output disparity files. Must be a valid image extension supported by OpenCV.")
-        ("cam,c",     po::value<String>(&m_index      )->default_value("index.yml"), "Select camera from a sequence database to enable IN-SEQ mode.");
+        ("cam,c",     po::value<String>(&m_index      )->default_value("index.yml"), "Path to where the index of generated feature files to be written. Set to empty to disable index generation. This option is ignored for IN-SEQ mode.");
 
     // three positional arguments - input and output directories
     h.add_options()
@@ -147,7 +147,7 @@ bool MyApp::Init()
             return false;
         }
 
-        pair = seq.FindStereoPair(priCamIdx, secCamIdx);
+        pair = seq.GetStereoPair(priCamIdx, secCamIdx);
 
         if (!pair)
         {
@@ -234,7 +234,7 @@ bool MyApp::Execute()
         size_t frames = 0, bytes = 0;
         size_t files = m_priImageStore.GetItems(); // == m_secImageStore.GetItems()
 
-        E_INFO << "feature extraction procedure starts for " << files << " file(s)";
+        E_INFO << "stereo matching procedure starts for " << files << " file(s)";
         E_INFO << "primary source:   " << fullpath(m_priImageStore.GetRoot());
         E_INFO << "secondary source: " << fullpath(m_secImageStore.GetRoot());
         E_INFO << "output folder:    " << fullpath(m_dispStore.GetRoot());

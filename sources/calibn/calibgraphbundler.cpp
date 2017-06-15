@@ -11,17 +11,22 @@ void castTo64F(const T0& pts32, T1& pts64)
     tmp.copyTo(dst);
 }
 
-VectorisableD::Vec CalibGraphBundler::BundleParams::ToVector() const
+bool CalibGraphBundler::BundleParams::Store(Vec& v) const
 {
     assert(intrinsics.size() == extrinsics.size());
 
-    Vec v;
     v.reserve(GetDimension());
 
     for (size_t cam = 0; cam < intrinsics.size(); cam++)
     {
-        Vec vi = intrinsics[cam].ToVector();
-        Vec ve = extrinsics[cam].ToVector();
+        Vec vi, ve;;
+
+        if (!intrinsics[cam].Store(vi) ||
+            !extrinsics[cam].Store(ve))
+        {
+            E_ERROR << "error vectorising camera parameters";
+            return false;
+        }
 
         v.insert(v.end(), vi.begin(), vi.end());
         v.insert(v.end(), ve.begin(), ve.end());
@@ -29,14 +34,21 @@ VectorisableD::Vec CalibGraphBundler::BundleParams::ToVector() const
 
     for (size_t view = 0; view < poses.size(); view++)
     {
-        Vec vp = poses[view].ToVector();
+        Vec vp;
+
+        if (!poses[view].Store(vp))
+        {
+            E_ERROR << "error vectorising pose parameters";
+            return false;
+        }
+
         v.insert(v.end(), vp.begin(), vp.end());
     }
 
-    return v;
+    return true;
 }
 
-bool CalibGraphBundler::BundleParams::FromVector(const Vec& v)
+bool CalibGraphBundler::BundleParams::Restore(const Vec& v)
 {
     if (v.size() != GetDimension())
     {
@@ -51,8 +63,8 @@ bool CalibGraphBundler::BundleParams::FromVector(const Vec& v)
         Vec vi(i, i + intrinsics[cam].GetDimension()); i += vi.size();
         Vec ve(i, i + extrinsics[cam].GetDimension()); i += ve.size();
 
-        intrinsics[cam].FromVector(vi);
-        extrinsics[cam].FromVector(ve);
+        intrinsics[cam].Restore(vi);
+        extrinsics[cam].Restore(ve);
 
         //E_INFO << "intrinsics " << cam << ": " << mat2string(cv::Mat(intrinsics[cam].ToVector()));
         //E_INFO << "extrinsics " << cam << ": " << mat2string(cv::Mat(extrinsics[cam].ToVector()));
@@ -61,7 +73,7 @@ bool CalibGraphBundler::BundleParams::FromVector(const Vec& v)
     for (size_t view = 0; view < poses.size(); view++)
     {
         Vec vp(i, i + poses[view].GetDimension()); i += vp.size();
-        poses[view].FromVector(vp);
+        poses[view].Restore(vp);
 
         //E_INFO << "view " << view << ": " << mat2string(cv::Mat(poses[view].ToVector()));
     }
@@ -199,7 +211,7 @@ VectorisableD::Vec CalibGraphBundler::operator() (const VectorisableD::Vec& x) c
     size_t cams = m_params.intrinsics.size(); // = m_params.extrinsics.size()
     BundleParams params(cams, m_views.size());
 
-    if (!params.FromVector(x))
+    if (!params.Restore(x))
     {
         E_ERROR << "error devectorising parameters";
         return VectorisableD::Vec(m_conds, 0);

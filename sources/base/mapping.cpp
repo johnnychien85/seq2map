@@ -4,17 +4,15 @@ using namespace seq2map;
 
 //==[ Map ]===================================================================//
 
-void Map::RegisterSource(FeatureStore::ConstOwn& store)
-{
-    if (!store) return;
-    GetSource(store->GetIndex()).store = store;
-}
-
 Landmark& Map::AddLandmark()
 {
     return Dim0(m_newLandmarkId++);
 }
 
+Landmark& MergeLandmark(Landmark& li, Landmark& lj)
+{
+    return li;
+}
 
 //==[ Landmark ]==============================================================//
 
@@ -128,13 +126,19 @@ bool FeatureMatching::IsOkay() const
     return src.store && dst.store && !(src.store->GetIndex() == dst.store->GetIndex() && src.offset == dst.offset);
 }
 
+bool FeatureMatching::IsCrossed() const
+{
+    Camera::ConstOwn cam0, cam1;
+    return IsOkay() && (cam0 = src.store->GetCamera()) && (cam1 = dst.store->GetCamera()) && cam0->GetIndex() != cam1->GetIndex();
+}
+
 bool FeatureMatching::InRange(size_t t, size_t tn) const
 {
     int ti = static_cast<int>(t) + src.offset;
     int tj = static_cast<int>(t) + dst.offset;
 
-    return (ti >= 0 && ti <= static_cast<int>(tn) &&
-            tj >= 0 && tj <= static_cast<int>(tn));
+    return (ti >= 0 && ti < static_cast<int>(tn) &&
+            tj >= 0 && tj < static_cast<int>(tn));
 }
 
 String FeatureMatching::ToString() const
@@ -185,9 +189,15 @@ Mapper::Capability MultiFrameFeatureIntegration::GetCapability() const
 {
     Capability capability;
 
-    capability.motion = m_matchings.size() > 0;
+    capability.motion = false;
     capability.metric = m_dispStores.size() > 0;
     capability.dense = false;
+
+    BOOST_FOREACH (const FeatureMatching& m, m_matchings)
+    {
+        capability.motion |= !m.IsSynchronised();
+        capability.metric |= m.IsCrossed();
+    }
 
     return capability;
 }
@@ -198,7 +208,7 @@ bool MultiFrameFeatureIntegration::SLAM(Map& map, size_t t0, size_t tn)
     {
         BOOST_FOREACH (FeatureMatching& m, m_matchings)
         {
-            if (!m(map, t))
+            if (m.InRange(t, tn) && !m(map, t))
             {
                 E_ERROR << "error matching " << m.ToString();
                 return false;

@@ -10,6 +10,8 @@
 namespace fs = boost::filesystem;
 namespace logging = boost::log;
 
+using namespace seq2map;
+
 namespace seq2map
 {
     Indices makeIndices(size_t start, size_t end)
@@ -115,9 +117,9 @@ namespace seq2map
         cv::Mat K64f;
         K.convertTo(K64f, CV_64F);
 
-        if (K64f.at<double>(1,0) != 0 ||
-            K64f.at<double>(2,0) != 0 || K64f.at<double>(2,1) != 0 ||
-            K64f.at<double>(2,2) != 1)
+        if (K64f.at<double>(1, 0) != 0 ||
+            K64f.at<double>(2, 0) != 0 || K64f.at<double>(2, 1) != 0 ||
+            K64f.at<double>(2, 2) != 1)
         {
             E_WARNING << "the camera matrix has to be an upper triangular matrix with the third diagonal entry set to 1";
             return false;
@@ -162,7 +164,7 @@ namespace seq2map
         Paths files;
         const fs::directory_iterator endItr;
 
-        for (fs::directory_iterator itr(root); itr != endItr ; itr++)
+        for (fs::directory_iterator itr(root); itr != endItr; itr++)
         {
             if (!fs::is_regular(*itr)) continue;
 
@@ -220,39 +222,39 @@ namespace seq2map
     Path getRelativePath(const Path& path, const Path& base)
     {
 #if BOOST_VERSION >= 106000
-		// since Boost 1.60 we have a nice useful function
+        // since Boost 1.60 we have a nice useful function
         return path.empty() ? path : fs::relative(fullpath(path), fullpath(base));
 #else
-		// for older Boost we have the code taken from a ticket
-		if (path.empty()) return path;
+        // for older Boost we have the code taken from a ticket
+        if (path.empty()) return path;
 
-		Path fullPath = fullpath(path);
-		Path fullBase = fullpath(base);
-		Path relPath;
+        Path fullPath = fullpath(path);
+        Path fullBase = fullpath(base);
+        Path relPath;
 
-		fs::path::const_iterator pathItr = fullPath.begin(), pathEnd = fullPath.end();
-		fs::path::const_iterator baseItr = fullBase.begin(), baseEnd = fullBase.end();
+        fs::path::const_iterator pathItr = fullPath.begin(), pathEnd = fullPath.end();
+        fs::path::const_iterator baseItr = fullBase.begin(), baseEnd = fullBase.end();
 
-		// skip the common part
-		while (pathItr != pathEnd && baseItr != baseEnd && *pathItr == *baseItr)
-		{
-			pathItr++;
-			baseItr++;
-		}
+        // skip the common part
+        while (pathItr != pathEnd && baseItr != baseEnd && *pathItr == *baseItr)
+        {
+            pathItr++;
+            baseItr++;
+        }
 
-		while (baseItr != baseEnd)
-		{
-			if (*baseItr != ".") relPath /= "..";
-			baseItr++;
-		}
+        while (baseItr != baseEnd)
+        {
+            if (*baseItr != ".") relPath /= "..";
+            baseItr++;
+        }
 
-		while (pathItr != pathEnd)
-		{
-			relPath /= *pathItr;
-			pathItr++;
-		}
+        while (pathItr != pathEnd)
+        {
+            relPath /= *pathItr;
+            pathItr++;
+        }
 
-		return relPath;
+        return relPath;
 #endif
     }
 
@@ -271,7 +273,7 @@ namespace seq2map
         catch (std::exception& ex)
         {
             std::cerr << "error logging to file " << path.string() << std::endl;
-		    std::cerr << ex.what() << std::endl;
+            std::cerr << ex.what() << std::endl;
 
             return false;
         }
@@ -330,7 +332,7 @@ namespace seq2map
         if (matSize.height * matSize.width != strings.size())
         {
             E_ERROR << "given strings with " << strings.size()
-                    << " element(s) do not fit the desired matrix size of " << size2string(matSize);
+                << " element(s) do not fit the desired matrix size of " << size2string(matSize);
             return cv::Mat();
         }
 
@@ -338,7 +340,7 @@ namespace seq2map
 
         for (size_t i = 0; i < strings.size(); i++)
         {
-            data[i] = (float) atof(strings[i].c_str());
+            data[i] = (float)atof(strings[i].c_str());
         }
 
         return cv::Mat(data).reshape(0, matSize.height).clone();
@@ -348,7 +350,7 @@ namespace seq2map
     {
         size_t start_pos = subject.find(from);
 
-        if(start_pos == String::npos) return false;
+        if (start_pos == String::npos) return false;
         subject.replace(start_pos, from.length(), to);
 
         return true;
@@ -396,167 +398,338 @@ namespace seq2map
         return im;
     }
 
-	Time unow()
-	{
-		return boost::posix_time::microsec_clock::local_time();
-	}
+    Time unow()
+    {
+        return boost::posix_time::microsec_clock::local_time();
+    }
 
-	String time2string(const Time& time)
-	{
-		return boost::posix_time::to_simple_string(time);
-	}
+    String time2string(const Time& time)
+    {
+        return boost::posix_time::to_simple_string(time);
+    }
+}
+
+//==[ PersistentMat ]=========================================================//
+
+const seq2map::String PersistentMat::s_magicString = "CVMAT";
+
+bool PersistentMat::Store(Path& to) const
+{
+    if (mat.dims > 2)
+    {
+        E_ERROR << "multi-dimensional matrix not supported";
+        return false;
+    }
+
+    std::ofstream os(to.string().c_str(), std::ios::out | std::ios::binary);
+
+    if (!os.is_open())
+    {
+        E_ERROR << "error opening output stream to " << to;
+        return false;
+    }
+
+    try
+    {
+        // write header..
+        os << s_magicString << " ";
+        os << CvDepthToString(mat.depth()) << " ";
+
+        const int m = mat.rows;
+        const int n = mat.cols;
+        const int k = mat.channels();
+
+        os.write((char*)&m, sizeof m);
+        os.write((char*)&n, sizeof n);
+        os.write((char*)&k, sizeof k);
+
+        Dump(mat, os); // write data
+
+        os.close(); // finished
+    }
+    catch (std::exception& ex)
+    {
+        E_ERROR << "exception caught: " << ex.what();
+        return false;
+    }
+
+    return true;
+}
     
-    void Speedometre::Start()
+bool PersistentMat::Restore(const Path& from)
+{
+    std::ifstream is(from.string().c_str(), std::ios::in | std::ios::binary);
+
+    if (!is.is_open())
     {
-        if (!m_activated)
-        {
-            m_activated = true;
-            m_timer.start();
-
-            return;
-        }
-
-        if (!m_timer.is_stopped())
-        {
-            E_WARNING << "the operation takes no effect as the timer is already ticking!!";
-            return;
-        }
-
-        m_timer.resume();
+        E_ERROR << "error opening input stream from " << from;
+        return false;
     }
 
-    void Speedometre::Update(size_t amount)
+    try
     {
-        if (!m_activated || m_timer.is_stopped())
+        char magic[5];
+        is.read((char*)&magic, sizeof magic);
+
+        if (!boost::equal(magic, s_magicString))
         {
-            E_WARNING << "the operation takes no effect as the timer is not ticking!!";
-            return;
-        }
-
-        m_accumulated += amount;
-        m_freq++;
-    }
-
-    void Speedometre::Stop(size_t amount)
-    {
-        Update(amount);
-        m_timer.stop();
-    }
-
-    void Speedometre::Reset()
-    {
-        m_activated = false;
-        m_accumulated = 0;
-        m_freq = 0;
-        m_timer.stop();
-    }
-
-    double Speedometre::GetElapsedSeconds() const
-    {
-        boost::timer::cpu_times elapsed = m_timer.elapsed();
-
-        return (double) boost::chrono::duration_cast<boost::chrono::milliseconds>(
-            boost::chrono::nanoseconds(elapsed.wall)).count() / 1000.0f;
-    }
-
-    String Speedometre::ToString() const
-    {
-        std::stringstream ss;
-        ss << m_displayName << ": " << std::fixed << std::setprecision(2) << GetSpeed() << " " << m_displayUnit;
-
-        return ss.str();
-    }
-
-    App::App(int argc, char* argv[])
-    : m_parser(boost::program_options::command_line_parser(argc, argv)),
-      m_exec(argc > 0 ? String(argv[0]) : "")
-    {
-        // make the default path to the log file
-        m_logfile = m_exec;
-        m_logfile.replace_extension("log");
-    }
-
-    int App::Run()
-    {
-        namespace po = boost::program_options;
-
-        Options o("General options"), h("hidden");
-        Positional p;
-        String logfile;
-        Strings unknownArgs;
-
-        o.add_options()
-            ("help,h",  po::bool_switch  (&m_help )->default_value(false),              "Show this help message and exit.")
-            ("logfile", po::value<String>(&logfile)->default_value(m_logfile.string()), "Path to the log file.");
-
-        SetOptions(o, h, p);
-
-        try
-        {
-            Options a; // all options
-            po::parsed_options parsed = m_parser.options(a.add(o).add(h)).positional(p).allow_unregistered().run();
-            po::variables_map vm;
-
-            po::store(parsed, vm);
-            po::notify(vm);
-
-            unknownArgs = po::collect_unrecognized(parsed.options, po::exclude_positional);
-        }
-        catch (po::error& pe)
-        {
-            E_FATAL << "error parsing general arguments: " << pe.what();
-            return EXIT_FAILURE;
-        }
-        catch (std::exception& ex)
-        {
-            E_FATAL << "exception caugth: " << ex.what();
-            return EXIT_FAILURE;
-        }
-
-        if (m_help)
-        {
-            ShowHelp(o);
-            return EXIT_SUCCESS;
-        }
-
-        if (!initLogFile(m_logfile = logfile))
-        {
-            E_WARNING << "error writing to log file " << m_logfile;
-        }
-
-        try
-        {
-            if (!ProcessUnknownArgs(unknownArgs) || !Init())
-            {
-                ShowSynopsis();
-                return EXIT_FAILURE;
-            }
-
-            return Execute() ? EXIT_SUCCESS : EXIT_FAILURE;
-        }
-        catch (std::exception& ex)
-        {
-            E_FATAL << "unhandled exception caught";
-            E_FATAL << ex.what();
-
-            return EXIT_FAILURE;
-        }
-    }
-
-    bool App::ProcessUnknownArgs(const Strings& args)
-    {
-        if (!args.empty())
-        {
-            E_ERROR << "unknown argument(s) detected: " << makeNameList(args);
+            E_ERROR << "magic string not found";
             return false;
         }
 
-        return true;
+        String depthString;
+        std::getline(is, depthString, ' ');
+
+        int depth = StringToCvDepth(depthString);
+
+        if (depth == CV_USRTYPE1)
+        {
+            E_ERROR << "invalid depth";
+            return false;
+        }
+
+        int m, n, k;
+        is.read((char*)&m, sizeof m);
+        is.read((char*)&n, sizeof n);
+        is.read((char*)&k, sizeof k);
+
+        mat = cv::Mat(m, n, CV_MAKE_TYPE(depth, k));
+
+        Dump(is, mat);
+
+        is.close();
+    }
+    catch (std::exception& ex)
+    {
+        E_ERROR << "exception caught: " << ex.what();
+        return false;
     }
 
-    void App::ShowSynopsis() const
+    return true;
+}
+
+String PersistentMat::CvDepthToString(int depth)
+{
+    switch (depth)
     {
-        std::cout << std::endl;
-        std::cout << "Try \"" << m_exec.string() << " -h\" for usage listing." << std::endl;
+    case CV_8U:       return "8U";  break;
+    case CV_8S:       return "8S";  break;
+    case CV_16U:      return "16U"; break;
+    case CV_16S:      return "16S"; break;
+    case CV_32S:      return "32S"; break;
+    case CV_32F:      return "32F"; break;
+    case CV_64F:      return "64F"; break;
+    case CV_USRTYPE1: return "USR"; break;
+    }
+
+    E_WARNING << "unknown matrix depth " << depth;
+
+    return CvDepthToString(CV_USRTYPE1);
+}
+
+int PersistentMat::StringToCvDepth(const String& depth)
+{
+    if      (depth == "8U")   return CV_8U;
+    else if (depth == "8S")   return CV_8S;
+    else if (depth == "16U")  return CV_16U;       
+    else if (depth == "16S")  return CV_16S;  
+    else if (depth == "32S")  return CV_32S;  
+    else if (depth == "32F")  return CV_32F;  
+    else if (depth == "64F")  return CV_64F; 
+    else if (depth == "USR")  return CV_USRTYPE1;  
+
+    E_WARNING << "unknown depth string \"" << depth << "\"";
+
+    return StringToCvDepth("USR");
+}
+
+void PersistentMat::Dump(const cv::Mat& mat, std::ostream& os)
+{
+    if (mat.isContinuous())
+    {
+        os.write((char*)mat.data, mat.elemSize() * mat.total());
+    }
+    else
+    {
+        const size_t bytesPerRow = mat.elemSize() * static_cast<size_t>(mat.cols);
+        for (int i = 0; i < mat.rows; i++)
+        {
+            os.write(mat.ptr<char>(i), bytesPerRow);
+        }
     }
 }
+
+void PersistentMat::Dump(std::istream& is, cv::Mat& mat)
+{
+    if (mat.isContinuous())
+    {
+        is.read((char*)mat.data, mat.elemSize() * mat.total());
+    }
+    else
+    {
+        const size_t bytesPerRow = mat.elemSize() * static_cast<size_t>(mat.cols);
+        for (int i = 0; i < mat.rows; i++)
+        {
+            is.read(mat.ptr<char>(i), bytesPerRow);
+        }
+    }
+}
+
+//==[ Speedometre ]===========================================================//
+
+void Speedometre::Start()
+{
+    if (!m_activated)
+    {
+        m_activated = true;
+        m_timer.start();
+
+        return;
+    }
+
+    if (!m_timer.is_stopped())
+    {
+        E_WARNING << "the operation takes no effect as the timer is already ticking!!";
+        return;
+    }
+
+    m_timer.resume();
+}
+
+void Speedometre::Update(size_t amount)
+{
+    if (!m_activated || m_timer.is_stopped())
+    {
+        E_WARNING << "the operation takes no effect as the timer is not ticking!!";
+        return;
+    }
+
+    m_accumulated += amount;
+    m_freq++;
+}
+
+void Speedometre::Stop(size_t amount)
+{
+    Update(amount);
+    m_timer.stop();
+}
+
+void Speedometre::Reset()
+{
+    m_activated = false;
+    m_accumulated = 0;
+    m_freq = 0;
+    m_timer.stop();
+}
+
+double Speedometre::GetElapsedSeconds() const
+{
+    boost::timer::cpu_times elapsed = m_timer.elapsed();
+
+    return (double) boost::chrono::duration_cast<boost::chrono::milliseconds>(
+        boost::chrono::nanoseconds(elapsed.wall)).count() / 1000.0f;
+}
+
+String Speedometre::ToString() const
+{
+    std::stringstream ss;
+    ss << m_displayName << ": " << std::fixed << std::setprecision(2) << GetSpeed() << " " << m_displayUnit;
+
+    return ss.str();
+}
+
+//==[ App ]===================================================================//
+
+App::App(int argc, char* argv[])
+: m_parser(boost::program_options::command_line_parser(argc, argv)),
+    m_exec(argc > 0 ? String(argv[0]) : "")
+{
+    // make the default path to the log file
+    m_logfile = m_exec;
+    m_logfile.replace_extension("log");
+}
+
+int App::Run()
+{
+    namespace po = boost::program_options;
+
+    Options o("General options"), h("hidden");
+    Positional p;
+    String logfile;
+    Strings unknownArgs;
+
+    o.add_options()
+        ("help,h",  po::bool_switch  (&m_help )->default_value(false),              "Show this help message and exit.")
+        ("logfile", po::value<String>(&logfile)->default_value(m_logfile.string()), "Path to the log file.");
+
+    SetOptions(o, h, p);
+
+    try
+    {
+        Options a; // all options
+        po::parsed_options parsed = m_parser.options(a.add(o).add(h)).positional(p).allow_unregistered().run();
+        po::variables_map vm;
+
+        po::store(parsed, vm);
+        po::notify(vm);
+
+        unknownArgs = po::collect_unrecognized(parsed.options, po::exclude_positional);
+    }
+    catch (po::error& pe)
+    {
+        E_FATAL << "error parsing general arguments: " << pe.what();
+        return EXIT_FAILURE;
+    }
+    catch (std::exception& ex)
+    {
+        E_FATAL << "exception caugth: " << ex.what();
+        return EXIT_FAILURE;
+    }
+
+    if (m_help)
+    {
+        ShowHelp(o);
+        return EXIT_SUCCESS;
+    }
+
+    if (!initLogFile(m_logfile = logfile))
+    {
+        E_WARNING << "error writing to log file " << m_logfile;
+    }
+
+    try
+    {
+        if (!ProcessUnknownArgs(unknownArgs) || !Init())
+        {
+            ShowSynopsis();
+            return EXIT_FAILURE;
+        }
+
+        return Execute() ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+    catch (std::exception& ex)
+    {
+        E_FATAL << "unhandled exception caught";
+        E_FATAL << ex.what();
+
+        return EXIT_FAILURE;
+    }
+}
+
+bool App::ProcessUnknownArgs(const Strings& args)
+{
+    if (!args.empty())
+    {
+        E_ERROR << "unknown argument(s) detected: " << makeNameList(args);
+        return false;
+    }
+
+    return true;
+}
+
+void App::ShowSynopsis() const
+{
+    std::cout << std::endl;
+    std::cout << "Try \"" << m_exec.string() << " -h\" for usage listing." << std::endl;
+}
+

@@ -123,6 +123,11 @@ namespace seq2map
         const ImageStore& GetImageStore() const                     { return m_imageStore; }
         inline size_t GetFrames() const                             { return m_imageStore.GetItems(); }
 
+        //
+        // Geometry
+        //
+        template<typename T> Geometry GetImagePoints() const;
+
         //inline void World2Camera(const Points3D& worldPts, Points3D& cameraPts) const { GetExtrinsics().Apply(cameraPts = worldPts); };
         //void Camera2Image(const Points3D& cameraPts, Points2D& imagePts) const;
         //void World2Image(const Points3D& worldPts, Points2D& imagePts) const;
@@ -164,49 +169,54 @@ namespace seq2map
         /**
          * Geometric configuration of the recrified cameras.
          */
-        enum Geometry
+        enum Configuration
         {
-            LEFT_RIGHT,   // Classical lateral configuration
-            TOP_DOWN,     // Vertically arranged configuration
-            BACK_FORWARD, // Polar rectified configuration
+            LEFT_RIGHT,   ///< Classical lateral configuration
+            TOP_BOTTOM,   ///< Vertically arranged configuration
+            BACK_FORWARD, ///< Polar rectified configuration
             UNKNOWN
         };
 
         //
         // Constructor and destructor
         //
-        RectifiedStereo() : m_config(UNKNOWN), m_baseline(0) {}
-        RectifiedStereo(Camera::ConstOwn& cam0, Camera::ConstOwn& cam1) { Create(cam0, cam1); }
+        RectifiedStereo() : m_config(UNKNOWN), m_baseline(0), m_rays(Geometry::PACKED) {}
+        RectifiedStereo(Camera::ConstOwn& pri, Camera::ConstOwn& sec) : RectifiedStereo() { Create(pri, sec); }
         virtual ~RectifiedStereo() {}
 
         //
         // Creation
         //
-        bool Create(Camera::ConstOwn& cam0, Camera::ConstOwn& cam1);
-
-        static Own Create(Camera::Own& cam0, Camera::Own& cam1) { return Own(new RectifiedStereo(Camera::ConstOwn(cam0), Camera::ConstOwn(cam1))); }
+        bool Create(Camera::ConstOwn& pri, Camera::ConstOwn& sec);
+        static Own Create(Camera::Own& pri, Camera::Own& sec) { return Own(new RectifiedStereo(Camera::ConstOwn(pri), Camera::ConstOwn(sec))); }
 
         //
         // Accessor
         //
+        void Clear();
+        String ToString() const;
+
+        inline bool IsOkay() const { return m_priCam && m_secCam; }
         inline Camera::ConstOwn GetPrimaryCamera()   const { return m_priCam; }
         inline Camera::ConstOwn GetSecondaryCamera() const { return m_secCam; }
-        inline bool IsOkay() const { return m_priCam && m_secCam; }
+        inline Configuration    GetConfiguration()   const { return m_config; }
+        inline double           GetBaseline()        const { return m_baseline; }
 
         //
         // Misc.
         //
+        static Configuration GetConfiguration(const EuclideanTransform& rel, double& baseline);
         Geometry Backproject(const cv::Mat& dp) const;
-        String ToString() const;
 
     private:
         friend class Sequence; // for restoring camera references
 
-        Camera::ConstOwn m_priCam; // reference to the primary camera
-        Camera::ConstOwn m_secCam; // reference to the secondary camera
-
-        Geometry m_config; // geometric configuration of the stereo pair
-        double m_baseline; // length of baseline
+        Camera::ConstOwn m_priCam; ///< reference to the primary camera
+        Camera::ConstOwn m_secCam; ///< reference to the secondary camera
+        Configuration m_config;    ///< geometric configuration of the stereo pair
+        double m_baseline;         ///< length of baseline
+        double m_depthDispRatio;   ///< the multiplier applied to inverse disparity to find depth
+        Geometry m_rays;           ///< back-projected image points of primary camera
     };
 
     /**
@@ -247,8 +257,6 @@ namespace seq2map
         Camera::ConstOwn m_cam;
         FeatureDetextractor::Own m_dxtor;
     };
-
-    typedef std::vector<FeatureStore> FeatureStores;
 
     /**
      * Disparity map store.
@@ -359,7 +367,10 @@ namespace seq2map
         inline const FeatureStore::Map& GetFeatureStores()     const { return m_kptsStores; }
         inline const DisparityStore::Map& GetDisparityStores() const { return m_dispStores; }
 
-        RectifiedStereo::ConstOwn FindStereoPair(size_t priCamIdx, size_t secCamIdx) const;
+        Camera::ConstOwn GetCamera(size_t index) const { return Camera::Find(m_cameras, index); }
+        FeatureStore::ConstOwn GetFeatureStore(size_t index) const { return FeatureStore::Find(m_kptsStores, index); }
+        DisparityStore::ConstOwn GetDisparityStore(size_t index) const { return DisparityStore::Find(m_dispStores, index); }
+        RectifiedStereo::ConstOwn GetStereoPair(size_t priCamIdx, size_t secCamIdx) const;
 
         //
         // Persistence

@@ -145,23 +145,23 @@ bool Geometry::Reshape(Shape src, Shape dst, cv::Mat& mat, size_t rows)
 
     switch (src)
     {
-    case ROW_MAJOR:
+    case ROW_MAJOR: // ROW_MAJOR -> PACKED
         mat = mat.reshape(mat.cols, static_cast<int>(rows));
         return false;
 
-    case COL_MAJOR:
+    case COL_MAJOR: // COL_MAJOR -> PACKED
         mat = cv::Mat(mat.t()).reshape(mat.rows, static_cast<int>(rows));
         return true;
     }
 
     switch (dst)
     {
-    case ROW_MAJOR:
-        mat = mat.reshape(1);
+    case ROW_MAJOR: // PACKED -> ROW_MAJOR
+        mat = mat.reshape(1, mat.rows * mat.cols);
         return false;
 
-    case COL_MAJOR:
-        mat = mat.reshape(1).t();
+    case COL_MAJOR: // PACKED -> COL_MAJOR
+        mat = mat.reshape(1, mat.rows * mat.cols).t();
         return true;
     }
 
@@ -172,7 +172,9 @@ bool Geometry::Reshape(Shape src, Shape dst, cv::Mat& mat, size_t rows)
 Geometry Geometry::MakeHomogeneous(const Geometry& g, double w)
 {
     const cv::Mat& src = g.mat;
-    cv::Mat dst;
+    /***/ cv::Mat  dst;
+
+    const int m = static_cast<int>(g.GetElements());
 
     switch (g.shape)
     {
@@ -191,8 +193,8 @@ Geometry Geometry::MakeHomogeneous(const Geometry& g, double w)
     case PACKED:
         //cv::convertPointsToHomogeneous(src, dst);
         dst = cv::Mat(src.rows, src.cols, CV_MAKETYPE(src.depth(), src.channels() + 1));
-        src.reshape(1).copyTo(dst.reshape(1).colRange(0, src.channels()));
-        dst.reshape(1).col(src.channels()).setTo(w);
+        src.reshape(1, m).copyTo(dst.reshape(1, m).colRange(0, src.channels()));
+        dst.reshape(1, m).col(src.channels()).setTo(w);
         break;
     }
 
@@ -202,7 +204,9 @@ Geometry Geometry::MakeHomogeneous(const Geometry& g, double w)
 Geometry Geometry::FromHomogeneous(const Geometry& g)
 {
     const cv::Mat& src = g.mat;
-    cv::Mat dst;
+    /***/ cv::Mat  dst;
+
+    const int m = static_cast<int>(g.GetElements());
 
     switch (g.shape)
     {
@@ -225,10 +229,10 @@ Geometry Geometry::FromHomogeneous(const Geometry& g)
     case PACKED:
         //cv::convertPointsFromHomogeneous(src, dst);
         dst = cv::Mat(src.rows, src.cols, CV_MAKETYPE(src.depth(), src.channels() - 1));
-        dst = dst.reshape(1); // to row major order
+        dst = dst.reshape(1, m); // to row major order
         for (int j = 0; j < dst.cols; j++)
         {
-            dst.col(j) = src.col(j) / src.col(dst.cols);
+            dst.col(j) = src.reshape(1, m).col(j) / src.reshape(1, m).col(dst.cols);
         }
         dst = dst.reshape(src.channels() - 1, src.rows);
         break;
@@ -561,7 +565,7 @@ Geometry& EuclideanTransform::operator() (Geometry& g) const
         g.mat = GetTransformMatrix(homogeneous, true, g.mat.type()) * g.mat;
         break;
     case Geometry::PACKED:
-        g.mat = g.mat.reshape(1);
+        g.mat = g.mat.reshape(1, static_cast<int>(g.GetElements()));
         g.mat = g.mat * GetTransformMatrix(homogeneous, false, g.mat.type());
         g.mat = g.mat.reshape(homogeneous ? 4 : 3, m);
         break;
@@ -588,18 +592,18 @@ bool EuclideanTransform::Restore(const cv::FileNode& fn)
     return SetRotationVector(rvec) && SetTranslation(tvec);
 }
 
-VectorisableD::Vec EuclideanTransform::ToVector() const
+bool EuclideanTransform::Store(VectorisableD::Vec& v) const
 {
-    Vec v(6);
+    v.resize(6);
     size_t i = 0;
 
     for (int j = 0; j < 3; j++) v[i++] = m_rvec.at<double>(j);
     for (int j = 0; j < 3; j++) v[i++] = m_tvec.at<double>(j);
 
-    return v;
+    return true;
 }
 
-bool EuclideanTransform::FromVector(const Vec& v)
+bool EuclideanTransform::Restore(const Vec& v)
 {
     if (v.size() != GetDimension()) return false;
 
@@ -685,6 +689,19 @@ bool Motion::Restore(const Path& path)
 
 //==[ PinholeModel ]==========================================================//
 
+bool seq2map::PinholeModel::operator== (const PinholeModel& rhs) const
+{
+    Point2D f0, c0;
+    Point2D f1, c1;
+
+    const PinholeModel& lhs = *this;
+
+    lhs.GetValues(f0.x, f0.y, c0.x, c0.y);
+    rhs.GetValues(f1.x, f1.y, c1.x, c1.y);
+
+    return f0 == f1 && c0 == c1;
+}
+
 Point3F& PinholeModel::operator() (Point3F& pt) const
 {
     const double* m = m_matrix.ptr<double>();
@@ -740,7 +757,7 @@ Geometry PinholeModel::Project(const Geometry& g, ProjectiveSpace space) const
         break;
 
     case Geometry::PACKED:
-        proj.mat = cv::Mat(g.mat.reshape(1) * K.t()).reshape(3, g.mat.rows);
+        proj.mat = cv::Mat(g.mat.reshape(1, static_cast<int>(g.GetElements())) * K.t()).reshape(3, g.mat.rows);
         break;
     }
 
@@ -769,7 +786,7 @@ Geometry PinholeModel::Backproject(const Geometry& g) const
 {
     const size_t d = g.GetDimension();
 
-    if (d != 2 || d != 3)
+    if (d != 2 && d != 3)
     {
         E_ERROR << "geometry matrix must store either Euclidean 2D or homogeneous 3D coordinates (d=" << d << ")";
         return Geometry(g.shape);
@@ -828,7 +845,13 @@ cv::Mat PinholeModel::GetInverseCameraMatrix() const
     double fx, fy, cx, cy;
     GetValues(fx, fy, cx, cy);
 
-    return cv::Mat_<double>(3, 3) << 1.0f / fx, 0, 0, 0, 1.0f / fy, -cx / fx, -cy / fy, 1;
+    double k00 = 1.0f / fx, k02 = -cx / fx;
+    double k11 = 1.0f / fy, k12 = -cy / fy;
+
+    return (cv::Mat_<double>(3, 3) <<
+        k00, 0,   k02,
+        0,   k11, k12,
+        0,   0,   1);
 }
 
 void PinholeModel::SetValues(double fx, double fy, double cx, double cy)
@@ -871,15 +894,15 @@ bool PinholeModel::Restore(const cv::FileNode& fn)
     return true;
 }
 
-VectorisableD::Vec PinholeModel::ToVector() const
+bool PinholeModel::Store(Vec& v) const
 {
-    Vec v(4);
+    v.resize(4);
     GetValues(v[0], v[1], v[2], v[3]);
 
-    return v;
+    return true;
 }
 
-bool PinholeModel::FromVector(const Vec& v)
+bool PinholeModel::Restore(const Vec& v)
 {
     if (v.size() != GetDimension()) return false;
 
@@ -917,7 +940,7 @@ Geometry BouguetModel::Project(const Geometry& g, ProjectiveSpace space) const
         return proj;
     }
 
-    cv::projectPoints(g.shape == Geometry::PACKED ? g.mat.reshape(1) : g.mat,
+    cv::projectPoints(g.shape == Geometry::PACKED ? g.mat.reshape(1, static_cast<int>(g.GetElements())) : g.mat,
         EuclideanTransform::Identity.GetRotationMatrix(),
         EuclideanTransform::Identity.GetTranslation(),
         m_matrix, m_distCoeffs, proj.mat);
@@ -1128,13 +1151,13 @@ bool BouguetModel::Restore(const cv::FileNode & fn)
     return SetDistortionCoeffs(distCoeffs);
 }
 
-VectorisableD::Vec BouguetModel::ToVector() const
+bool BouguetModel::Store(Vec& v) const
 {
     throw std::exception("not implemented");
-    return Vec();
+    return false;
 }
 
-bool BouguetModel::FromVector(const Vec& v)
+bool BouguetModel::Restore(const Vec& v)
 {
     throw std::exception("not implemented");
     return false;

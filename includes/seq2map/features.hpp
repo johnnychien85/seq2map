@@ -72,9 +72,6 @@ namespace seq2map
         inline const cv::Mat GetDescriptors() const  { return m_descriptors; }
 
     protected:
-        static String MatType2String(int type);
-        static int    String2MatType(const String& type);
-
         static const String s_fileMagicNumber;
         static const char   s_fileHeaderSep;
 

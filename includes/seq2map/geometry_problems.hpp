@@ -2,6 +2,7 @@
 #define GEOMETRY_PROBLEMS_HPP
 
 #include <seq2map/geometry.hpp>
+#include <seq2map/solve.hpp>
 
 namespace seq2map
 {
@@ -227,7 +228,7 @@ namespace seq2map
         //
         virtual VectorisableD::Vec Initialise();
         virtual VectorisableD::Vec operator()(const VectorisableD::Vec& x) const;
-        virtual bool SetSolution(const VectorisableD::Vec& x) { return m_transform.FromVector(x); }
+        virtual bool SetSolution(const VectorisableD::Vec& x) { return m_transform.Restore(x); }
 
     protected:
         std::vector<AlignmentObjective::Own> m_objectives;

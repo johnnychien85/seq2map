@@ -89,44 +89,8 @@ seq2map::String ImageFeatureSet::NormType2String(int type)
     return "UNKNOWN";
 }
 
-seq2map::String ImageFeatureSet::MatType2String(int type)
-{
-    switch (type)
-    {
-    case CV_8U:       return "8U";  break;
-    case CV_8S:       return "8S";  break;
-    case CV_16U:      return "16U"; break;
-    case CV_16S:      return "16S"; break;
-    case CV_32S:      return "32S"; break;
-    case CV_32F:      return "32F"; break;
-    case CV_64F:      return "64F"; break;
-    case CV_USRTYPE1: return "USR"; break;
-    }
-
-    E_WARNING << "unknown matrix type " << type;
-
-    return MatType2String(CV_USRTYPE1);
-}
-
-int seq2map::ImageFeatureSet::String2MatType(const seq2map::String& type)
-{
-    if      (type == "8U")   return CV_8U;
-    else if (type == "8S")   return CV_8S;
-    else if (type == "16U")  return CV_16U;       
-    else if (type == "16S")  return CV_16S;  
-    else if (type == "32S")  return CV_32S;  
-    else if (type == "32F")  return CV_32F;  
-    else if (type == "64F")  return CV_64F; 
-    else if (type == "USR")  return CV_USRTYPE1;  
-
-    E_WARNING << "unknown type string \"" << type << "\"";
-
-    return String2MatType("USR");
-}
-
 int seq2map::ImageFeatureSet::String2NormType(const seq2map::String& type)
 {
-
     if      (type == "INF")      return NORM_INF;
     else if (type == "L1")       return NORM_L1;
     else if (type == "L2")       return NORM_L2;       
@@ -149,13 +113,15 @@ bool seq2map::ImageFeatureSet::Store(Path& path) const
         return false;
     }
 
+    static String type = PersistentMat::CvDepthToString(m_descriptors.type());
+
     // write the magic number first
     os << s_fileMagicNumber;
 
     // the header
-    os << "CV3" << s_fileHeaderSep;
-    os << NormType2String(m_normType)          << s_fileHeaderSep;
-    os << MatType2String(m_descriptors.type()) << s_fileHeaderSep;
+    os << "CV3"                       << s_fileHeaderSep;
+    os << NormType2String(m_normType) << s_fileHeaderSep;
+    os << type                        << s_fileHeaderSep;
 
     os.write((char*)&m_descriptors.rows, sizeof m_descriptors.rows);
     os.write((char*)&m_descriptors.cols, sizeof m_descriptors.cols);
@@ -172,7 +138,7 @@ bool seq2map::ImageFeatureSet::Store(Path& path) const
     }
 
     // feature vectors
-    os.write((char*)m_descriptors.data, m_descriptors.elemSize() * m_descriptors.total());
+    PersistentMat::Dump(m_descriptors, os);
 
     // end of file
     os.close();
@@ -236,8 +202,10 @@ bool ImageFeatureSet::Restore(const Path& path)
         m_keypoints.push_back(kp);
     }
 
-    m_descriptors = Mat::zeros(matSize.height, matSize.width, String2MatType(matType)); 
-    is.read((char*)m_descriptors.data, m_descriptors.elemSize() * m_descriptors.total());
+    const int type = PersistentMat::StringToCvDepth(matType);
+
+    m_descriptors = Mat::zeros(matSize.height, matSize.width, type); 
+    PersistentMat::Dump(is, m_descriptors);
 
     // TODO: add file corruption check (e.g. reaching EoF pre-maturely)
     // ..

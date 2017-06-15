@@ -144,6 +144,8 @@ bool KittiOdometryBuilder::BuildCamera(const Path& from, Camera::Map& cams, Rect
 
         Camera::Own cam = Camera::New(i);
 
+        cam->SetModel("Point Grey Flea 2 (FL2-14S3M-C)");
+
         // intrinsic parameters..
         cam->SetIntrinsics(PinholeModel::Own(new PinholeModel(K)));
 
@@ -396,9 +398,6 @@ bool KittiRawDataBuilder::BuildCamera(const Path& from, Camera::Map& cams, Recti
     assert(ncams == 4); // KITTI raw dataset should come with 4 cameras
 
     const size_t ref = 0; // index of the referenced camera; KITTI uses the first camera (idx=0)
-    const cv::Mat K = cam2cam.data[ref].P_rect.rowRange(0, 3).colRange(0, 3);
-    const cv::Mat K_inv = K.inv();
-
     cams.clear();
 
     for (size_t i = 0; i < ncams; i++)
@@ -410,33 +409,58 @@ bool KittiRawDataBuilder::BuildCamera(const Path& from, Camera::Map& cams, Recti
         // intrinsic parameters..
         if (rectified)
         {
+            const cv::Mat K = cam2cam.data[i].P_rect.rowRange(0, 3).colRange(0, 3);
+            const cv::Mat K_inv = K.inv();
+            cv::Mat RT = K_inv * cam2cam.data[i].P_rect;
+
             PinholeModel* intrinsics = new PinholeModel;
 
-            intrinsics->SetCameraMatrix(cam2cam.data[i].K);
-            cam->SetIntrinsics(PinholeModel::Own(intrinsics));
+            if (!intrinsics->SetCameraMatrix(K))
+            {
+                E_ERROR << "error setting camera matrix";
+                return false;
+            }
+
+            cam->SetIntrinsics(ProjectionModel::Own(intrinsics));
+
+            // TODO: take R_rect into account
+            // ...
+
+            if (!cam->GetExtrinsics().SetTransformMatrix(RT))
+            {
+                E_ERROR << "error setting transformation matrix";
+                return false;
+            }
         }
         else
         {
             BouguetModel* intrinsics = new BouguetModel;
+
+            if (!intrinsics->SetCameraMatrix(cam2cam.data[i].K))
+            {
+                E_ERROR << "error setting camera matrix";
+                return false;
+            }
+
+            if (!intrinsics->SetDistortionCoeffs(cam2cam.data[i].D))
+            {
+                E_ERROR << "error setting distortion coefficients";
+                return false;
+            }
             
-            intrinsics->SetCameraMatrix(cam2cam.data[i].K);
-            intrinsics->SetDistortionCoeffs(cam2cam.data[i].D);
-            cam->SetIntrinsics(BouguetModel::Own(intrinsics));
-        }
+            cam->SetIntrinsics(ProjectionModel::Own(intrinsics));
 
-        // extrinsic parameters..
-        if (!rectified)
-        {
-            cam->GetExtrinsics().SetRotationMatrix(cam2cam.data[i].R);
-            cam->GetExtrinsics().SetTranslation(cam2cam.data[i].T);
-        }
-        else if (i != ref)
-        {
-            cv::Mat RT = K_inv * cam2cam.data[i].P_rect;
-            cam->GetExtrinsics().SetTransformMatrix(RT);
+            if (!cam->GetExtrinsics().SetRotationMatrix(cam2cam.data[i].R))
+            {
+                E_ERROR << "error setting rotation matrix";
+                return false;
+            }
 
-            // TODO: take R_rect into account
-            // ...
+            if (!cam->GetExtrinsics().SetTranslation(cam2cam.data[i].T))
+            {
+                E_ERROR << "error setting translation vector";
+                return false;
+            }
         }
 
         // search for images
