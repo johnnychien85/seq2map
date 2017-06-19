@@ -74,7 +74,7 @@ namespace seq2map
     {
     public:
         virtual bool Store(Path& path) const { return cv::imwrite(path.string(), im); };
-        virtual bool Restore(const Path& path) { return !(im = cv::imread(path.string())).empty(); };
+        virtual bool Restore(const Path& path) { return !(im = cv::imread(path.string(), cv::IMREAD_UNCHANGED)).empty(); };
 
         cv::Mat im;
     };

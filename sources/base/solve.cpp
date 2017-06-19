@@ -25,7 +25,7 @@ cv::Mat LeastSquaresProblem::ComputeJacobian(const VectorisableD::Vec& x, Vector
 {
     cv::Mat J = cv::Mat::zeros(static_cast<int>(m_conds), static_cast<int>(m_varIdx.size()), CV_64F);
     bool masking = !m_jacobianPattern.empty();
-    //std::vector<boost::thread> threads;
+
     boost::thread_group threads;
 
     y = y.empty() ? (*this)(x) : y;
@@ -62,10 +62,6 @@ cv::Mat LeastSquaresProblem::ComputeJacobian(const VectorisableD::Vec& x, Vector
     }
 
     // wait for completions
-    //BOOST_FOREACH(boost::thread& thread, threads)
-    //{
-    //    thread.join();
-    //}
     threads.join_all();
 
     return J;
@@ -107,14 +103,10 @@ cv::Mat LeastSquaresProblem::ApplyUpdate(const VectorisableD::Vec& x0, const Vec
     
     BOOST_FOREACH(size_t var, m_varIdx)
     {
-        //E_INFO << var << " -> " << delta[i];
         x[var] += delta[i++];
     }
 
-    //E_INFO << x0.size();
-    //E_INFO << delta.size();
-
-    return cv::Mat(x).clone();
+    return cv::Mat(x, true);
 }
 
 bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& f, const VectorisableD::Vec& x0)
@@ -130,10 +122,11 @@ bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& f, const Vectorisab
     double e_best = rms(cv::Mat(y_best));
 
     size_t updates = 0; // iteration number
-    
     if (m_verbose)
     {
+        E_INFO << std::setw(80) << std::setfill('=') << "";
         E_INFO << std::setw(6) << std::right << "Update" << std::setw(12) << std::right << "RMSE" << std::setw(16) << std::right << "lambda" << std::setw(16) << std::right << "Rel. Step Size" << std::setw(16) << std::right << "Rel. Error Drop";
+        E_INFO << std::setw(80) << std::setfill('=') << "";
         E_INFO << std::setw(6) << std::right << updates << std::setw(12) << std::right << e_best << std::setw(16) << std::right << lambda;
     }
 
@@ -146,9 +139,10 @@ bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& f, const Vectorisab
             cv::Mat H = J.t() * J; // Hessian matrix
             cv::Mat D = J.t() * cv::Mat(y_best); // error gradient
 
-            lambda = lambda == 0 ? 1e-3 * cv::mean(H.diag())[0] : lambda;
+            lambda = lambda < 0 ? cv::mean(H.diag())[0] : lambda;
 
             bool better = false;
+            size_t trials = 0;
             double derrRatio, stepRatio;
 
             while (!better && !converged)
@@ -162,7 +156,9 @@ bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& f, const Vectorisab
 
                 double e_try = rms(cv::Mat(y_try));
                 double de = e_best - e_try;
+
                 better = de > 0;
+                trials++;
 
                 if (better) // accept the update
                 {
@@ -187,6 +183,28 @@ bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& f, const Vectorisab
                 converged |= (updates >= m_term.maxCount); // # iterations check
                 converged |= (updates > 1) && (derrRatio < m_term.epsilon); // error differential check
                 converged |= (updates > 1) && (stepRatio < m_term.epsilon); // step ratio check
+                converged |= (!better && (lambda == 0 || trials >= m_term.maxCount));
+
+                cv::Mat icv = H.diag();
+
+                bool ill = false;
+
+                for (size_t d = 0; d < icv.total(); d++)
+                {
+                    if (icv.at<double>(d) == 0)
+                    {
+                        E_WARNING << "change of parameter " << d << " not responsive";
+                        ill = true;
+                    }
+                }
+
+                ill |= !isfinite(norm(x_delta));
+
+                if (ill)
+                {
+                    E_ERROR << "problem ill-posed";
+                    return false;
+                }
             }
 
             if (m_verbose)

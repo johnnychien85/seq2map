@@ -2,8 +2,6 @@
 
 using namespace seq2map;
 
-const EuclideanTransform EuclideanTransform::Identity(cv::Mat::eye(3, 3, CV_64F), cv::Mat::zeros(3, 1, CV_64F));
-
 namespace seq2map
 {
     cv::Mat skewsymat(const cv::Mat& x)
@@ -393,23 +391,57 @@ Points3D& GeometricTransform::operator() (Points3D& pts) const
     return pts;
 }
 
-//==[ EuclideanTransform ]====================================================//
+//==[ Rotation ]==============================================================//
 
-EuclideanTransform::EuclideanTransform(const cv::Mat& rotation, const cv::Mat& tvec) : EuclideanTransform()
+const Rotation Rotation::Identity(Rotation::EULER_ANGLES, cv::Mat::eye(3, 3, CV_64F));
+
+cv::Mat Rotation::RotX(double rad)
 {
-    if (rotation.total() == 3)
+    const double c = std::cos(rad), s = std::sin(rad);
+    return (cv::Mat_<double>(3, 3) <<
+        1,  0,  0,
+        0,  c, -s,
+        0,  s,  c);
+}
+
+cv::Mat Rotation::RotY(double rad)
+{
+    const double c = std::cos(rad), s = std::sin(rad);
+    return (cv::Mat_<double>(3, 3) <<
+        c,  0,  s,
+        0,  1,  0,
+       -s,  0,  c);
+}
+
+cv::Mat Rotation::RotZ(double rad)
+{
+    const double c = std::cos(rad), s = std::sin(rad);
+    return (cv::Mat_<double>(3, 3) <<
+        c, -s,  0,
+        s,  c,  0,
+        0,  0,  1);
+}
+
+Rotation::Rotation(Parameterisation param, cv::Mat rmat)
+: m_param(param)
+{
+    if (rmat.rows != 3 || rmat.cols != 3 || rmat.type() != CV_64FC1)
     {
-        SetRotationVector(rotation);
+        E_WARNING << "given matrix ignored due to wrong size and/or type";
+        m_rmat = Identity.ToMatrix();
     }
     else
     {
-        SetRotationMatrix(rotation);
+        m_rmat = rmat;
     }
 
-    SetTranslation(tvec);
+    if (!FromMatrix(m_rmat))
+    {
+        E_WARNING << "error initialising rotation matrix";
+    }
 }
 
-bool EuclideanTransform::SetRotationMatrix(const cv::Mat& rmat)
+bool Rotation::FromMatrix(const cv::Mat &rmat)
 {
     if (rmat.rows != 3 || rmat.cols != 3)
     {
@@ -418,14 +450,12 @@ bool EuclideanTransform::SetRotationMatrix(const cv::Mat& rmat)
     }
 
     cv::Mat rvec;
-
     cv::Rodrigues(rmat, rvec);
-    SetRotationVector(rvec);
 
-    return true;
+    return FromVector(rvec);
 }
 
-bool EuclideanTransform::SetRotationVector(const cv::Mat& rvec)
+bool Rotation::FromVector(const cv::Mat& rvec)
 {
     if (rvec.total() != 3)
     {
@@ -433,13 +463,192 @@ bool EuclideanTransform::SetRotationVector(const cv::Mat& rvec)
         return false;
     }
 
-    cv::Mat _rvec, rmat;
-    rvec.convertTo(_rvec, m_rvec.type());
+    cv::Mat rmat;
+    rvec.reshape(1, 3).convertTo(m_rvec, m_rmat.type());
 
-    cv::Rodrigues(m_rvec = _rvec, rmat);
+    cv::Rodrigues(m_rvec, rmat);
     rmat.copyTo(m_rmat);
 
     return true;
+}
+
+bool Rotation::FromAngles(double x, double y, double z)
+{
+    cv::Mat Rx = RotX(/*x*/ ToRadian(x));
+    cv::Mat Ry = RotY(/*y*/ ToRadian(y));
+    cv::Mat Rz = RotZ(/*z*/ ToRadian(z));
+
+    //cv::Mat Rx = RotX(x);
+    //cv::Mat Ry = RotY(y);
+    //cv::Mat Rz = RotZ(z);
+
+    return FromMatrix(Rz * Ry * Rx);
+}
+
+void Rotation::ToVector(Vec& rvec) const
+{
+    rvec.assign((double*)m_rvec.datastart, (double*)m_rvec.dataend);
+}
+
+void Rotation::ToAngles(double& x, double& y, double& z) const
+{
+    double r00 = m_rmat.at<double>(0, 0);
+    double r10 = m_rmat.at<double>(1, 0);
+    double r11 = m_rmat.at<double>(1, 1);
+    double r20 = m_rmat.at<double>(2, 0);
+    double r21 = m_rmat.at<double>(2, 1);
+    double r22 = m_rmat.at<double>(2, 2);
+
+    double n12 = std::sqrt(r00 * r00 + r11 * r11);
+
+    x = ToDegree(std::atan2(r21, r22));
+    y = ToDegree(std::atan2(r20, n12));
+    z = ToDegree(std::atan2(r10, r00));
+
+    //x = std::atan2(r21, r22);
+    //y = std::atan2(r20, n12);
+    //z = std::atan2(r10, r00);
+}
+
+Point3F& Rotation::operator() (Point3F& pt) const
+{
+    const double* m = m_rmat.ptr<double>();
+
+    pt = Point3F(
+        (float)(m[0] * pt.x + m[3] * pt.y + m[6] * pt.z),
+        (float)(m[1] * pt.x + m[4] * pt.y + m[7] * pt.z),
+        (float)(m[2] * pt.x + m[5] * pt.y + m[8] * pt.z)
+    );
+
+    return pt;
+}
+
+Point3D& Rotation::operator() (Point3D& pt) const
+{
+    const double* m = m_rmat.ptr<double>();
+
+    pt = Point3D(
+        m[0] * pt.x + m[3] * pt.y + m[6] * pt.z,
+        m[1] * pt.x + m[4] * pt.y + m[7] * pt.z,
+        m[2] * pt.x + m[5] * pt.y + m[8] * pt.z
+    );
+
+    return pt;
+}
+
+Geometry& Rotation::operator() (Geometry& g) const
+{
+    const size_t d = g.GetDimension();
+    const int    m = g.mat.rows; // for reshaping a packed geometry
+
+    if (d != 3 && d != 4)
+    {
+        E_ERROR << "geometry matrix must store either Euclidean 3D or homogeneous 4D coordinates (d=" << d << ")";
+        return g;
+    }
+
+    switch (g.shape)
+    {
+    case Geometry::ROW_MAJOR:
+        g.mat.colRange(0, 3) = g.mat.colRange(0, 3) * m_rmat.t();
+        break;
+    case Geometry::COL_MAJOR:
+        g.mat.rowRange(0, 3) = m_rmat * g.mat.rowRange(0, 3);
+        break;
+    case Geometry::PACKED:
+        g.mat = g.mat.reshape(1, static_cast<int>(g.GetElements()));
+        g.mat.colRange(0, 3) = g.mat.colRange(0, 3) * m_rmat.t();
+        g.mat = g.mat.reshape(static_cast<int>(d), m);
+        break;
+    }
+
+    return g;
+}
+
+bool Rotation::Store(cv::FileStorage& fs) const
+{
+    fs << "rvec" << m_rvec;
+    return true;
+}
+
+bool Rotation::Restore(const cv::FileNode& fn)
+{
+    cv::Mat rvec;
+    fn["rvec"] >> rvec;
+
+    return FromVector(rvec);
+}
+
+bool Rotation::Store(Vec& v) const
+{
+    switch (m_param)
+    {
+    case Rotation::EULER_ANGLES:
+        v.resize(3);
+        ToAngles(v[0], v[1], v[2]);
+        break;
+
+    case Rotation::RODRIGUES:
+        v = m_rvec;
+        break;
+
+    default:
+        return false;
+    }
+    return true;
+}
+
+bool Rotation::Restore(const Vec& v)
+{
+    switch (m_param)
+    {
+    case Rotation::EULER_ANGLES:
+        if (v.size() != 3) return false;
+        FromAngles(v[0], v[1], v[2]);
+        break;
+
+    case Rotation::RODRIGUES:
+        FromVector(v);
+        break;
+
+    default:
+        return false;
+    }
+
+    return true;
+}
+
+//==[ EuclideanTransform ]====================================================//
+
+const EuclideanTransform EuclideanTransform::Identity(Rotation::Identity.ToMatrix(), cv::Mat::zeros(3, 1, CV_64F));
+
+EuclideanTransform::EuclideanTransform(const cv::Mat& rotation, const cv::Mat& tvec)
+: EuclideanTransform()
+{
+    if (rotation.total() == 3)
+    {
+        if (!m_rotation.FromVector(rotation))
+        {
+            E_WARNING << "given rotation is not valid as a angle-axis form";
+        }
+    }
+    else
+    {
+        if (!m_rotation.FromMatrix(rotation))
+        {
+            E_WARNING << "given rotation is not valid as a direct-cosine matrix";
+        }
+    }
+
+    SetTranslation(tvec);
+}
+
+EuclideanTransform EuclideanTransform::operator<<(const EuclideanTransform& tform) const
+{
+    cv::Mat R0 = m_rotation.ToMatrix();
+    cv::Mat R1 = tform.m_rotation.ToMatrix();
+
+    return EuclideanTransform(R1 * R0, R1 * m_tvec + tform.m_tvec);
 }
 
 bool EuclideanTransform::SetTranslation(const cv::Mat& tvec)
@@ -457,6 +666,11 @@ bool EuclideanTransform::SetTranslation(const cv::Mat& tvec)
     return true;
 }
 
+bool EuclideanTransform::SetTranslation(const Vec& tvec)
+{
+    return false;
+}
+
 bool EuclideanTransform::SetTransformMatrix(const cv::Mat& matrix)
 {
     if ((matrix.rows != 3 && matrix.rows != 4) || matrix.cols != 4)
@@ -471,7 +685,7 @@ bool EuclideanTransform::SetTransformMatrix(const cv::Mat& matrix)
     const cv::Mat rmat = matrix.rowRange(0, 3).colRange(0, 3);
     const cv::Mat tvec = matrix.rowRange(0, 3).colRange(3, 4);
 
-    return SetRotationMatrix(rmat) && SetTranslation(tvec);
+    return m_rotation.FromMatrix(rmat) && SetTranslation(tvec);
 }
 
 cv::Mat EuclideanTransform::GetTransformMatrix(bool sqrMat, bool preMult, int type) const
@@ -491,7 +705,7 @@ cv::Mat EuclideanTransform::GetTransformMatrix(bool sqrMat, bool preMult, int ty
 
 cv::Mat EuclideanTransform::ToEssentialMatrix() const
 {
-    return skewsymat(m_tvec) * m_rmat;
+    return skewsymat(m_tvec) * m_rotation.ToMatrix();
 }
 
 bool EuclideanTransform::FromEssentialMatrix(const cv::Mat& E, const GeometricMapping& m)
@@ -508,7 +722,7 @@ bool EuclideanTransform::FromEssentialMatrix(const cv::Mat& E, const GeometricMa
 
 EuclideanTransform EuclideanTransform::GetInverse() const
 {
-    cv::Mat Rt = m_rmat.t();
+    cv::Mat Rt = m_rotation.ToMatrix().t();
     return EuclideanTransform(Rt, -Rt*m_tvec);
 }
 
@@ -538,7 +752,7 @@ Point3D& EuclideanTransform::operator() (Point3D& pt) const
     return pt;
 }
 
-Geometry& EuclideanTransform::operator() (Geometry& g) const
+Geometry& EuclideanTransform::operator() (Geometry& g, bool euclidean) const
 {
     const size_t d = g.GetDimension();
     const int    m = g.mat.rows; // for reshaping a packed geometry
@@ -549,9 +763,7 @@ Geometry& EuclideanTransform::operator() (Geometry& g) const
         return g;
     }
 
-    bool homogeneous = (d == 4);
-
-    if (!homogeneous)
+    if (d == 3)
     {
         g = Geometry::MakeHomogeneous(g);
     }
@@ -559,15 +771,15 @@ Geometry& EuclideanTransform::operator() (Geometry& g) const
     switch (g.shape)
     {
     case Geometry::ROW_MAJOR:
-        g.mat = g.mat * GetTransformMatrix(homogeneous, false, g.mat.type());
+        g.mat = g.mat * GetTransformMatrix(!euclidean, false, g.mat.type());
         break;
     case Geometry::COL_MAJOR:
-        g.mat = GetTransformMatrix(homogeneous, true, g.mat.type()) * g.mat;
+        g.mat = GetTransformMatrix(!euclidean, true, g.mat.type()) * g.mat;
         break;
     case Geometry::PACKED:
         g.mat = g.mat.reshape(1, static_cast<int>(g.GetElements()));
-        g.mat = g.mat * GetTransformMatrix(homogeneous, false, g.mat.type());
-        g.mat = g.mat.reshape(homogeneous ? 4 : 3, m);
+        g.mat = g.mat * GetTransformMatrix(!euclidean, false, g.mat.type());
+        g.mat = g.mat.reshape(euclidean ? 3 : 4, m);
         break;
     }
 
@@ -576,29 +788,35 @@ Geometry& EuclideanTransform::operator() (Geometry& g) const
 
 bool EuclideanTransform::Store(cv::FileStorage& fs) const
 {
-    fs << "rvec" << m_rvec;
     fs << "tvec" << m_tvec;
-
-    return true;
+    return m_rotation.Store(fs);
 }
 
 bool EuclideanTransform::Restore(const cv::FileNode& fn)
 {
-    cv::Mat rvec, tvec;
-
-    fn["rvec"] >> rvec;
+    cv::Mat tvec;
     fn["tvec"] >> tvec;
 
-    return SetRotationVector(rvec) && SetTranslation(tvec);
+    return m_rotation.Restore(fn) && SetTranslation(tvec);
 }
 
 bool EuclideanTransform::Store(VectorisableD::Vec& v) const
 {
-    v.resize(6);
-    size_t i = 0;
+    Vec rvec, tvec(3);
 
-    for (int j = 0; j < 3; j++) v[i++] = m_rvec.at<double>(j);
-    for (int j = 0; j < 3; j++) v[i++] = m_tvec.at<double>(j);
+    if (!m_rotation.Store(rvec))
+    {
+        return false;
+    }
+
+    for (int j = 0; j < 3; j++)
+    {
+        tvec[j] = m_tvec.at<double>(j);
+    }
+
+    v.clear();
+    v.insert(v.end(), rvec.begin(), rvec.end());
+    v.insert(v.end(), tvec.begin(), tvec.end());
 
     return true;
 }
@@ -607,15 +825,22 @@ bool EuclideanTransform::Restore(const Vec& v)
 {
     if (v.size() != GetDimension()) return false;
 
-    cv::Mat rvec(3, 1, CV_64F);
+    Vec rvec(v.begin(), v.begin() + m_rotation.GetDimension());
+
+    if (!m_rotation.Restore(rvec))
+    {
+        return false;
+    }
+
     cv::Mat tvec(3, 1, CV_64F);
+    size_t i = m_rotation.GetDimension();
 
-    size_t i = 0;
+    for (int j = 0; j < 3; j++)
+    {
+        tvec.at<double>(j) = v[i++];
+    }
 
-    for (int j = 0; j < 3; j++) rvec.at<double>(j) = v[i++];
-    for (int j = 0; j < 3; j++) tvec.at<double>(j) = v[i++];
-
-    return SetRotationVector(rvec) && SetTranslation(tvec);
+    return SetTranslation(tvec);
 }
 
 //==[ Motion ]================================================================//
@@ -686,6 +911,13 @@ bool Motion::Restore(const Path& path)
 }
 
 //==[ ProjectionModel ]=======================================================//
+
+cv::Mat ProjectionModel::Project(const Geometry& g, const cv::Mat& im) const
+{
+
+
+    return cv::Mat();
+}
 
 //==[ PinholeModel ]==========================================================//
 
@@ -941,7 +1173,7 @@ Geometry BouguetModel::Project(const Geometry& g, ProjectiveSpace space) const
     }
 
     cv::projectPoints(g.shape == Geometry::PACKED ? g.mat.reshape(1, static_cast<int>(g.GetElements())) : g.mat,
-        EuclideanTransform::Identity.GetRotationMatrix(),
+        EuclideanTransform::Identity.GetRotation().ToMatrix(),
         EuclideanTransform::Identity.GetTranslation(),
         m_matrix, m_distCoeffs, proj.mat);
 
@@ -976,7 +1208,7 @@ bool BouguetModel::SetDistortionCoeffs(const cv::Mat& D)
         D.convertTo(D64f, CV_64F);
     }
 
-    d.assign(D64f.datastart, D64f.dataend);
+    d.assign((double*) D64f.datastart, (double*) D64f.dataend);
 
     double fx, fy, cx, cy;
     GetValues(fx, fy, cx, cy);

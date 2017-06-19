@@ -1,13 +1,11 @@
 function x = raw2mat(from, m, n, s)
     f = fopen(from,'r');
-        
     if nargin < 2, x = loadCvMat(f);
     else
         if nargin < 3, s = 'int16'; end;
-
         x = fread(f,[n m],s)';
-        fclose(f);
     end
+    fclose(f);
 end
 
 function x = loadCvMat(f)
@@ -24,7 +22,7 @@ function x = loadCvMat(f)
     n = fread(f,1,'int');
     k = fread(f,1,'int');
     
-    x = permute(reshape(fread(f,m*n*k,s),[k,n,m]),[3,2,1]);
+    x = permute(reshape(fread(f,m*n*k,['*' s]),[k,n,m]),[3,2,1]);
 end
 
 function type = cv2matlabType(type)

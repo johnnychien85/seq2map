@@ -60,52 +60,42 @@ bool FeatureMatching::operator() (Map& map, size_t t)
         size_t ui_k = ui[m.srcIdx];
         size_t uj_k = uj[m.dstIdx];
 
-        bool bi = ui_k == INVALID_INDEX;
-        bool bj = uj_k == INVALID_INDEX;
+        bool bi = (ui_k == INVALID_INDEX);
+        bool bj = (uj_k == INVALID_INDEX);
 
         bool firstHit = bi == true && bj == true;
         bool converge = bi != true && bj != true && ui_k != uj_k;
 
         if (converge)
         {
-            /*
-            Landmark::Hits hi = map.GetLandmark(ui_k).hits;
-            Landmark::Hits hj = map.GetLandmark(uj_k).hits;
-
-            E_INFO << pathway.ToString() << " t=" << t << " multi-path : feature #" << ui_k << " meets #" << uj_k << "!!";
-            E_INFO << "#" << ui_k << ":";
-
-            BOOST_FOREACH (Landmark::Hit h, hi)
+            if (policy == ConflictResolution::NO_MERGE)
             {
-            E_INFO << "(" << h.store << "," << h.frame << ") " << h.proj;
+                continue;
             }
 
-            E_INFO << "#" << uj_k << ":";
+            Landmark& li = map.GetLandmark(ui_k);
+            Landmark& lj = map.GetLandmark(uj_k);
 
-            BOOST_FOREACH (Landmark::Hit h, hj)
+            if (map.IsJoinable(li, lj) || policy == ConflictResolution::KEEP_BOTH)
             {
-            E_INFO << "(" << h.store << "," << h.frame << ") " << h.proj;
+                map.JoinLandmark(li, lj);
+                continue;
             }
-            */
 
             switch (policy)
             {
-            case MultiPathMergePolicy::REJECT:
-                //map.GetLandmark(ui_k).hits.clear();
-                //map.GetLandmark(uj_k).hits.clear();
-                break;
-
-            case MultiPathMergePolicy::KEEP_BEST:
-            case MultiPathMergePolicy::KEEP_BOTH:
-            case MultiPathMergePolicy::KEEP_LONGEST:
-            case MultiPathMergePolicy::KEEP_SHORTEST:
+            case ConflictResolution::KEEP_BEST:
+            case ConflictResolution::KEEP_LONGEST:
+            case ConflictResolution::KEEP_SHORTEST:
                 ui[m.srcIdx] = uj[m.dstIdx] = ui_k < uj_k ? ui_k : uj_k;
                 break;
 
-            case MultiPathMergePolicy::NO_MERGE:
-            default: // do nothing..
+            case ConflictResolution::REMOVE_BOTH:
+                map.RemoveLandmark(li);
+                map.RemoveLandmark(lj);
                 break;
             }
+
             continue;
         }
 

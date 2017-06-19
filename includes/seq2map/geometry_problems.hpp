@@ -91,7 +91,7 @@ namespace seq2map
         //
         // Constructor and destructor
         //
-        ProjectionObjective(ProjectionModel::Own& proj) : m_proj(proj) {}
+        ProjectionObjective(ProjectionModel::ConstOwn& proj) : m_proj(proj) {}
 
         //
         // Accessor
@@ -105,7 +105,7 @@ namespace seq2map
         virtual cv::Mat operator() (const EuclideanTransform& tform) const;
 
     protected:
-        ProjectionModel::Own m_proj;
+        ProjectionModel::ConstOwn m_proj;
     };
 
     /**
@@ -117,12 +117,19 @@ namespace seq2map
         //
         // Constructor and destructor
         //
-        PhotometricObjective(ProjectionModel::Own& proj, const cv::Mat& dst) : m_dst(dst), ProjectionObjective(proj) {}
+        PhotometricObjective(ProjectionModel::ConstOwn& proj, const cv::Mat& dst, int type = CV_32F, int interp = cv::INTER_LINEAR)
+        : m_type(type), m_interp(interp), ProjectionObjective(proj)
+        { dst.convertTo(m_dst, m_type); }
 
         //
         // Accessor
         //
         virtual bool SetData(const GeometricMapping& data);
+
+        /**
+         * Build objective data from 3D points and a base image
+         */
+        virtual bool SetData(const Geometry& g, const cv::Mat& src);
 
         //
         // Evaluation
@@ -130,7 +137,9 @@ namespace seq2map
         virtual cv::Mat operator() (const EuclideanTransform& tform) const;
 
     private:
-        const cv::Mat m_dst;
+        int m_type;
+        int m_interp;
+        cv::Mat m_dst;
     };
 
     /**
@@ -209,7 +218,7 @@ namespace seq2map
         //
         // Constructor
         //
-        MultiObjectivePoseEstimation() : LeastSquaresProblem(0, 6) {}
+        MultiObjectivePoseEstimation() : LeastSquaresProblem(0, 6), m_tform(Rotation::EULER_ANGLES) {}
 
         //
         // Pose estimation
@@ -222,17 +231,18 @@ namespace seq2map
         inline void AddObjective(AlignmentObjective::Own& objective) { m_objectives.push_back(objective); }
         //inline EuclideanTransform GetTransform() const { return m_transform; }
         size_t GetConds() const;
+        EuclideanTransform GetSolution() const { return m_tform; }
 
         //
         // Least-squares problem
         //
         virtual VectorisableD::Vec Initialise();
         virtual VectorisableD::Vec operator()(const VectorisableD::Vec& x) const;
-        virtual bool SetSolution(const VectorisableD::Vec& x) { return m_transform.Restore(x); }
+        virtual bool SetSolution(const VectorisableD::Vec& x) { return m_tform.Restore(x); }
 
     protected:
         std::vector<AlignmentObjective::Own> m_objectives;
-        EuclideanTransform m_transform;
+        EuclideanTransform m_tform;
     };
 
     /**

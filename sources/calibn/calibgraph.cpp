@@ -245,7 +245,7 @@ bool CalibGraph::Calibrate(bool pairwiseOptim)
             for (size_t i = 0; i < viewIdx.size(); i++)
             {
                 Observation& o = GetObservation(cam, viewIdx[i]);
-                o.pose.SetRotationVector(rvecs[i]);
+                o.pose.GetRotation().FromVector(rvecs[i]);
                 o.pose.SetTranslation(tvecs[i]);
                 o.rpe = rpe;
                 //E_INFO << "view " << i << ": " << mat2string(rvecs[i], "rvec") << " " << mat2string(tvecs[i], "tvec");
@@ -335,7 +335,7 @@ bool CalibGraph::Calibrate(bool pairwiseOptim)
         size_t pq = e.p * m_cams + e.q;
         size_t qp = e.q * m_cams + e.p;
 
-        transforms[pq].SetRotationMatrix(rmat);
+        transforms[pq].GetRotation().FromMatrix(rmat);
         transforms[pq].SetTranslation(tvec);
 
         transforms[qp] = transforms[pq].GetInverse();
@@ -357,8 +357,8 @@ bool CalibGraph::Calibrate(bool pairwiseOptim)
         }
 
         E_INFO << "camera " << cam << (cam == m_refCamIdx ? " (referenced)" : "") << " extrinsics derived";
-        E_INFO << mat2string(extrinsics.GetRotationMatrix(), "R");
-        E_INFO << mat2string(extrinsics.GetTranslation(),    "t");
+        E_INFO << mat2string(extrinsics.GetRotation().ToMatrix(), "R");
+        E_INFO << mat2string(extrinsics.GetTranslation(),         "t");
     }
 
     // assigning the best observed pose to each view, taking into account
@@ -391,7 +391,7 @@ bool CalibGraph::Calibrate(bool pairwiseOptim)
 
         const Observation& o = GetObservation(bestCam, view);
         CameraVertex::Ptr camvtx = m_camvtx[bestCam];
-        cv::Mat rvec = o.pose.GetRotationVector();
+        cv::Mat rvec = o.pose.GetRotation().ToVector();
         cv::Mat tvec = o.pose.GetTranslation();
 
         bool solved = cv::solvePnP(
@@ -408,8 +408,8 @@ bool CalibGraph::Calibrate(bool pairwiseOptim)
         viewvtx->pose = EuclideanTransform(rvec, tvec) >> camvtx->extrinsics.GetInverse();
 
         E_INFO << "view " << view << " target pose estimated";
-        E_INFO << mat2string(viewvtx->pose.GetRotationMatrix(), "R");
-        E_INFO << mat2string(viewvtx->pose.GetTranslation(),    "t");
+        E_INFO << mat2string(viewvtx->pose.GetRotation.ToMatrix(), "R");
+        E_INFO << mat2string(viewvtx->pose.GetTranslation(),       "t");
     }
 
     return true;
@@ -500,7 +500,7 @@ bool CalibGraph::WriteParams(const Path& calPath) const
 
         rect[i].K = camvtx[i]->intrinsics.GetCameraMatrix();
         rect[i].D = camvtx[i]->intrinsics.GetDistortionCoeffs();
-        rect[i].R = camvtx[i]->extrinsics.GetRotationMatrix();
+        rect[i].R = camvtx[i]->extrinsics.GetRotation.ToMatrix();
         rect[i].T = camvtx[i]->extrinsics.GetTranslation();
         rect[i].S = camvtx[i]->imageSize;
         rect[i].S_rect = imageSize;
@@ -608,7 +608,7 @@ bool CalibGraph::WriteMFile(const Path& mfilePath) const
         of << "cam(" << (cam + 1) << ").imageSize = " << "[" << camvtx->imageSize.height << ", " << camvtx->imageSize.width << "];" << std::endl;
         of << "cam(" << (cam + 1) << ").K         = " << mat2string(camvtx->intrinsics.GetCameraMatrix()) << std::endl;
         of << "cam(" << (cam + 1) << ").D         = " << mat2string(camvtx->intrinsics.GetDistortionCoeffs()) << std::endl;
-        of << "cam(" << (cam + 1) << ").R         = " << mat2string(camvtx->extrinsics.GetRotationMatrix()) << std::endl;
+        of << "cam(" << (cam + 1) << ").R         = " << mat2string(camvtx->extrinsics.GetRotation.ToMatrix()) << std::endl;
         of << "cam(" << (cam + 1) << ").t         = " << mat2string(camvtx->extrinsics.GetTranslation()) << std::endl;
     }
     
@@ -618,7 +618,7 @@ bool CalibGraph::WriteMFile(const Path& mfilePath) const
         of << "% view " << view << std::endl;
         of << "view(" << (view + 1) << ").index        = " << (viewvtx->GetIndex() + 1) << ";" << std::endl;
         of << "view(" << (view + 1) << ").connected    = " << (viewvtx->connected ? "true" : "false") << ";" << std::endl;
-        of << "view(" << (view + 1) << ").R            = " << mat2string(viewvtx->pose.GetRotationMatrix()) << std::endl;
+        of << "view(" << (view + 1) << ").R            = " << mat2string(viewvtx->pose.GetRotation.ToMatrix()) << std::endl;
         of << "view(" << (view + 1) << ").t            = " << mat2string(viewvtx->pose.GetTranslation()) << std::endl;
         of << "view(" << (view + 1) << ").objectPoints = " << mat2string(cv::Mat(viewvtx->objectPoints).reshape(1, viewvtx->objectPoints.size())) << std::endl;
     }

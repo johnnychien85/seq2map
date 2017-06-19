@@ -154,6 +154,7 @@ bool ProjectionObjective::SetData(const GeometricMapping& data)
 
     m_data.src = (d0 == 3 ? Geometry::MakeHomogeneous(data.src) : data.src); //.Reshape(Geometry::ROW_MAJOR);
     m_data.dst = (d1 == 3 ? Geometry::FromHomogeneous(data.dst) : data.dst); //.Reshape(Geometry::ROW_MAJOR);
+    m_data.metric = data.metric ? data.metric : Metric::Own(new EuclideanMetric());
 
     return true;
 }
@@ -169,7 +170,7 @@ cv::Mat ProjectionObjective::operator() (const EuclideanTransform& tform) const
     const Metric& d = *m_data.metric;
 
     Geometry x = m_data.src;
-    Geometry y = m_proj->Project(tform(x), ProjectionModel::EUCLIDEAN_2D);
+    Geometry y = m_proj->Project(tform(x, true), ProjectionModel::EUCLIDEAN_2D);
 
     return d(y, m_data.dst).mat;
 
@@ -200,7 +201,7 @@ bool PhotometricObjective::SetData(const GeometricMapping& data)
     const size_t d1 = data.dst.GetDimension();
     const size_t dI = static_cast<size_t>(m_dst.channels());
 
-    if (d0 != 3 || d0 != 4)
+    if (d0 != 3 && d0 != 4)
     {
         E_ERROR << "source geometry has to be either 3D Euclidean or 4D homogeneous";
         return false;
@@ -214,8 +215,67 @@ bool PhotometricObjective::SetData(const GeometricMapping& data)
 
     m_data.src = (d0 == 3 ? Geometry::MakeHomogeneous(data.src) : data.src);
     m_data.dst = data.dst;
+    m_data.metric = data.metric ? data.metric : Metric::Own(new EuclideanMetric());
+
+    if (m_data.dst.mat.depth() != m_type)
+    {
+        m_data.dst.mat.convertTo(m_data.dst.mat, m_type);
+    }
 
     return true;
+}
+
+bool PhotometricObjective::SetData(const Geometry& g, const cv::Mat& src)
+{
+    GeometricMapping data;
+
+    bool dense = g.shape == Geometry::PACKED && g.mat.rows == src.rows && g.mat.cols == src.cols;
+
+    cv::Mat src32F = src;
+
+    if (src.depth() != m_type)
+    {
+        src.convertTo(src32F, m_type);
+    }
+
+    if (dense)
+    {
+        Points3D xyz;
+        std::vector<cv::Point_<short>> sub;
+
+        for (int i = 0; i < g.mat.rows; i++)
+        {
+            for (int j = 0; j < g.mat.cols; j++)
+            {
+                Point3D pt = g.mat.at<Point3D>(i, j);
+                if (pt.z > 0)
+                {
+                    xyz.push_back(pt);
+                    sub.push_back(cv::Point_<short>(j, i));
+                }
+            }
+        }
+
+        data.src = Geometry(Geometry::PACKED, cv::Mat(xyz));
+        data.dst = Geometry(Geometry::PACKED, interp(src32F, cv::Mat(sub, false), cv::INTER_NEAREST));
+    }
+    else
+    {
+        if (!m_proj)
+        {
+            E_ERROR << "missing projection model";
+            return false;
+        }
+
+        cv::Mat proj;
+        m_proj->Project(g, ProjectionModel::EUCLIDEAN_2D).Reshape(Geometry::PACKED).mat.convertTo(proj, CV_32F);
+
+        data.src = g;
+        data.dst = Geometry(Geometry::PACKED, interp(src32F, proj, m_interp));
+    }
+
+
+    return SetData(data);
 }
 
 cv::Mat PhotometricObjective::operator() (const EuclideanTransform& tform) const
@@ -226,13 +286,29 @@ cv::Mat PhotometricObjective::operator() (const EuclideanTransform& tform) const
         return cv::Mat();
     }
 
-    const Metric& d = *m_data.metric;
-
     Geometry x = m_data.src;
     cv::Mat y;
-    cv::remap(m_dst, y, m_proj->Project(tform(x), ProjectionModel::EUCLIDEAN_2D).mat.reshape(2), cv::Mat(), cv::INTER_NEAREST);
-    
-    return d(m_data.dst, Geometry(x.shape, y.reshape(1, static_cast<int>(x.GetElements())))).mat;
+
+    //Geometry x1 = m_data.src;
+    //cv::Mat p0 = m_proj->Project(Geometry::FromHomogeneous(x), ProjectionModel::EUCLIDEAN_2D).mat;
+    //cv::Mat p1 = m_proj->Project(tform(x1, true), ProjectionModel::EUCLIDEAN_2D).mat;
+
+    //PersistentMat(tform.GetTransformMatrix()).Store(Path("E.bin"));
+    //PersistentMat(p0).Store(Path("p0.bin"));
+    //PersistentMat(p1).Store(Path("p1.bin"));
+
+    //p0.convertTo(p0, CV_32F);
+    //p1.convertTo(p1, CV_32F);
+
+    //int id = std::rand(); std::stringstream ss; ss << id;
+    //E_INFO << ss.str();
+    //PersistentMat(m_data.dst.mat.clone()).Store(Path("dst" + ss.str() + ".bin"));
+    //PersistentMat y0(interp(m_dst, p0.reshape(2), cv::INTER_LINEAR)); y0.Store(Path("y0" + ss.str() + ".bin"));
+    //PersistentMat y1(interp(m_dst, p1.reshape(2), cv::INTER_LINEAR)); y1.Store(Path("y1" + ss.str() + ".bin"));
+
+    m_proj->Project(tform(x, true), ProjectionModel::EUCLIDEAN_2D).Reshape(Geometry::PACKED).mat.convertTo(y, CV_32F);
+
+    return (*m_data.metric)(m_data.dst, Geometry(Geometry::PACKED, interp(m_dst, y, m_interp))).mat;
 }
 
 //==[ RigidObjective ]========================================================//
@@ -306,9 +382,10 @@ VectorisableD::Vec MultiObjectivePoseEstimation::Initialise()
 {
     // TODO: improve the initialisation
     //
-    //
+    //m_tform.SetTranslation(cv::Vec3d(0, 0, -1));
+
     VectorisableD::Vec v;
-    m_transform.Store(v);
+    m_tform.Store(v);
     m_conds = GetConds();
 
     return v;
@@ -327,10 +404,15 @@ size_t MultiObjectivePoseEstimation::GetConds() const
     return m;
 }
 
-VectorisableD::Vec MultiObjectivePoseEstimation::operator()(const VectorisableD::Vec & x) const
+VectorisableD::Vec MultiObjectivePoseEstimation::operator()(const VectorisableD::Vec& x) const
 {
-    EuclideanTransform tform;
-    tform.Restore(x);
+    EuclideanTransform tform(m_tform.GetRotation().GetParameterisation());
+    
+    if (!tform.Restore(x))
+    {
+        E_ERROR << "error devectorising transform";
+        return VectorisableD::Vec();
+    }
 
     VectorisableD::Vec y;
     size_t m = 0;
@@ -344,11 +426,14 @@ VectorisableD::Vec MultiObjectivePoseEstimation::operator()(const VectorisableD:
         cv::Mat yi = (*obj)(tform);
         size_t  mi = static_cast<size_t>(yi.total());
 
-        assert(yi.type() == CV_64F);
         assert(m + mi <= m_conds);
 
-        y.insert(y.end(), (double*)yi.datastart, (double*)yi.dataend);
+        if (yi.type() != CV_64F)
+        {
+            yi.convertTo(yi, CV_64F);
+        }
 
+        y.insert(y.end(), (double*)yi.datastart, (double*)yi.dataend);
         m += mi;
     }
 

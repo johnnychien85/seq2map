@@ -31,6 +31,8 @@ namespace seq2map
         virtual cv::Mat ComputeJacobian(const VectorisableD::Vec& x, VectorisableD::Vec& y) const;
         
         virtual bool SetSolution(const VectorisableD::Vec& x) = 0;
+
+        void SetDifferentiationStep(double step) { m_diffStep = step; }
         
         //
         //
@@ -68,11 +70,16 @@ namespace seq2map
     class LevenbergMarquardtAlgorithm
     {
     public:
-        LevenbergMarquardtAlgorithm(double eta = 10.0f, double lambda = 0.0f, bool verbose = false, 
+        LevenbergMarquardtAlgorithm(double eta = 10.0f, double lambda = -1.0f, bool verbose = false, 
             const cv::TermCriteria& term = cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 100, 1e-6))
             : m_eta(eta), m_lambda(lambda), m_verbose(verbose), m_term(term) {}
+        
         inline void SetVervbose(bool verbose) { m_verbose = verbose; }
+        
+        inline void SetInitialDamp(double lambda) { m_lambda = lambda; }
+        
         bool Solve(LeastSquaresProblem& problem, const VectorisableD::Vec& x0);
+
     protected:
         double m_eta;
         double m_lambda;

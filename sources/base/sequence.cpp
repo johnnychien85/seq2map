@@ -467,10 +467,9 @@ RectifiedStereo::Configuration RectifiedStereo::GetConfiguration(const Euclidean
 {
     static const double EPS = 1e-2;
 
-    cv::Mat rvec = rel.GetRotationVector();
     cv::Mat tvec = rel.GetTranslation();
 
-    if (cv::norm(rvec) > EPS)
+    if (rel.GetRotation() != EuclideanTransform::Identity.GetRotation())
     {
         E_WARNING << "inconsistent rotational extrinsics";
         return UNKNOWN;

@@ -79,7 +79,9 @@ namespace seq2map
         virtual ~Map() {}
 
         Landmark& AddLandmark();
-        Landmark& MergeLandmark(Landmark& li, Landmark& lj);
+        void RemoveLandmark(Landmark& l);
+        bool IsJoinable(const Landmark& li, const Landmark& lj);
+        Landmark& JoinLandmark(Landmark& li, Landmark& lj);
 
         inline Landmark& GetLandmark(size_t index) { return Dim0(index); }
         inline Frame&    GetFrame   (size_t index) { return Dim1(index); }
@@ -103,22 +105,23 @@ namespace seq2map
             static const FramedStore Null;
         };
 
-        // the policy to join two marching paths originating from different landmarks
-        enum MultiPathMergePolicy
+        // the policy to deal with two joined marching paths originating from different landmarks
+        // with inconsistent observations 
+        enum ConflictResolution
         {
-            NO_MERGE,       // do not do merging
-            KEEP_BOTH,      // merge landmarks but keep both histories
-            KEEP_LONGEST,   // merge landmarks and keep the longer history
-            KEEP_SHORTEST,  // merge landmarks and keep the shorter history
-            KEEP_BEST,      // merge landmarks and keep the history with lower error
-            REJECT          // erase both landmarks' histories
+            NO_MERGE,       ///< do not do merging
+            KEEP_BOTH,      ///< merge landmarks but keep both histories
+            KEEP_LONGEST,   ///< merge landmarks and keep the longer history
+            KEEP_SHORTEST,  ///< merge landmarks and keep the shorter history
+            KEEP_BEST,      ///< merge landmarks and keep the history with lower error
+            REMOVE_BOTH     ///< erase both landmarks' histories
         };
 
         /**
          *
          */
         FeatureMatching(const FramedStore& src = FramedStore::Null, const FramedStore& dst = FramedStore::Null)
-        : src(src), dst(dst), policy(NO_MERGE) {}
+        : src(src), dst(dst), policy(KEEP_BOTH) {}
 
         /**
          *
@@ -154,7 +157,7 @@ namespace seq2map
         const FramedStore dst;
 
         FeatureMatcher matcher;
-        MultiPathMergePolicy policy;
+        ConflictResolution policy;
     };
 
     class Mapper

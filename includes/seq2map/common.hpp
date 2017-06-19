@@ -37,8 +37,10 @@ namespace seq2map
 
     typedef boost::posix_time::ptime Time;
 
+    typedef cv::Point2i Point2I;
     typedef cv::Point2f Point2F;
     typedef cv::Point3f Point3F;
+    typedef std::vector<Point2I> Points2I;
     typedef std::vector<Point2F> Points2F;
     typedef std::vector<Point3F> Points3F;
 
@@ -90,6 +92,7 @@ namespace seq2map
     cv::Mat rgb2gray(const cv::Mat& rgb);
     cv::Mat gray2rgb(const cv::Mat& gray);
     cv::Mat imfuse(const cv::Mat& im0, const cv::Mat& im1);
+    cv::Mat interp(const cv::Mat& src, const cv::Mat& sub, int method = cv::INTER_NEAREST, bool useGpu = false);
 
     // miscs.
     Time unow();

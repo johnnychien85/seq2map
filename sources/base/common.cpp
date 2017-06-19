@@ -398,6 +398,66 @@ namespace seq2map
         return im;
     }
 
+    cv::Mat interp(const cv::Mat& src, const cv::Mat& sub, int method, bool useGpu)
+    {
+        if (sub.channels() != 2)
+        {
+            E_ERROR << "subscript matrix has to have 2 channels";
+            return cv::Mat();
+        }
+
+        cv::Mat dst;
+
+        if (useGpu && cv::cuda::getCudaEnabledDeviceCount() > 0)
+        {
+            cv::cuda::GpuMat gpuSrc;
+            cv::cuda::GpuMat gpuDst;
+            cv::cuda::GpuMat gpuMapX, gpuMapY;
+
+            std::vector<cv::Mat> xy;
+            cv::split(sub, xy);
+
+            xy[0].convertTo(xy[0], CV_32F);
+            xy[1].convertTo(xy[1], CV_32F);
+
+            gpuSrc.upload(src);
+            gpuMapX.upload(xy[0]);
+            gpuMapY.upload(xy[1]);
+
+            cv::cuda::remap(gpuSrc, gpuDst, gpuMapX, gpuMapY, method);
+            gpuDst.download(dst);
+        }
+        else
+        {
+            if (sub.rows < SHRT_MAX && sub.cols < SHRT_MAX)
+            {
+                cv::remap(src, dst, sub, cv::Mat(), method);
+            }
+            else
+            {
+                const int n = sub.total();
+                const int k = src.channels();
+                const int stride = SHRT_MAX - 1;
+
+                cv::Mat map = sub.reshape(1, n);
+
+                dst = cv::Mat(sub.rows, sub.cols, src.type());
+                dst = dst.reshape(1, n);
+
+                for (int i = 0; i < n; i += stride)
+                {
+                    const int i0 = i;
+                    const int in = std::min(i + stride, n);
+                    cv::remap(src, dst.rowRange(i0, in).reshape(k), map.rowRange(i0, in).reshape(2), cv::Mat(), method);
+                }
+
+                dst = dst.reshape(k, sub.rows);
+            }
+        }
+
+        return dst;
+    }
+
     Time unow()
     {
         return boost::posix_time::microsec_clock::local_time();

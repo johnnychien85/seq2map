@@ -51,3 +51,22 @@ BOOST_AUTO_TEST_CASE(reshape)
         }
     }
 }
+
+BOOST_AUTO_TEST_CASE(rotation)
+{
+    Rotation R0, R1, R2;
+
+    BOOST_CHECK(R0.FromAngles( 45, 0, 0));
+    BOOST_CHECK(R1.FromAngles(-45, 0, 0));
+
+    BOOST_CHECK(R2.FromMatrix(R1.ToMatrix() * R0.ToMatrix()));
+    BOOST_CHECK(R2.IsIdentity());
+
+    BOOST_CHECK(R2.FromMatrix(R0.ToMatrix().t() * R0.ToMatrix()));
+    BOOST_CHECK(R2.IsIdentity());
+
+    Rotation::Vec v;
+    BOOST_CHECK(R0.Store(v));
+    BOOST_CHECK(R1.Restore(v));
+    BOOST_CHECK(R0 == R1);
+}

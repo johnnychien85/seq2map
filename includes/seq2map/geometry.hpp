@@ -152,9 +152,9 @@ namespace seq2map
     public:
         enum InverseCovarianceType
         {
-            ISOTROPIC,              // the matrix is M-by-1
-            ANISOTROPIC_ORTHOGONAL, // the matrix is M-by-D
-            ANISOTROPIC_ROTATED     // the matrix is M-by-D*(D+1)/2
+            ISOTROPIC,              ///< the matrix is M-by-1
+            ANISOTROPIC_ORTHOGONAL, ///< the matrix is M-by-D
+            ANISOTROPIC_ROTATED     ///< the matrix is M-by-D*(D+1)/2
         };
 
         MahalanobisMetric() : icv(Geometry::ROW_MAJOR) {}
@@ -170,17 +170,18 @@ namespace seq2map
      */
     struct GeometricMapping
     {
-        GeometricMapping() : src(Geometry::ROW_MAJOR), dst(Geometry::ROW_MAJOR) {}
+        GeometricMapping(cv::Mat& srcData = cv::Mat(), cv::Mat& dstData = cv::Mat())
+        : src(Geometry::ROW_MAJOR, srcData), dst(Geometry::ROW_MAJOR, dstData) {}
 
         bool IsConsistent() const { return src.GetElements() == dst.GetElements(); }
 
-        Geometry src; // source geometry data
-        Geometry dst; // target geometry data
+        Geometry src; ///< source geometry data
+        Geometry dst; ///< target geometry data
         Metric::Own metric;
     };
 
     /**
-     * A geometry transform can be applied to geometry data.
+     * A geometry transform can be applied to geometry data in 3-dimensional space.
      */
     class GeometricTransform
     : public Persistent<cv::FileStorage, cv::FileNode>,
@@ -227,6 +228,105 @@ namespace seq2map
     };
 
     /**
+     * A rotation transform rotate given points/vectors about its rotation axis.
+     */
+    class Rotation : public GeometricTransform
+    {
+    public:
+        enum Parameterisation
+        {
+            RODRIGUES,
+            EULER_ANGLES
+        };
+
+        //
+        // Helpers
+        //
+        static inline double ToRadian(double deg) { return deg / 180.0f * CV_PI; }
+        static inline double ToDegree(double rad) { return rad * 180.0f / CV_PI; }
+        static cv::Mat RotX(double rad);
+        static cv::Mat RotY(double rad);
+        static cv::Mat RotZ(double rad);
+
+        //
+        // Constructors
+        //
+        Rotation(Parameterisation param, cv::Mat rmat);
+        Rotation(Parameterisation param = RODRIGUES) : Rotation(param, cv::Mat::eye(3, 3, CV_64F)) {}
+
+        //
+        // Comparison
+        //
+        inline bool operator== (const Rotation& rhs) const { return cv::norm(m_rmat, rhs.m_rmat) < 1e-6; }
+        inline bool operator!= (const Rotation& rhs) const { return !(*this == rhs); }
+
+        inline bool IsIdentity() const { return *this == Identity; }
+
+        //
+        // Creation and conversion
+        //
+        bool FromMatrix(const cv::Mat& rmat);
+        bool FromVector(const Vec& rvec) { return FromVector(cv::Mat(rvec)); }
+        bool FromVector(const cv::Mat& rvec);
+        bool FromAngles(double x, double y, double z);
+
+        /**
+         * Get the rotation as an SO(3) matrix.
+         */
+        inline cv::Mat ToMatrix() const { return m_rmat.clone(); }
+
+        /**
+         * Get the rotation as a 3-vector.
+         */
+        void ToVector(Vec& rvec) const;
+
+        /**
+         *
+         */
+        inline cv::Mat ToVector() const { return m_rvec.clone(); }
+
+        /**
+         * Get the rotation as three angles.
+         */
+        void ToAngles(double& x, double& y, double& z) const;
+
+        //
+        // Accessors
+        //
+        inline Parameterisation GetParameterisation() const { return m_param; }
+        inline void SetParametersiation(Parameterisation param) { m_param = param; }
+
+        //
+        // Applying the transform
+        //
+        virtual Point3F& operator() (Point3F& pt) const;
+        virtual Point3D& operator() (Point3D& pt) const;
+        virtual Geometry& operator() (Geometry& g) const;
+
+        using GeometricTransform::operator();
+
+        //
+        // Persistence
+        //
+        virtual bool Store(cv::FileStorage& fs) const;
+        virtual bool Restore(const cv::FileNode& fn);
+
+        //
+        // Vectorisation and de-vectorisation
+        //
+        virtual bool Store(Vec& v) const;
+        virtual bool Restore(const Vec& v);
+        virtual size_t GetDimension() const { return 3; }
+
+        static const Rotation Identity;
+
+    private:
+        cv::Mat m_rmat; ///< the 3-by-3 rotation matrix managed by the class; might refer to an external variable
+        cv::Mat m_rvec;
+        Parameterisation m_param;
+    };
+
+    /**
      * An Euclidean transform actualises rigid transform in 3D Euclidean space.
      */
     class EuclideanTransform : public GeometricTransform
@@ -245,11 +345,10 @@ namespace seq2map
         /**
          * Default constructor.
          */
-        EuclideanTransform()
+        EuclideanTransform(Rotation::Parameterisation rform = Rotation::EULER_ANGLES)
         : m_matrix(cv::Mat::eye(3, 4, CV_64F)),
-          m_rvec(cv::Mat::zeros(3, 1, CV_64F)),
-          m_rmat(m_matrix.rowRange(0, 3).colRange(0, 3)),
-          m_tvec(m_matrix.rowRange(0, 3).colRange(3, 4)) {}
+          m_tvec(m_matrix.rowRange(0, 3).colRange(3, 4)),
+          m_rotation(rform, m_matrix.rowRange(0, 3).colRange(0, 3)) {}
 
         /**
          * Construction from a rotation matrix and a translation vector
@@ -268,7 +367,7 @@ namespace seq2map
         /**
          * Append a transform to the current one and return the reulstant transform.
          */
-        inline EuclideanTransform operator<<(const EuclideanTransform& tform) const { return EuclideanTransform(tform.m_rmat * m_rmat, tform.GetRotationMatrix() * m_tvec + tform.m_tvec); }
+        EuclideanTransform operator<<(const EuclideanTransform& tform) const;
 
         /**
          * Prepend a transform to the current one and return the reulstant transform.
@@ -285,19 +384,19 @@ namespace seq2map
         //
 
         /**
-         * Set the rotation component given an SO(3) matrix.
-         */
-        bool SetRotationMatrix(const cv::Mat& rmat);
-
-        /**
-         * Set the rotation component given an rotation 3-vector.
-         */
-        bool SetRotationVector(const cv::Mat& rvec);
-
-        /**
          * Set the translation component given a 3-vector.
          */
         bool SetTranslation(const cv::Mat& tvec);
+
+        /**
+         *
+         */
+        bool SetTranslation(const Vec& tvec);
+
+        /**
+         *
+         */
+        void SetTranslation(const cv::Vec3d& tvec) { cv::Mat(tvec, false).reshape(1, 3).copyTo(m_tvec); }
 
         /**
          * Set the rotation and translation components given a transform matrix.
@@ -305,14 +404,14 @@ namespace seq2map
         bool SetTransformMatrix(const cv::Mat& matrix);
 
         /**
-         * Get the rotation as an SO(3) matrix.
+         *
          */
-        inline cv::Mat GetRotationMatrix() const { return m_rmat; }
+        inline Rotation& GetRotation() { return m_rotation; }
 
         /**
-         * Get the rotation as a 3-vector.
+         *
          */
-        inline cv::Mat GetRotationVector() const { return m_rvec; }
+        inline const Rotation& GetRotation() const { return m_rotation; }
 
         /**
          * Get the translation.
@@ -352,7 +451,8 @@ namespace seq2map
         //
         virtual Point3F& operator() (Point3F& pt) const;
         virtual Point3D& operator() (Point3D& pt) const;
-        virtual Geometry& operator() (Geometry& g) const;
+        virtual Geometry& operator() (Geometry& g) const { return (*this)(g, g.GetDimension() == 3); }
+        Geometry& operator() (Geometry& g, bool euclidean) const;
 
         using GeometricTransform::operator();
 
@@ -367,15 +467,14 @@ namespace seq2map
         //
         virtual bool Store(Vec& v) const;
         virtual bool Restore(const Vec& v);
-        virtual size_t GetDimension() const { return 6; }
+        virtual size_t GetDimension() const { return m_rotation.GetDimension() + 3; }
 
         static const EuclideanTransform Identity;
 
     protected:
         cv::Mat m_matrix;
-        cv::Mat m_rmat;
-        cv::Mat m_rvec;
         cv::Mat m_tvec;
+        Rotation m_rotation;
     };
 
     typedef std::vector<EuclideanTransform> EuclideanTransforms;
@@ -444,6 +543,15 @@ namespace seq2map
          */
         virtual Geometry Backproject(const Geometry& g) const = 0;
 
+        /**
+         * Project points into image plane and get the pixel values.
+         *
+         * \param g input geometry in 3D Euclidean space.
+         * \param im image data being projected.
+         * \return matrix of pixel values in the size of g with the number of channels of im.
+         */
+        virtual cv::Mat Project(const Geometry& g, const cv::Mat& im) const;
+
         //
         // Accessors
         //
@@ -474,7 +582,7 @@ namespace seq2map
         virtual Point3F& operator() (Point3F& pt) const { return proj(pose(pt)); }
         virtual Point3D& operator() (Point3D& pt) const { return proj(pose(pt)); }
 
-        virtual Geometry Project(const Geometry& g, ProjectiveSpace space = EUCLIDEAN_2D) const { return proj.Project(pose(Geometry(g)), space); }
+        virtual Geometry Project(const Geometry& g, ProjectiveSpace space = EUCLIDEAN_2D) const { return proj.Project(pose(Geometry(g), true), space); }
         virtual Geometry Backproject(const Geometry& g) const { return pose.GetInverse()(Geometry::MakeHomogeneous(proj.Backproject(g), 0.0f)); }
 
         const EuclideanTransform& pose;

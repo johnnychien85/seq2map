@@ -10,7 +10,7 @@ function seq = raw2seq(seqPath)
     elseif exist(kittiIMUPath,   'dir' ) > 0, seq = loadSequenceKITTIRaw(seqPath);
     else                                      seq = loadSequenceVG      (seqPath); end
 
-	featuresPath = fullfile(seqPath, 'features');
+	featuresPath = fullfile(seqPath,'kpt');
 	if exist(featuresPath, 'dir') > 0
 		fprintf('Possible existence of feature files detected!\n');
 		seq = locateFeatures(seq,featuresPath);
