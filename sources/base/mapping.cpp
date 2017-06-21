@@ -9,8 +9,86 @@ Landmark& Map::AddLandmark()
     return Dim0(m_newLandmarkId++);
 }
 
-Landmark& MergeLandmark(Landmark& li, Landmark& lj)
+void Map::RemoveLandmark(Landmark& l)
 {
+    // update ID lookup table
+    for (Landmark::const_iterator h = l.cbegin(); h; h++)
+    {
+        const Hit& hit = *h;
+
+        Frame& t = h.GetContainer<1, Frame>();
+        const Source& c = h.GetContainer<2, Source>();
+
+        t.featureIdLookup[c.GetIndex()][hit.index] = INVALID_INDEX;
+    }
+
+    l.clear();
+}
+
+bool Map::IsJoinable(const Landmark& li, const Landmark& lj)
+{
+    AutoSpeedometreMeasure(joinChkMetre, 2);
+
+    // parallel traversal
+    Landmark::const_iterator hi = li.cbegin();
+    Landmark::const_iterator hj = lj.cbegin();
+
+    while (hi && hj)
+    {
+        const Frame& ti = hi.GetContainer<1, Frame>();
+        const Frame& tj = hj.GetContainer<1, Frame>();
+
+        if (ti < tj)
+        {
+            hi++;
+        }
+        else if (tj < ti)
+        {
+            hj++;
+        }
+        else
+        {
+            const Source& ci = hi.GetContainer<2, Source>();
+            const Source& cj = hj.GetContainer<2, Source>();
+
+            if (ci < cj)
+            {
+                hi++;
+            }
+            else if (cj < ci)
+            {
+                hj++;
+            }
+            else
+            {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+Landmark& Map::JoinLandmark(Landmark& li, Landmark& lj)
+{
+    AutoSpeedometreMeasure(joinMetre, 2);
+
+    for (Landmark::const_iterator hj = lj.cbegin(); hj; hj++)
+    {
+        const Hit& hit = *hj;
+
+        Frame&  tj = hj.GetContainer<1, Frame>();
+        Source& cj = hj.GetContainer<2, Source>();
+
+        li.Hit(tj, cj, hit.index) = hit;
+
+        // ID table rewriting
+        Frame::IdList& uj = tj.featureIdLookup[cj.GetIndex()];
+        uj[hit.index] = li.GetIndex();
+    }
+
+    lj.clear(); // abondaned
+
     return li;
 }
 
@@ -55,10 +133,21 @@ bool FeatureMatching::operator() (Map& map, size_t t)
     if (ui.empty()) ui.resize(fi.GetSize(), INVALID_INDEX);
     if (uj.empty()) uj.resize(fj.GetSize(), INVALID_INDEX);
 
+    //if (tj.GetIndex() == 1 && sj.GetIndex() == 1)
+    //    BOOST_FOREACH(const FeatureMatch& m, fmap.GetMatches())
+    //{
+    //    E_INFO << m.srcIdx << " -> " << m.dstIdx << "[" << m.state << "]";
+    //}
+
     BOOST_FOREACH(const FeatureMatch& m, fmap.GetMatches())
     {
-        size_t ui_k = ui[m.srcIdx];
-        size_t uj_k = uj[m.dstIdx];
+        if (!(m.state & FeatureMatch::INLIER))
+        {
+            continue;
+        }
+
+        size_t& ui_k = ui[m.srcIdx];
+        size_t& uj_k = uj[m.dstIdx];
 
         bool bi = (ui_k == INVALID_INDEX);
         bool bj = (uj_k == INVALID_INDEX);
@@ -66,48 +155,66 @@ bool FeatureMatching::operator() (Map& map, size_t t)
         bool firstHit = bi == true && bj == true;
         bool converge = bi != true && bj != true && ui_k != uj_k;
 
-        if (converge)
+        //if (ti.GetIndex() > 0)
+        //E_INFO << "(" << ti.GetIndex() << "," << si.GetIndex() << "," << m.srcIdx << ") -> (" << tj.GetIndex() << "," << sj.GetIndex() << "," << m.dstIdx << ")";
+
+        if (!converge)
         {
-            if (policy == ConflictResolution::NO_MERGE)
-            {
-                continue;
-            }
+            Landmark& lk = firstHit ? map.AddLandmark() : (bj ? map.GetLandmark(ui_k) : map.GetLandmark(uj_k));
 
-            Landmark& li = map.GetLandmark(ui_k);
-            Landmark& lj = map.GetLandmark(uj_k);
+            if (bi) lk.Hit(ti, si, m.srcIdx).proj = fi[m.srcIdx].keypoint.pt;
+            if (bj) lk.Hit(tj, sj, m.dstIdx).proj = fj[m.dstIdx].keypoint.pt;
 
-            if (map.IsJoinable(li, lj) || policy == ConflictResolution::KEEP_BOTH)
-            {
-                map.JoinLandmark(li, lj);
-                continue;
-            }
+            ui_k = uj_k = lk.GetIndex();
 
-            switch (policy)
-            {
-            case ConflictResolution::KEEP_BEST:
-            case ConflictResolution::KEEP_LONGEST:
-            case ConflictResolution::KEEP_SHORTEST:
-                ui[m.srcIdx] = uj[m.dstIdx] = ui_k < uj_k ? ui_k : uj_k;
-                break;
-
-            case ConflictResolution::REMOVE_BOTH:
-                map.RemoveLandmark(li);
-                map.RemoveLandmark(lj);
-                break;
-            }
+            //E_INFO << "ui[" << m.srcIdx << "] = " << lk.GetIndex();
+            //E_INFO << "uj[" << m.dstIdx << "] = " << lk.GetIndex();
 
             continue;
         }
 
-        Landmark& lk = firstHit ? map.AddLandmark() : (bj ? map.GetLandmark(ui_k) : map.GetLandmark(uj_k));
+        //E_INFO << "(" << ti.GetIndex() << "," << si.GetIndex() << "," << m.srcIdx << ") -> (" << tj.GetIndex() << "," << sj.GetIndex() << "," << m.dstIdx << ")";
+        //E_INFO << "multipath detected (" << ui_k << "," << uj_k << ")";
 
-        if (bi) lk.Hit(ti, si, m.srcIdx).proj = fi[m.srcIdx].keypoint.pt;
-        if (bj) lk.Hit(tj, sj, m.dstIdx).proj = fj[m.dstIdx].keypoint.pt;
+        if (policy == ConflictResolution::NO_MERGE)
+        {
+            continue;
+        }
 
-        ui[m.srcIdx] = uj[m.dstIdx] = lk.GetIndex();
+        //E_INFO << map.joinChkMetre.ToString();
+        //E_INFO << map.joinMetre.ToString();
+
+        Landmark& li = map.GetLandmark(ui_k);
+        Landmark& lj = map.GetLandmark(uj_k);
+
+        if (policy == ConflictResolution::KEEP_BOTH || map.IsJoinable(li, lj))
+        {
+            map.JoinLandmark(li, lj);
+            continue;
+        }
+
+        switch (policy)
+        {
+        case ConflictResolution::KEEP_BEST:
+            throw std::exception("not implemented");
+            break;
+
+        case ConflictResolution::KEEP_LONGEST:
+            throw std::exception("not implemented");
+            break;
+
+        case ConflictResolution::KEEP_SHORTEST:
+            throw std::exception("not implemented");
+            break;
+
+        case ConflictResolution::REMOVE_BOTH:
+            map.RemoveLandmark(li);
+            map.RemoveLandmark(lj);
+            break;
+        }
     }
 
-    E_INFO << ti.GetIndex() << "->" << tj.GetIndex() << ": " << matcher.Report();
+    E_INFO << "(" << ti.GetIndex() << "," << si.GetIndex() << ") -> (" << tj.GetIndex() << "," << sj.GetIndex() << ") : " << matcher.Report();
     return true;
 }
 

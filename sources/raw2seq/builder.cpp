@@ -322,7 +322,7 @@ KittiRawDataBuilder::CalibRigid::CalibRigid(const Path& from)
         }
     }
 
-    if (tform.SetRotationMatrix(R) && tform.SetTranslation(T))
+    if (tform.GetRotation().FromMatrix(R) && tform.SetTranslation(T))
     {
         m_okay = true;
         E_INFO << "succesfully parsed " << from.string();
@@ -450,7 +450,7 @@ bool KittiRawDataBuilder::BuildCamera(const Path& from, Camera::Map& cams, Recti
             
             cam->SetIntrinsics(ProjectionModel::Own(intrinsics));
 
-            if (!cam->GetExtrinsics().SetRotationMatrix(cam2cam.data[i].R))
+            if (!cam->GetExtrinsics().GetRotation().FromMatrix(cam2cam.data[i].R))
             {
                 E_ERROR << "error setting rotation matrix";
                 return false;

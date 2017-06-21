@@ -52,8 +52,8 @@ namespace seq2map
 	class Sensor : public Entity
 	{
 	public:
-        inline String GetModel() const                   { return m_model;      }
-        inline void SetModel(const String& model)        { m_model = model;     }
+        inline String GetModel() const                   { return m_model;  }
+        inline void SetModel(const String& model)        { m_model = model; }
 
         inline EuclideanTransform  GetExtrinsics() const { return m_extrinsics; }
 		inline EuclideanTransform& GetExtrinsics()       { return m_extrinsics; }
@@ -160,7 +160,11 @@ namespace seq2map
                 Camera::ConstOwn rcam0 = rhs->GetPrimaryCamera();
                 Camera::ConstOwn rcam1 = rhs->GetSecondaryCamera();
 
-                return lcam0 && lcam1 && rcam0 && rcam1 && (*lcam0 < *rcam0 || *lcam1 < *rcam1);
+                if (!lcam0 || !lcam1 || !rcam0 || !rcam1) return false;
+                if (lcam0 < rcam0) return true;
+                if (rcam0 < lcam0) return false;
+                
+                return (lcam1 < rcam1);
             }
         };
 

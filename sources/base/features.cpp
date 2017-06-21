@@ -460,7 +460,7 @@ ImageFeatureMap FeatureMatcher::MatchFeatures(const ImageFeatureSet& src, const 
         FeatureMatches backward = MatchDescriptors(dstDescriptors, srcDescriptors, metric);
 
         AutoSpeedometreMeasure measure(m_symmetryTestMetre, map.m_matches.size());
-        RunSymmetryTest(forward, backward);
+        RunSymmetryTest(forward, backward, static_cast<size_t>(srcDescriptors.rows));
     }
 
     Indices inliers = map.Select(FeatureMatch::INLIER);
@@ -564,31 +564,45 @@ FeatureMatches FeatureMatcher::MatchDescriptors(const Mat& src, const Mat& dst, 
     return matches;
 }
 
-void FeatureMatcher::RunSymmetryTest(FeatureMatches& forward, const FeatureMatches& backward)
+void FeatureMatcher::RunSymmetryTest(FeatureMatches& forward, const FeatureMatches& backward, size_t maxSrcIdx)
 {
-    size_t n = forward.size();
-
-    std::vector<size_t> dstIdx(n, INVALID_INDEX);
-    std::vector<bool>   good(n, false);
-   
-    BOOST_FOREACH(FeatureMatch& match, forward)
+    struct Check
     {
-        dstIdx[match.srcIdx] = match.dstIdx;
+        Check() : matchIdx(INVALID_INDEX), dstIdx(INVALID_INDEX) {}
+        size_t matchIdx;
+        size_t dstIdx;
+    };
+    
+    std::vector<Check> checks(maxSrcIdx);
+    std::vector<bool> symmetric(forward.size(), false);
+   
+    for (size_t k = 0; k < forward.size(); k++)
+    {
+        const FeatureMatch& m = forward[k];
+        Check& chk = checks[m.srcIdx];
+
+        chk.matchIdx = k;
+        chk.dstIdx = m.dstIdx;
     }
 
-    BOOST_FOREACH(const FeatureMatch& match, backward)
+    BOOST_FOREACH(const FeatureMatch& m, backward)
     {
-        size_t i = match.dstIdx;
-        size_t j = match.srcIdx;
+        const size_t srcIdx = m.dstIdx;
+        const size_t dstIdx = m.srcIdx;
 
-        good[i] = good[i] ? good[i] : (dstIdx[i] == j);
+        const Check& chk = checks[srcIdx];
+
+        if (chk.dstIdx == dstIdx)
+        {
+            symmetric[chk.matchIdx] = true;
+        }
     } 
 
-    BOOST_FOREACH(FeatureMatch& match, forward)
+    for (size_t k = 0; k < forward.size(); k++)
     {
-        if (good[match.srcIdx] == false)
+        if (!symmetric[k])
         {
-            match.Reject(FeatureMatch::UNIQUENESS_FAILED);
+            forward[k].Reject(FeatureMatch::UNIQUENESS_FAILED);
         }
     }
 }

@@ -180,9 +180,9 @@ namespace seq2map
     };
 
     /**
-    * A feature match is represented by a (srdIdx,dstIdx) tuple along
-    * with their distance in the feature space as well as a state flag.
-    */
+     * A feature match is represented by a (srdIdx,dstIdx) tuple along
+     * with their distance in the feature space as well as a state flag.
+     */
     struct FeatureMatch
     {
         enum Flag
@@ -198,7 +198,7 @@ namespace seq2map
         FeatureMatch(size_t srcIdx = INVALID_INDEX, size_t dstIdx = INVALID_INDEX, float distance = -1, int state = INLIER)
         : srcIdx(srcIdx), dstIdx(dstIdx), distance(distance), state(state) {}
 
-        inline void Reject(int reason) { state = (state ^ INLIER) | reason; }
+        inline void Reject(int reason) { state = (state & ~INLIER) | reason; }
 
         size_t srcIdx;
         size_t dstIdx;
@@ -278,7 +278,7 @@ namespace seq2map
         Speedometre m_filteringMetre;
 
     private:
-        static void RunSymmetryTest(FeatureMatches& forward, const FeatureMatches& backward);
+        static void RunSymmetryTest(FeatureMatches& forward, const FeatureMatches& backward, size_t maxSrcIdx);
     };
 
     class FundamentalMatrixFilter : public FeatureMatchFilter

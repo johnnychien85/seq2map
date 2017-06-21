@@ -6,18 +6,25 @@
 
 namespace seq2map
 {
+    /**
+     *
+     */
     template<typename T, size_t dims>
     class NodeND
     {
     private:
         typedef NodeND<T, dims> NodeType;
-        typedef NodeType* NodePtr;
+        typedef NodeType*       NodePtr;
         typedef const NodeType* ConstNodePtr;
+        typedef T               ValueType;
+        typedef const T         ConstValueType;
+        typedef T&              ValueRef;
+        typedef const T&        ConstValueRef;
 
     public:
         /**
-         * The container is for internal use only to hold linked nodes.
-         * The idea of container will be extended by dimensions.
+         * The container is an abstract linked nodes for internal use only.
+         * The implementation will be completed in Dimension class.
          */
         class Container : public Indexed
         {
@@ -25,15 +32,18 @@ namespace seq2map
             Container(size_t idx) : Indexed(idx), m_head(NULL), m_tail(NULL) {}
             virtual String ToString() const = 0;
 
-        public: // STL-compliance members
+        public:
+            //
+            // STL-compliance members
+            //
             virtual void insert(NodePtr node) = 0;
             virtual void  erase(NodePtr node) = 0;
             virtual bool  empty() const { return m_head == NULL; }
             virtual void  clear() { while (!empty()) erase(m_tail); }
 
         protected:
-            NodePtr m_head;
-            NodePtr m_tail;
+            NodePtr m_head; ///< pointer to the first node
+            NodePtr m_tail; ///< pointer to the last node
         };
 
     private:
@@ -44,19 +54,33 @@ namespace seq2map
         {
             Link() : d(NULL), prev(NULL), next(NULL), indexed(false) {}
 
-            Container* d;
-            NodePtr prev;
-            NodePtr next;
-            bool indexed;
+            Container* d; ///< containing list
+            NodePtr prev; ///< pointer to the predeccessor
+            NodePtr next; ///< pointer to the successor
+            bool indexed; ///< flag indicating if the node is an indexed upper bound in the search tree
         };
 
-        NodeND(const T& value) : m_value(value) {}
+        //
+        // Constructor and destructor
+        //
 
-        virtual ~NodeND()
-        {
-            // E_TRACE << "destroying " << ToString();
-        }
+        /**
+         *
+         */
+        NodeND(ConstValueRef value) : m_value(value) {}
 
+        /**
+         *
+         */
+        virtual ~NodeND()  { /* E_TRACE << "destroying " << ToString(); */ }
+
+        //
+        // Accessor
+        //
+
+        /**
+         *
+         */
         String ToString() const
         {
             std::stringstream ss;
@@ -64,15 +88,21 @@ namespace seq2map
             ss << "(";
             for (size_t d = 0; d < dims; d++)
             {
-                ss << m_links[d].d->GetIndex() << (d < dims - 1 ? "," : "");
+                bool more = d < dims - 1;
+                if (m_links[d].d != NULL) ss << m_links[d].d->GetIndex();
+                else ss << "?";
+                
+                if (more) ss << ",";
             }
             ss << ")";
-
-            ss << " [" << m_value.index << "]";
+            //ss << " [" << m_value.index << "]";
 
             return ss.str();
         }
 
+        //
+        // Data member
+        //
         Link m_links[dims];
         T    m_value;
 
@@ -84,8 +114,14 @@ namespace seq2map
         class Dimension : public Container
         {
         public:
+            //
+            // Constructor
+            //
             Dimension(size_t idx) : Container(idx) {}
 
+            //
+            // Accessor
+            //
             String ToString() const
             {
                 std::stringstream ss;
@@ -101,34 +137,57 @@ namespace seq2map
                 return ss.str();
             }
 
-        private: // some data types needed for indexing and search
+        private:
+            //
+            // Data types needed for indexing and search.
+            //
+
             /**
-             * Node used in indexed search phase.
+             * Node used in indexed tree search phase. The insertion of a node
+             * involes two search levels, namely tree level and linear level.
+             * At tree level the last possible successor is located, at where
+             * a linear backward seach starts. Such a design is optimised for
+             * increasing insertion index.
              */
             struct INode
             {
-                NodePtr node;
+                //
+                // Constructor
+                //
                 INode(const NodePtr node = NULL) : node(node) {}
 
+                //
+                // Comparisons
+                //
+
+                /**
+                 *
+                 */
                 bool operator< (const INode& rhs) const
                 {
-                    static const size_t d0 = dim < idepth ? (idepth + 1) : idepth;
                     const INode& lhs = *this;
 
-                    assert(d0 <= dims);
+                    // sanity checks
+                    assert(lhs.node != NULL);
                     assert(rhs.node != NULL);
+                    assert(d0 <= dims);
 
                     for (size_t d = 0; d < d0; d++)
                     {
+                        // check if the nodes are still linked
                         assert(lhs.node->m_links[d].d != NULL);
                         assert(rhs.node->m_links[d].d != NULL);
 
-                        if (*(lhs.node->m_links[d].d) < *(rhs.node->m_links[d].d))
+                        const Container& dl = *(lhs.node->m_links[d].d);
+                        const Container& dr = *(rhs.node->m_links[d].d);
+
+                        if (dl < dr)
                         {
                             // E_TRACE << lhs.node->ToString() << " < " << rhs.node->ToString() << ", d = " << d;
                             return true;
                         }
-                        else if (*(rhs.node->m_links[d].d) < *(lhs.node->m_links[d].d))
+
+                        if (dr < dl)
                         {
                             // E_TRACE << rhs.node->ToString() << " < " << lhs.node->ToString() << ", d = " << d;
                             return false;
@@ -138,16 +197,28 @@ namespace seq2map
                     return false;
                 }
 
+                /**
+                 *
+                 */
                 bool operator== (const INode& rhs) const
                 {
-                    static const size_t d0 = dim < idepth ? (idepth + 1) : idepth;
                     const INode& lhs = *this;
 
+                    // sanity checks
+                    assert(lhs.node != NULL);
+                    assert(rhs.node != NULL);
                     assert(d0 <= dims);
 
                     for (size_t d = 0; d < d0; d++)
                     {
-                        if (!(*(lhs.node->m_links[d].d) == *(rhs.node->m_links[d].d)))
+                        // check if the nodes are still linked
+                        assert(lhs.node->m_links[d].d != NULL);
+                        assert(rhs.node->m_links[d].d != NULL);
+
+                        const Container& dl = *(lhs.node->m_links[d].d);
+                        const Container& dr = *(rhs.node->m_links[d].d);
+
+                        if (!(dl == dr))
                         {
                             return false;
                         }
@@ -155,9 +226,11 @@ namespace seq2map
                     return true;
                 }
 
+                /**
+                 *
+                 */
                 String ToString() const
                 {
-                    static const size_t d0 = dim < idepth ? (idepth + 1) : idepth;
                     std::stringstream ss;
 
                     ss << "(";
@@ -175,17 +248,21 @@ namespace seq2map
 
                     return ss.str();
                 }
-            };
+
+                //
+                // Data members
+                //
+                static const size_t d0 = dim < idepth ? (idepth + 1) : idepth;
+                NodePtr node;
+            }; // end of struct INode
 
             // node used in linear search phase
             struct LNode
             {
-                NodePtr node;
                 LNode(const NodePtr node = NULL) : node(node) {}
 
                 bool operator< (const LNode& rhs) const
                 {
-                    static const size_t d0 = dim < idepth ? (idepth + 1) : idepth;
                     const LNode& lhs = *this;
 
                     for (size_t d = d0; d < dims; d++)
@@ -204,67 +281,154 @@ namespace seq2map
                     // E_TRACE << lhs.node->ToString() << " not less than " << rhs.node->ToString() << ", d0 = " << d0;
                     return false;
                 }
-            };
 
+                //
+                // Data members
+                //
+                static const size_t d0 = dim < idepth ? (idepth + 1) : idepth;
+                NodePtr node;
+            }; // end of struct LNode
+
+            //
+            // Helpers
+            //
+            static inline Link& GetLink(NodePtr node)
+            {
+                return node->m_links[dim];
+            }
+
+            /**
+             * Attempt to update the index after the insertion of a new Node.
+             */
+            bool UpdateIndex(NodePtr node)
+            {
+                INode inode(node);
+                Indexer::iterator itr = m_imap.find(node);
+
+                NodePtr indexed = (itr == m_imap.end() ? NULL : itr->second);
+
+                if (indexed && !(LNode(node) < LNode(indexed)))
+                {
+                    return false;
+                }
+
+                if (indexed != NULL)
+                {
+                    assert(indexed == GetLink(node).next);
+
+                    m_imap.erase(itr);
+                    GetLink(indexed).indexed = false;
+
+                    // E_TRACE << inode.ToString() << " unindexed " << indexed->ToString() << " due to insertion of " << node->ToString();
+                }
+
+                m_imap.insert(Indexer::value_type(inode, node));
+                GetLink(node).indexed = true;
+
+                // E_TRACE << inode.ToString() << " indexed " << node->ToString() << " due to node insertion (n=" << m_imap.size() << ")";
+                // E_TRACE << (prev ? prev->ToString() : "x") << " <- " << node->ToString() << " -> " << (next ? next->ToString() : "x");
+
+                return true;
+            }
+
+            //
+            // for debuging
+            //
+            void Dump()
+            {
+                std::stringstream ss;
+                ss << "head <-> ";
+                for (NodePtr p = m_head; p != NULL; p = GetLink(p).next)
+                {
+                    ss << p->ToString() << (GetLink(p).indexed ? " [x] " : "") << " <-> ";
+                }
+                ss << "tail";
+
+                E_TRACE << ss.str();
+            }
+
+            void ShowNeighbours(NodePtr node)
+            {
+                std::stringstream ss;
+                const Link& l = GetLink(node);
+
+                ss << ((l.prev == NULL) ? "head" : l.prev->ToString()) << " <-> ";
+                ss << node->ToString() << " <-> ";
+                ss << ((l.next == NULL) ? "tail" : l.next->ToString());
+
+                E_TRACE << ss.str();
+            }
+
+            //
+            // Data member
+            //
             typedef std::map<INode, NodePtr> Indexer;
             Indexer m_imap;
 
-        protected: // STL-compliance members
+        protected:
+            //
+            // STL-compliance members
+            //
+
+            /**
+             * Insert a node to the dimension.
+             */
             virtual void insert(NodePtr node)
             {
-                Link& link = node->m_links[dim];
+                Link& link = GetLink(node);
 
-                assert(link.d == this); // ownership assertion
+                // ownership check
+                assert(link.d == this);
 
-                NodePtr prev = upper_bound(node);
-                NodePtr next = prev == NULL ? m_head : prev->m_links[dim].next;
+                //NodePtr prev = upper_bound(node);
+                //NodePtr next = prev == NULL ? m_head : prev->m_links[dim].next;
 
-                if (prev == NULL)
+                //E_INFO << node->ToString();
+                //Dump();
+
+                link.next = upper_bound(node);
+                link.prev = link.next == NULL ? m_tail : GetLink(link.next).prev;
+
+                if (link.prev == NULL)
                 {
                     m_head = node;
                 }
                 else
                 {
-                    prev->m_links[dim].next = node;
+                    GetLink(link.prev).next = node;
                 }
 
-                if (next == NULL)
+                if (link.next == NULL)
                 {
                     m_tail = node;
                 }
                 else
                 {
-                    next->m_links[dim].prev = node;
+                    GetLink(link.next).prev = node;
                 }
 
-                link.prev = prev;
-                link.next = next;
+                //Dump();
 
-                INode inode(node);
-                NodePtr& indexed = m_imap[inode];
-
-                if (indexed == NULL || !(LNode(node) < LNode(indexed)))
+                if (link.prev != NULL)
                 {
-                    if (indexed != NULL)
-                    {
-                        indexed->m_links[dim].indexed = false;
-                        // E_TRACE << inode.ToString() << " unindexed " << indexed->ToString() << " due to insertion of " << node->ToString();
-                    }
-
-                    indexed = node;
-                    node->m_links[dim].indexed = true;
-
-                    // E_TRACE << inode.ToString() << " indexed " << node->ToString() << " due to node insertion (n=" << m_imap.size() << ")";
-                    // E_TRACE << (prev ? prev->ToString() : "x") << " <- " << node->ToString() << " -> " << (next ? next->ToString() : "x");
+                    if (!(INode(link.prev) < INode(node) || !(LNode(node) < LNode(link.prev)))) Dump();
+                    assert(INode(link.prev) < INode(node) || !(LNode(node) < LNode(link.prev)));
                 }
+
+                if (link.next != NULL)
+                {
+                    assert(INode(node) < INode(link.next) || !(LNode(link.next) < LNode(node)));
+                }
+
+                UpdateIndex(node);
             }
 
             virtual void erase(NodePtr node)
             {
-                Link& link = node->m_links[dim];
+                Link& link = GetLink(node);
 
-                if (link.prev != NULL) link.prev->m_links[dim].next = link.next;
-                if (link.next != NULL) link.next->m_links[dim].prev = link.prev;
+                if (link.prev != NULL) GetLink(link.prev).next = link.next;
+                if (link.next != NULL) GetLink(link.next).prev = link.prev;
 
                 if (node == m_head) m_head = link.next;
                 if (node == m_tail) m_tail = link.prev;
@@ -272,60 +436,34 @@ namespace seq2map
                 INode inode(node);
                 Indexer::iterator itr = m_imap.find(inode);
 
-                if (itr == m_imap.end())
-                {
-                    E_ERROR << "this can't be!!";
-                    E_ERROR << "I am " << node->ToString();
-
-                    E_ERROR << "dump of imap (n=" << m_imap.size() << ")";
-
-                    for (Indexer::iterator it = m_imap.begin(); it != m_imap.end(); it++)
-                    {
-                        E_ERROR << (it->second == NULL ? "??" : it->second->ToString());
-                    }
-
-                    E_ERROR << "dump of dimension " << dim << ":";
-
-                    for (NodePtr p = m_head; p != m_tail; p = p->m_links[dim].next)
-                    {
-                        E_ERROR << p->ToString();
-                    }
-
-                    
-                    E_ERROR << "hell NOOOOOOOOOOOOOOOOO";
-                }
-
                 assert(itr != m_imap.end());
                 assert(itr->second != NULL);
 
+                NodePtr& indexed = itr->second;
+
                 if (link.indexed)
                 {
-                    assert(itr->second == node);
+                    // E_TRACE << "updating index " << inode.ToString() << " for the removal of " << node->ToString();
+                    // ShowNeighbours(node);
 
-                    if (link.prev != NULL && (INode(link.prev) == inode))
-                    {
-                        NodeType& prev = *link.prev;
+                    assert(indexed == node);
 
-                        assert( prev.m_links[dim].d != NULL);
-                        assert(!prev.m_links[dim].indexed);
-
-                        prev.m_links[dim].indexed = true;
-                        itr->second = link.prev;
-
-                        // E_TRACE << inode.ToString() << " indexed " << prev.ToString() << " due to removal of " << node->ToString();
-                    }
-                    else
-                    {
-                        // E_TRACE << inode.ToString() << " erasing " << node->ToString() << " (n=" << m_imap.size() << ")";
-                        m_imap.erase(itr);
-
-                        //size_t erased = m_imap.erase(inode);
-                        //assert(erased == 1);
-
-                        // E_TRACE << inode.ToString() << " unindexed " << node->ToString() << " due to node removal (n=" << m_imap.size() << ")";
-                    }
-
+                    // remove index
+                    // E_TRACE << inode.ToString() << " erasing " << node->ToString() << " (n=" << m_imap.size() << ")";
+                    m_imap.erase(itr);
                     link.indexed = false;
+                    // E_TRACE << inode.ToString() << " unindexed " << node->ToString() << " due to node removal (n=" << m_imap.size() << ")";
+
+                    // try to transfer the index to the successor
+                    if (link.next != NULL)
+                    {
+                        bool updated = UpdateIndex(link.next);
+
+                        // if (updated)
+                        // {
+                        //   E_TRACE << inode.ToString() << " indexed " << link.next->ToString() << " due to removal of " << node->ToString() << "(n=" << m_imap.size() << ")";
+                        // }
+                    }
                 }
                 else
                 {
@@ -335,12 +473,14 @@ namespace seq2map
                 // E_TRACE << "node " << node->ToString() << " erased in dimension " << dim;
             }
 
+            /**
+             * Search for the successor of a node for insertion into the dimension's linked list.
+             */
             NodePtr upper_bound(NodePtr node) const
             {
                 if (empty()) return NULL;
 
                 // E_TRACE << node->ToString();
-
                 INode inode(node);
                 LNode lnode(node);
 
@@ -348,14 +488,14 @@ namespace seq2map
                 if (INode(m_tail) < inode)
                 {
                     // E_TRACE << "insert after tail " << m_tail->ToString();
-                    return m_tail;
+                    return NULL; // append to the end of list
                 }
 
                 // try first element - O(1) complexity
                 if (inode < INode(m_head))
                 {
                     // E_TRACE << "insert before head " << m_head->ToString();
-                    return NULL;
+                    return m_head; // prepend to the beginning of list
                 }
 
                 // perform indexed linear search - O(lgN+M) complexity in worst case
@@ -364,19 +504,28 @@ namespace seq2map
                 NodePtr rb = (itr == m_imap.cend())   ? m_tail : itr->second;
                 NodePtr lb = (itr == m_imap.cbegin()) ? m_head : (--itr)->second;
 
-                // E_TRACE << "bound : " << lb->ToString() << " - " << rb->ToString();
+                //E_TRACE << "bound : " << lb->ToString() << " - " << rb->ToString();
 
-                if (inode < INode(rb))
+                // one node case
+                if (lb == rb)
                 {
-                    // E_TRACE << "insert after left bound";
-                    return lb;
+                    return !(INode(lb) < inode) && lnode < LNode(lb) ? lb : NULL;
+                }
+
+                if (INode(lb) < inode)
+                {
+                    return rb;
                 }
 
                 // do in-dimension backward linear search
-                for (NodePtr prev = rb; prev != lb; prev = prev->m_links[dim].prev)
+                for (NodePtr prev = rb; prev != GetLink(lb).prev; prev = GetLink(prev).prev)
                 {
-                    // E_TRACE << "comparing " << prev->ToString();
-                    if (LNode(prev) < lnode) return prev;
+                    //E_INFO << prev->ToString();
+                    if (!(inode < INode(prev)) && !(lnode < LNode(prev)))
+                    {
+                        //E_INFO "found";
+                        return GetLink(prev).next;
+                    }
                 }
 
                 // E_TRACE << "insert after left bound after linear search";
@@ -386,9 +535,9 @@ namespace seq2map
         public: // STL-compliance members
             typedef T value_type;
 
-            template<typename node_ptr, typename value_type>
+            template<typename node_ptr, typename value_type, typename ref_type>
             class Iterator
-            : public boost::iterator_facade<Iterator<node_ptr, value_type>, NodeType, boost::bidirectional_traversal_tag, T&>
+            : public boost::iterator_facade<Iterator<node_ptr, value_type, ref_type>, value_type, boost::bidirectional_traversal_tag, ref_type>
             {
             public:
                 Iterator() {}
@@ -397,20 +546,34 @@ namespace seq2map
 
                 inline operator bool() const { return m_node != NULL; }
 
+                template<size_t dim, class C>
+                C& GetContainer()
+                {
+                    assert(dim < dims);
+                    assert(m_node != NULL);
+                    C* d = dynamic_cast<C*>(m_node->m_links[dim].d);
+                    assert(d != NULL);
+
+                    return *d;
+                }
+
+                template<size_t dim, class C>
+                const C& GetContainer() const { return GetContainer<dim, const C>(); }
+
             protected:
                 friend class boost::iterator_core_access;
                 friend class Dimension;
 
                 bool equal(Iterator const& itr) const { return m_node == itr.m_node; }
-                value_type& dereference() const { return m_node->value; }
+                ref_type dereference() const          { return m_node->m_value; }
                 virtual void increment()    { m_node = (m_node == NULL) ? NULL : m_node->m_links[dim].next; }
                 virtual void decreasement() { m_node = (m_node == NULL) ? NULL : m_node->m_links[dim].prev; }
 
                 node_ptr m_node;
             }; // end of Iterator
 
-            typedef Iterator<NodePtr, T> iterator;
-            typedef Iterator<ConstNodePtr, T const> const_iterator;
+            typedef Iterator<NodePtr, ValueType, ValueRef> iterator;
+            typedef Iterator<ConstNodePtr, ConstValueType, ConstValueRef> const_iterator;
 
             iterator begin() { return iterator(m_head); }
             iterator end()   { return iterator(m_tail); }

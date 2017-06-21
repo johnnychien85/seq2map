@@ -16,6 +16,12 @@ namespace seq2map
         const size_t index; // originating feature index in the store
         Point2D proj;       // observed 2D image coordinates
 
+        Hit& operator= (const Hit& hit)
+        {
+            proj = hit.proj;
+            return *this;
+        }
+
     protected:
         friend class Landmark; // only landmarks can make hits
         Hit(size_t index) : index(index) {}
@@ -75,7 +81,7 @@ namespace seq2map
             virtual bool operator() (Map& map, size_t frame) = 0;
         };
 
-        Map() : m_newLandmarkId(0) {}
+        Map() : m_newLandmarkId(0), joinChkMetre("CHK"), joinMetre("JOIN") {}
         virtual ~Map() {}
 
         Landmark& AddLandmark();
@@ -86,6 +92,9 @@ namespace seq2map
         inline Landmark& GetLandmark(size_t index) { return Dim0(index); }
         inline Frame&    GetFrame   (size_t index) { return Dim1(index); }
         inline Source&   GetSource  (size_t index) { return Dim2(index); }
+
+        Speedometre joinChkMetre;
+        Speedometre joinMetre;
 
     private:
         size_t m_newLandmarkId;
