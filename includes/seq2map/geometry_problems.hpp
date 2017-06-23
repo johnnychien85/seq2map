@@ -21,7 +21,9 @@ namespace seq2map
          */
         struct InlierSelector
         {
-            InlierSelector() : threshold(0.0f) {}
+            InlierSelector(AlignmentObjective::Own& objective, double threshold)
+            : objective(objective), threshold(threshold) {}
+
             Indices operator() (const EuclideanTransform& tform) const;
             inline bool IsEnabled() const { return threshold > 0; }
 
@@ -51,7 +53,7 @@ namespace seq2map
     class EpipolarObjective : public AlignmentObjective
     {
     public:
-        enum Distance
+        enum DistanceType
         {
             ALGEBRAIC, // algebraic distance
             GEOMETRIC, // geometrical meaningfully normalised algebraic distance
@@ -61,13 +63,13 @@ namespace seq2map
         //
         // Constructor and destructor
         //
-        EpipolarObjective(Distance dist = SAMPSON) : m_src(new PinholeModel()), m_dst(m_src), m_dist(dist) {}
-        EpipolarObjective(ProjectionModel::ConstOwn& src, ProjectionModel::ConstOwn& dst, Distance distance = SAMPSON) : m_src(src), m_dst(dst), m_dist(distance) {}
+        EpipolarObjective(DistanceType distType = SAMPSON) : m_src(new PinholeModel()), m_dst(m_src), m_distType(distType) {}
+        EpipolarObjective(ProjectionModel::ConstOwn& src, ProjectionModel::ConstOwn& dst, DistanceType distance = SAMPSON) : m_src(src), m_dst(dst), m_distType(distance) {}
 
         //
         // Accessor
         //
-        void SetDistance(Distance dist) { m_dist = dist; }
+        void SetDistance(DistanceType distType) { m_distType = distType; }
         virtual bool SetData(const GeometricMapping& data) { return SetData(data, m_src, m_dst); }
         bool SetData(const GeometricMapping& data, ProjectionModel::ConstOwn& src, ProjectionModel::ConstOwn& dst);
 
@@ -79,7 +81,7 @@ namespace seq2map
     private:
         ProjectionModel::ConstOwn m_src;
         ProjectionModel::ConstOwn m_dst;
-        Distance m_dist;
+        DistanceType m_distType;
     };
 
     /**
@@ -162,57 +164,104 @@ namespace seq2map
     /**
      * Abstract pose estimation problem.
      */
-    class PoseEstimation
+    class PoseEstimator
+    : public Referenced<PoseEstimator> // by ConsensusPoseEstimator
     {
     public:
-        virtual bool operator() (EuclideanTransform& pose) const = 0;
+        struct Estimate
+        {
+            EuclideanTransform pose;
+            Metric::Own metric;
+        };
+
+        virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate) const = 0;
     };
 
     /**
      * Pose estimation by essential matrix decomposition.
      */
-    class EssentialMatDecomposition : public PoseEstimation
+    class EssentialMatrixDecomposer : public PoseEstimator
     {
     public:
-        EssentialMatDecomposition(const EpipolarObjective& objective) : m_objective(objective) {}
-        virtual bool operator() (EuclideanTransform& pose) const;
+        EssentialMatrixDecomposer(ProjectionModel::ConstOwn& srcProj, ProjectionModel::ConstOwn& dstProj)
+        : m_srcProj(srcProj), m_dstProj(dstProj) {}
+
+        virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate) const;
 
     private:
-        const EpipolarObjective& m_objective;
+        const ProjectionModel::ConstOwn m_srcProj;
+        const ProjectionModel::ConstOwn m_dstProj;
     };
 
     /**
      * Pose estimation by a perspective-n-points solver
      */
-    class PerspevtivePoseEstimation : public PoseEstimation
+    class PerspevtivePoseEstimator : public PoseEstimator
     {
     public:
-        PerspevtivePoseEstimation(const ProjectionObjective& objective) : m_objective(objective) {}
-        virtual bool operator() (EuclideanTransform& pose) const;
+        PerspevtivePoseEstimator(ProjectionModel::ConstOwn& proj) : m_proj(proj) {}
+        virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate) const;
 
     private:
-        const ProjectionObjective& m_objective;
+        const ProjectionModel::ConstOwn m_proj;
     };
 
     /**
      * Pose estimation by Horn's quaternion-based absolute orientation solving method
      */
-    class QuatAbsOrientationSolver : public PoseEstimation
+    class QuatAbsOrientationSolver : public PoseEstimator
     {
     public:
-        QuatAbsOrientationSolver(const RigidObjective& objective) : m_objective(objective) {}
-        virtual bool operator() (EuclideanTransform& pose) const;
+        QuatAbsOrientationSolver(const RigidObjective& objective) {}
+        virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate) const;
+    };
+
+    /**
+     * Robust pose estimation from data with presense of outliers.
+     */
+    class ConsensusPoseEstimator : public PoseEstimator
+    {
+    public:
+        enum Strategy
+        {
+            RANSAC,
+            LMEDS,
+            MASC
+        };
+
+        typedef std::vector<AlignmentObjective::InlierSelector> Selectors;
+
+        //
+        // Constructor
+        //
+        ConsensusPoseEstimator() {}
+
+        //
+        // Pose estimation
+        //
+        virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate) const;
+        virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate, std::vector<Indices> inliers) const;
+
+        //
+        // Accessors
+        //
+        inline void SetStrategy(Strategy strategy) { m_strategy = strategy; }
+        inline Strategy GetStrategy() const { return m_strategy; }
+
+        inline void AddSelector(const AlignmentObjective::InlierSelector& selector) { m_selectors.push_back(selector); }
+        inline void SetEstimator(PoseEstimator::ConstOwn& estimator) { m_estimator = estimator; }
+        inline Selectors& GetSelectors() { return m_selectors; }
 
     private:
-        const RigidObjective& m_objective;
+        Strategy m_strategy;
+        PoseEstimator::ConstOwn m_estimator;
+        Selectors m_selectors;
     };
 
     /**
      * A generic multi-objective pose estimator.
      */
-    class MultiObjectivePoseEstimation
-    : public PoseEstimation,
-      public LeastSquaresProblem
+    class MultiObjectivePoseEstimation : public LeastSquaresProblem
     {
     public:
         //
@@ -221,26 +270,23 @@ namespace seq2map
         MultiObjectivePoseEstimation() : LeastSquaresProblem(0, 6), m_tform(Rotation::EULER_ANGLES) {}
 
         //
-        // Pose estimation
-        //
-        virtual bool operator() (EuclideanTransform& pose) const;
-
-        //
         // Accessors
         //
         inline void AddObjective(AlignmentObjective::Own& objective) { m_objectives.push_back(objective); }
-        //inline EuclideanTransform GetTransform() const { return m_transform; }
-        size_t GetConds() const;
-        EuclideanTransform GetSolution() const { return m_tform; }
+        EuclideanTransform  GetPose() const         { return m_tform; }
+        EuclideanTransform& GetPose()               { return m_tform; }
+        void SetPose(const EuclideanTransform pose) { m_tform = pose; }
 
         //
         // Least-squares problem
         //
-        virtual VectorisableD::Vec Initialise();
+        virtual bool Initialise(VectorisableD::Vec& x);
         virtual VectorisableD::Vec operator()(const VectorisableD::Vec& x) const;
-        virtual bool SetSolution(const VectorisableD::Vec& x) { return m_tform.Restore(x); }
+        virtual bool Finalise(const VectorisableD::Vec& x) { return m_tform.Restore(x); }
 
-    protected:
+    private:
+        size_t GetConds() const;
+
         std::vector<AlignmentObjective::Own> m_objectives;
         EuclideanTransform m_tform;
     };

@@ -1,4 +1,5 @@
 #include <seq2map/mapping.hpp>
+#include <seq2map/geometry_problems.hpp>
 
 using namespace seq2map;
 
@@ -104,9 +105,9 @@ Hit& Landmark::Hit(Frame& frame, Source& src, size_t index)
     return Insert(::Hit(index), d12);
 }
 
-//==[ FeatureMatching ]=======================================================//
+//==[ FeatureTracking ]=======================================================//
 
-bool FeatureMatching::operator() (Map& map, size_t t)
+bool FeatureTracking::operator() (Map& map, size_t t)
 {
     Source& si = map.GetSource(src.store->GetIndex());
     Source& sj = map.GetSource(dst.store->GetIndex());
@@ -138,6 +139,117 @@ bool FeatureMatching::operator() (Map& map, size_t t)
     //{
     //    E_INFO << m.srcIdx << " -> " << m.dstIdx << "[" << m.state << "]";
     //}
+
+    if (outlierRejection)
+    {
+        ConsensusPoseEstimator estimator;
+        PoseEstimator::Own innerEstimator;
+        GeometricMapping innerMapping;
+
+        Camera::ConstOwn ci = Fi.GetCamera();
+        Camera::ConstOwn cj = Fj.GetCamera();
+        ProjectionModel::ConstOwn pi = ci ? ci->GetIntrinsics() : ProjectionModel::ConstOwn();
+        ProjectionModel::ConstOwn pj = cj ? cj->GetIntrinsics() : ProjectionModel::ConstOwn();
+
+        if (outlierRejection & EPIPOLAR)
+        {
+            if (pi && pj)
+            {
+                AlignmentObjective::Own objective = AlignmentObjective::Own(new EpipolarObjective(pi, pj));
+                GeometricMapping mapping;
+
+                BOOST_FOREACH(const FeatureMatch& m, fmap.GetMatches())
+                {
+                    if (!(m.state & FeatureMatch::INLIER))
+                    {
+                        continue;
+                    }
+
+                }
+
+                if (objective->SetData(mapping))
+                {
+                    estimator.AddSelector(AlignmentObjective::InlierSelector(objective, 1.0f));
+                }
+                else
+                {
+                    E_WARNING << "error setting epipolar mapping data";
+                }
+            }
+            else
+            {
+                E_WARNING << "error building epipolar objective due to missing projection model(s)";
+                E_WARNING << "epipolar-based outlier rejection now deactivated for " << ToString();
+
+                outlierRejection &= ~EPIPOLAR;
+            }
+        }
+
+        if (outlierRejection & PROJECTIVE)
+        {
+            if (pj)
+            {
+                AlignmentObjective::Own objective = AlignmentObjective::Own(new ProjectionObjective(pj));
+                GeometricMapping mapping;
+
+                BOOST_FOREACH(const FeatureMatch& m, fmap.GetMatches())
+                {
+                    if (!(m.state & FeatureMatch::INLIER))
+                    {
+                        continue;
+                    }
+
+                }
+
+                if (objective->SetData(mapping))
+                {
+                    estimator.AddSelector(AlignmentObjective::InlierSelector(objective, 1.0f));
+                }
+                else
+                {
+                    E_WARNING << "error setting projective mapping data";
+                }
+            }
+            else
+            {
+                E_WARNING << "error building projective objective due to missing projection model";
+                E_WARNING << "projection-based outlier rejection now deactivated for " << ToString();
+
+                outlierRejection &= ~PROJECTIVE;
+            }
+        }
+
+        PoseEstimator::Estimate estimate;
+        std::vector<Indices> inliers;
+        std::vector<size_t> hits(fmap.GetMatches().size(), 0);
+        estimator.SetEstimator(PoseEstimator::ConstOwn(innerEstimator));
+        
+        if (!estimator(innerMapping, estimate, inliers))
+        {
+            E_ERROR << "consensus outlier detection failed";
+            return false;
+        }
+
+        // aggregate all inliers from all the selectors
+        for (size_t i = 0; i < inliers.size(); i++)
+        {
+            const std::vector<size_t> fidx = estimator.GetSelectors()[i].objective->GetData().indices;
+            BOOST_FOREACH (size_t j, inliers[i])
+            {
+                hits[fidx[j]]++;
+            }
+        }
+
+        for (size_t i = 0; i < hits.size(); i++)
+        {
+            if (hits[i] < estimator.GetSelectors().size())
+            {
+                fmap[i].Reject(FeatureMatch::GEOMETRIC_TEST_FAILED);
+            }
+        }
+
+        // estimate.pose might be use
+    }
 
     BOOST_FOREACH(const FeatureMatch& m, fmap.GetMatches())
     {
@@ -218,18 +330,18 @@ bool FeatureMatching::operator() (Map& map, size_t t)
     return true;
 }
 
-bool FeatureMatching::IsOkay() const
+bool FeatureTracking::IsOkay() const
 {
     return src.store && dst.store && !(src.store->GetIndex() == dst.store->GetIndex() && src.offset == dst.offset);
 }
 
-bool FeatureMatching::IsCrossed() const
+bool FeatureTracking::IsCrossed() const
 {
     Camera::ConstOwn cam0, cam1;
     return IsOkay() && (cam0 = src.store->GetCamera()) && (cam1 = dst.store->GetCamera()) && cam0->GetIndex() != cam1->GetIndex();
 }
 
-bool FeatureMatching::InRange(size_t t, size_t tn) const
+bool FeatureTracking::InRange(size_t t, size_t tn) const
 {
     int ti = static_cast<int>(t) + src.offset;
     int tj = static_cast<int>(t) + dst.offset;
@@ -238,7 +350,7 @@ bool FeatureMatching::InRange(size_t t, size_t tn) const
             tj >= 0 && tj < static_cast<int>(tn));
 }
 
-String FeatureMatching::ToString() const
+String FeatureTracking::ToString() const
 {
     std::stringstream ss, f0, f1, s0, s1;
 
@@ -259,7 +371,7 @@ String FeatureMatching::ToString() const
 
 //==[ MultiFrameFeatureIntegration ]==========================================//
 
-bool MultiFrameFeatureIntegration::AddMatching(const FeatureMatching& matching)
+bool MultiFrameFeatureIntegration::AddMatching(const FeatureTracking& matching)
 {
     if (!matching.IsOkay())
     {
@@ -267,7 +379,7 @@ bool MultiFrameFeatureIntegration::AddMatching(const FeatureMatching& matching)
         return false;
     }
 
-    BOOST_FOREACH (const FeatureMatching& m, m_matchings)
+    BOOST_FOREACH (const FeatureTracking& m, m_matchings)
     {
         bool duplicated = (m.src == matching.src) && (m.dst == matching.dst);
 
@@ -290,7 +402,7 @@ Mapper::Capability MultiFrameFeatureIntegration::GetCapability() const
     capability.metric = m_dispStores.size() > 0;
     capability.dense = false;
 
-    BOOST_FOREACH (const FeatureMatching& m, m_matchings)
+    BOOST_FOREACH (const FeatureTracking& m, m_matchings)
     {
         capability.motion |= !m.IsSynchronised();
         capability.metric |= m.IsCrossed();
@@ -303,7 +415,7 @@ bool MultiFrameFeatureIntegration::SLAM(Map& map, size_t t0, size_t tn)
 {
     for (size_t t = t0; t < tn; t++)
     {
-        BOOST_FOREACH (FeatureMatching& m, m_matchings)
+        BOOST_FOREACH (FeatureTracking& m, m_matchings)
         {
             if (m.InRange(t, tn) && !m(map, t))
             {

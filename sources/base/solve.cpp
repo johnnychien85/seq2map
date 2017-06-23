@@ -3,6 +3,8 @@
 
 using namespace seq2map;
 
+//==[ LeastSquaresProblem ]===================================================//
+
 size_t LeastSquaresProblem::GetHardwareConcurrency()
 {
     return boost::thread::hardware_concurrency();
@@ -109,87 +111,119 @@ cv::Mat LeastSquaresProblem::ApplyUpdate(const VectorisableD::Vec& x0, const Vec
     return cv::Mat(x, true);
 }
 
-bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& f, const VectorisableD::Vec& x0)
+//==[ LeastSquaresSolver ]====================================================//
+
+bool LeastSquaresSolver::Logger::operator() (const LeastSquaresSolver::State& state)
 {
-    assert(m_eta > 1.0f);
-
-    double lambda = m_lambda;
-    bool converged = false;
-    std::vector<double> derr;
-
-    VectorisableD::Vec x_best = x0;
-    VectorisableD::Vec y_best = f(x0);
-    double e_best = rms(cv::Mat(y_best));
-
-    size_t updates = 0; // iteration number
-    if (m_verbose)
+    if (state.updates == 0)
     {
         E_INFO << std::setw(80) << std::setfill('=') << "";
         E_INFO << std::setw(6) << std::right << "Update" << std::setw(12) << std::right << "RMSE" << std::setw(16) << std::right << "lambda" << std::setw(16) << std::right << "Rel. Step Size" << std::setw(16) << std::right << "Rel. Error Drop";
         E_INFO << std::setw(80) << std::setfill('=') << "";
-        E_INFO << std::setw(6) << std::right << updates << std::setw(12) << std::right << e_best << std::setw(16) << std::right << lambda;
+        E_INFO << std::setw(6)  << std::right << state.updates
+               << std::setw(12) << std::right << state.error
+               << std::setw(16) << std::right << state.lambda
+               << std::setw(16) << std::right << "-"
+               << std::setw(16) << std::right << "-";
+    }
+    else
+    {
+        E_INFO << std::setw(6)  << std::right << state.updates
+               << std::setw(12) << std::right << state.error
+               << std::setw(16) << std::right << state.lambda
+               << std::setw(16) << std::right << state.relStep
+               << std::setw(16) << std::right << state.relError;
+    }
+
+    return true;
+}
+
+//==[ LevenbergMarquardtAlgorithm ]===========================================//
+
+bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& f)
+{
+    assert(m_eta > 1.0f);
+    State state;
+
+    if (!f.Initialise(state.x))
+    {
+        return false;
+    }
+
+    state.y = f(state.x);
+    state.error = rms(cv::Mat(state.y, false));
+    state.lambda = m_lambda;
+    state.converged = false;
+    state.updates = 0;
+
+    if (m_verbose && m_updater)
+    {
+        (*m_updater)(state);
     }
 
     try
     {
-        while (!converged)
+        //
+        // outer loop : goes until a possible minimum is approached, or termination criterion met
+        //
+        while (!state.converged)
         {
-            cv::Mat J = f.ComputeJacobian(x_best, y_best);
+            cv::Mat J = f.ComputeJacobian(state.x, state.y); // Jacobian matrix
+            cv::Mat H = J.t() * J;                           // Hessian matrix
+            cv::Mat D = J.t() * cv::Mat(state.y);            // error gradient
 
-            cv::Mat H = J.t() * J; // Hessian matrix
-            cv::Mat D = J.t() * cv::Mat(y_best); // error gradient
-
-            lambda = lambda < 0 ? cv::mean(H.diag())[0] : lambda;
+            state.lambda = state.lambda < 0 ? cv::mean(H.diag())[0] : state.lambda;
 
             bool better = false;
             size_t trials = 0;
-            double derrRatio, stepRatio;
 
-            while (!better && !converged)
+            //
+            // inner loop : keep trying
+            //
+            while (!better && !state.converged)
             {
                 // augmented normal equations
-                cv::Mat A = H + lambda * cv::Mat::diag(H.diag()); // or A = N + lambda*eye(d);
+                cv::Mat A = H + state.lambda * cv::Mat::diag(H.diag()); // or A = N + lambda*eye(d);
                 cv::Mat x_delta = A.inv() * -D; // x_delta =  A \ -D;
 
-                VectorisableD::Vec x_try = f.ApplyUpdate(x_best, x_delta); // = cv::Mat(cv::Mat(x_best) + x_delta);
-                VectorisableD::Vec y_try = f(x_try);
+                VectorisableD::Vec x = f.ApplyUpdate(state.x, x_delta); // = cv::Mat(cv::Mat(x_best) + x_delta);
+                VectorisableD::Vec y = f(x);
 
-                double e_try = rms(cv::Mat(y_try));
-                double de = e_best - e_try;
+                const double e_try = rms(cv::Mat(y));
+                const double de = state.error - e_try;
 
                 better = de > 0;
                 trials++;
 
                 if (better) // accept the update
                 {
-                    lambda /= m_eta;
+                    state.lambda /= m_eta;
 
-                    x_best = x_try;
-                    y_best = y_try;
-                    e_best = e_try;
-
-                    derr.push_back(de);
-                    updates++;
+                    state.de.push_back(de);
+                    state.x        = x;
+                    state.y        = y;
+                    state.error    = e_try;
+                    state.relError = state.de.size() > 1 ? (state.de.rbegin()[0] / state.de.rbegin()[1]) : 1.0f;
+                    state.relStep  = cv::norm(x_delta) / cv::norm(cv::Mat(x, false));
+                    state.jacobian = J;
+                    state.updates++;
                 }
                 else // reject the update
                 {
-                    lambda *= m_eta;
+                    state.lambda *= m_eta;
                 }
 
                 // convergence control
-                derrRatio = derr.size() > 1 ? (derr[derr.size() - 1] / derr[derr.size() - 2]) : 1.0f;
-                stepRatio = norm(x_delta) / norm(cv::Mat(x_best));
-
-                converged |= (updates >= m_term.maxCount); // # iterations check
-                converged |= (updates > 1) && (derrRatio < m_term.epsilon); // error differential check
-                converged |= (updates > 1) && (stepRatio < m_term.epsilon); // step ratio check
-                converged |= (!better && (lambda == 0 || trials >= m_term.maxCount));
+                state.converged |= (state.updates >= m_term.maxCount); // # iterations check
+                state.converged |= (state.updates > 1) && (state.relError < m_term.epsilon); // error differential check
+                state.converged |= (state.updates > 1) && (state.relStep  < m_term.epsilon); // step ratio check
+                state.converged |= (!better && trials >= m_term.maxCount);
 
                 cv::Mat icv = H.diag();
 
                 bool ill = false;
 
-                for (size_t d = 0; d < icv.total(); d++)
+                for (int d = 0; d < icv.total(); d++)
                 {
                     if (icv.at<double>(d) == 0)
                     {
@@ -207,28 +241,27 @@ bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& f, const Vectorisab
                 }
             }
 
-            if (m_verbose)
+            if (m_verbose && m_updater)
             {
-                E_INFO << std::setw(6) << std::right << updates << std::setw(12) << std::right << e_best << std::setw(16) << std::right << lambda << std::setw(16) << std::right << stepRatio << std::setw(16) << std::right << derrRatio;
+                if (!(*m_updater)(state))
+                {
+                    return true;
+                }
             }
-
-            //if (updates == 1 && mat2raw(J, "jacob.raw"))
-            //{
-            //    E_INFO << "Jacobian (" << size2string(J.size()) << ") written";
-            //}
         }
     }
     catch (std::exception& ex)
     {
         E_ERROR << "exception caught in optimisation loop";
         E_ERROR << ex.what();
+
         return false;
     }
 
-    if (!f.SetSolution(x_best))
+    if (!f.Finalise(state.x))
     {
         E_ERROR << "error setting solution";
-        E_ERROR << mat2string(cv::Mat(x_best), "x_best");
+        E_ERROR << mat2string(cv::Mat(state.x, false), "x_final");
 
         return false;
     }

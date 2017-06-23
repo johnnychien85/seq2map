@@ -70,24 +70,24 @@ BOOST_AUTO_TEST_CASE(photometric)
             BOOST_FAIL("error setting data");
         }
 
+        VectorisableD::Vec x(6); // initial solution to help convergence
+        x[5] = pass == 0 ? -1.0f : 1.0f;
+
         MultiObjectivePoseEstimation problem;
         problem.SetDifferentiationStep(1e-3);
         problem.AddObjective(AlignmentObjective::Own(obj));
-        problem.Initialise();
+        problem.GetPose().Restore(x); // set initial solution
 
         LevenbergMarquardtAlgorithm solver;
         solver.SetInitialDamp(1e-2);
         solver.SetVervbose(true);
 
-        VectorisableD::Vec x(6);
-        x[5] = pass == 0 ? -1.0f : 1.0f;
-
-        if (!solver.Solve(problem, x))
+        if (!solver.Solve(problem))
         {
             BOOST_FAIL("error solving ego-motion");
         }
 
-        tform[pass] = problem.GetSolution();
+        tform[pass] = problem.GetPose();
     }
 
     EuclideanTransform err = tform[0] >> tform[1];

@@ -175,6 +175,8 @@ namespace seq2map
 
         bool IsConsistent() const { return src.GetElements() == dst.GetElements(); }
 
+        std::vector<size_t> indices;
+
         Geometry src; ///< source geometry data
         Geometry dst; ///< target geometry data
         Metric::Own metric;

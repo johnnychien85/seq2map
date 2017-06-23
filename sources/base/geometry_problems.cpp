@@ -85,7 +85,7 @@ cv::Mat EpipolarObjective::operator() (const EuclideanTransform& tform) const
     //      xFx = Fx00.mul(x1.col(0)) + Fx01.mul(x1.col(1)) + Fx02.mul(x1.col(2));
     //                                                   should be one ^^^^^^^^^
 
-    if (m_dist == ALGEBRAIC)
+    if (m_distType == ALGEBRAIC)
     {
         // algebraic epipolar distance
         // x1' * F * x0
@@ -103,7 +103,7 @@ cv::Mat EpipolarObjective::operator() (const EuclideanTransform& tform) const
 
     Geometry err(m_data.src.shape);
 
-    if (m_dist == SAMPSON)
+    if (m_distType == SAMPSON)
     {
         // Sampson approximation:
         //
@@ -348,66 +348,54 @@ cv::Mat RigidObjective::operator() (const EuclideanTransform& tform) const
     return d(m_data.dst, y).mat;
 }
 
-//==[ PoseEstimation ]========================================================//
+//==[ PoseEstimator ]=========================================================//
 
-//==[ EssentialMatDecomposition ]=============================================//
+//==[ EssentialMatrixDecomposer ]=============================================//
 
-bool EssentialMatDecomposition::operator() (EuclideanTransform& pose) const
+bool EssentialMatrixDecomposer::operator() (const GeometricMapping& mapping, Estimate& estimate) const
 {
     return false;
 }
 
-//==[ PerspevtivePoseEstimation ]=============================================//
+//==[ PerspevtivePoseEstimator ]==============================================//
 
-bool PerspevtivePoseEstimation::operator() (EuclideanTransform& pose) const
+bool PerspevtivePoseEstimator::operator() (const GeometricMapping& mapping, Estimate& estimate) const
 {
     return false;
 }
 
 //==[ QuatAbsOrientationSolver ]==============================================//
 
-bool QuatAbsOrientationSolver::operator() (EuclideanTransform& pose) const
+bool QuatAbsOrientationSolver::operator() (const GeometricMapping& mapping, Estimate& estimate) const
+{
+    return false;
+}
+
+//==[ ConsensusPoseEstimator ]================================================//
+
+bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estimate& estimate) const
+{
+    std::vector<Indices> inliers;
+    return (*this)(mapping, estimate, inliers);
+}
+
+bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estimate& estimate, std::vector<Indices> inliers) const
 {
     return false;
 }
 
 //==[ MultiObjectivePoseEstimation ]==========================================//
 
-bool MultiObjectivePoseEstimation::operator() (EuclideanTransform& pose) const
+bool MultiObjectivePoseEstimation::Initialise(VectorisableD::Vec& x)
 {
-    return false;
-}
-
-VectorisableD::Vec MultiObjectivePoseEstimation::Initialise()
-{
-    // TODO: improve the initialisation
-    //
-    //m_tform.SetTranslation(cv::Vec3d(0, 0, -1));
-
-    VectorisableD::Vec v;
-    m_tform.Store(v);
     m_conds = GetConds();
-
-    return v;
+    return m_conds >= 6 && m_tform.Store(x);
 }
 
-size_t MultiObjectivePoseEstimation::GetConds() const
-{
-    size_t m = 0;
-
-    BOOST_FOREACH (const AlignmentObjective::Own& obj, m_objectives)
-    {
-        if (!obj) continue;
-        m += obj->GetData().dst.GetElements();
-    }
-
-    return m;
-}
-
-VectorisableD::Vec MultiObjectivePoseEstimation::operator()(const VectorisableD::Vec& x) const
+VectorisableD::Vec MultiObjectivePoseEstimation::operator() (const VectorisableD::Vec& x) const
 {
     EuclideanTransform tform(m_tform.GetRotation().GetParameterisation());
-    
+
     if (!tform.Restore(x))
     {
         E_ERROR << "error devectorising transform";
@@ -422,7 +410,7 @@ VectorisableD::Vec MultiObjectivePoseEstimation::operator()(const VectorisableD:
     BOOST_FOREACH (const AlignmentObjective::Own& obj, m_objectives)
     {
         if (!obj) continue;
-        
+
         cv::Mat yi = (*obj)(tform);
         size_t  mi = static_cast<size_t>(yi.total());
 
@@ -440,6 +428,19 @@ VectorisableD::Vec MultiObjectivePoseEstimation::operator()(const VectorisableD:
     assert(m == m_conds);
 
     return y;
+}
+
+size_t MultiObjectivePoseEstimation::GetConds() const
+{
+    size_t m = 0;
+
+    BOOST_FOREACH (const AlignmentObjective::Own& obj, m_objectives)
+    {
+        if (!obj) continue;
+        m += obj->GetData().dst.GetElements();
+    }
+
+    return m;
 }
 
 //==[ StructureEstimation ]===================================================//

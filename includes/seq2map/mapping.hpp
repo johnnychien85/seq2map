@@ -100,7 +100,7 @@ namespace seq2map
         size_t m_newLandmarkId;
     };
 
-    class FeatureMatching : public Map::Operator
+    class FeatureTracking : public Map::Operator
     {
     public:
         struct FramedStore
@@ -126,11 +126,19 @@ namespace seq2map
             REMOVE_BOTH     ///< erase both landmarks' histories
         };
 
+        enum OutlierRejectionScheme
+        {
+            EPIPOLAR    = 1 << 0, ///< outlier detection using Epipolar constraints
+            PROJECTIVE  = 1 << 1, ///< outlier detection using projective constraints when 3D-to-2D correspondences are available
+            RIGID       = 1 << 2, ///< outlier detection using rigid alignment when 3D-to-3D correspondences are available
+            PHOTOMETRIC = 1 << 3, ///< outlier detection using photometric alignment when intensity data are available
+        };
+
         /**
          *
          */
-        FeatureMatching(const FramedStore& src = FramedStore::Null, const FramedStore& dst = FramedStore::Null)
-        : src(src), dst(dst), policy(KEEP_BOTH) {}
+        FeatureTracking(const FramedStore& src = FramedStore::Null, const FramedStore& dst = FramedStore::Null)
+        : src(src), dst(dst), policy(KEEP_BOTH), outlierRejection(EPIPOLAR + PROJECTIVE) {}
 
         /**
          *
@@ -167,6 +175,7 @@ namespace seq2map
 
         FeatureMatcher matcher;
         ConflictResolution policy;
+        int outlierRejection;
     };
 
     class Mapper
@@ -193,10 +202,10 @@ namespace seq2map
         virtual Capability GetCapability() const;
         virtual bool SLAM(Map& map, size_t t0, size_t tn);
 
-        bool AddMatching(const FeatureMatching& matching);
+        bool AddMatching(const FeatureTracking& matching);
 
     private:
-        std::vector<FeatureMatching> m_matchings;
+        std::vector<FeatureTracking> m_matchings;
         std::vector<DisparityStore::ConstOwn> m_dispStores;
     };
 
