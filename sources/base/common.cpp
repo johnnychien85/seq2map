@@ -757,8 +757,8 @@ int App::Run()
         E_WARNING << "error writing to log file " << m_logfile;
     }
 
-    try
-    {
+    //try
+    //{
         if (!ProcessUnknownArgs(unknownArgs) || !Init())
         {
             ShowSynopsis();
@@ -766,14 +766,14 @@ int App::Run()
         }
 
         return Execute() ? EXIT_SUCCESS : EXIT_FAILURE;
-    }
-    catch (std::exception& ex)
-    {
-        E_FATAL << "unhandled exception caught";
-        E_FATAL << ex.what();
+    //}
+    //catch (std::exception& ex)
+    //{
+    //    E_FATAL << "unhandled exception caught";
+    //    E_FATAL << ex.what();
 
-        return EXIT_FAILURE;
-    }
+    //    return EXIT_FAILURE;
+    //}
 }
 
 bool App::ProcessUnknownArgs(const Strings& args)

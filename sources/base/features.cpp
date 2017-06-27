@@ -14,6 +14,8 @@ const seq2map::String HetergeneousDetextractor::s_extractorFileNodeName = "extra
 const seq2map::String ImageFeatureSet::s_fileMagicNumber = "IMKPTDSC"; // which means IMage KeyPoinTs & DeSCriptors
 const char ImageFeatureSet::s_fileHeaderSep = ' ';
 
+//==[ FeatureDetectorFactory ]================================================//
+
 FeatureDetectorFactory::FeatureDetectorFactory()
 {
     Factory::Register<GFTTFeatureDetector>     ("GFTT" );
@@ -23,13 +25,15 @@ FeatureDetectorFactory::FeatureDetectorFactory()
     Factory::Register<BRISKFeatureDetextractor>("BRISK");
     Factory::Register<KAZEFeatureDetextractor> ("KAZE" );
     Factory::Register<AKAZEFeatureDetextractor>("AKAZE");
-#ifdef WITH_XFEATURES2D // non-free feature detectors .....
+#ifdef WITH_XFEATURES2D // non-free feature detectors ..........................
     Factory::Register<StarFeatureDetector>     ("STAR" );
     Factory::Register<MSDFeatureDetector>      ("MSD"  );
     Factory::Register<SIFTFeatureDetextractor> ("SIFT" );
     Factory::Register<SURFFeatureDetextractor> ("SURF" );
-#endif // WITH_XFEATURES2D ................................
+#endif // WITH_XFEATURES2D .....................................................
 }
+
+//==[ FeatureExtractorFactory ]===============================================//
 
 FeatureExtractorFactory::FeatureExtractorFactory()
 {
@@ -37,7 +41,7 @@ FeatureExtractorFactory::FeatureExtractorFactory()
     Factory::Register<BRISKFeatureDetextractor>("BRISK");
     Factory::Register<KAZEFeatureDetextractor> ("KAZE" );
     Factory::Register<AKAZEFeatureDetextractor>("AKAZE");
-#ifdef WITH_XFEATURES2D // non-free descriptor extractors..
+#ifdef WITH_XFEATURES2D // non-free descriptor extractors.......................
     Factory::Register<SIFTFeatureDetextractor> ("SIFT" );
     Factory::Register<SURFFeatureDetextractor> ("SURF" );
     Factory::Register<BRIEFFeatureExtractor>   ("BRIEF");
@@ -45,8 +49,10 @@ FeatureExtractorFactory::FeatureExtractorFactory()
     Factory::Register<FREAKFeatureExtractor>   ("FREAK");
     Factory::Register<LATCHFeatureExtractor>   ("LATCH");
     Factory::Register<LUCIDFeatureExtractor>   ("LUCID");
-#endif // WITH_XFEATURES2D ................................
+#endif // WITH_XFEATURES2D .....................................................
 }
+
+//==[ FeatureDetextractorFactory ]============================================//
 
 void FeatureDetextractorFactory::Init()
 {
@@ -54,23 +60,19 @@ void FeatureDetextractorFactory::Init()
     Factory::Register<BRISKFeatureDetextractor>("BRISK");
     Factory::Register<KAZEFeatureDetextractor> ("KAZE" );
     Factory::Register<AKAZEFeatureDetextractor>("AKAZE");
-#ifdef WITH_XFEATURES2D // non-free feature detextractors..
+#ifdef WITH_XFEATURES2D // non-free feature detextractors.......................
     Factory::Register<SIFTFeatureDetextractor> ("SIFT" );
     Factory::Register<SURFFeatureDetextractor> ("SURF" );
-#endif // WITH_XFEATURES2D ................................
+#endif // WITH_XFEATURES2D .....................................................
 }
+
+//==[ ImageFeatureSet ]=======================================================//
 
 ImageFeature ImageFeatureSet::GetFeature(const size_t idx) const
 {
     assert(idx < m_keypoints.size());
     return ImageFeature(m_keypoints[idx], m_descriptors.row(static_cast<int>(idx)));
 }
-
-// ImageFeature ImageFeatureSet::GetFeature(const size_t idx) const
-// {
-//    assert(idx < m_keypoints.size());
-//    return ImageFeature(m_keypoints[idx], m_descriptors.row((int)idx).clone());
-// }
 
 seq2map::String ImageFeatureSet::NormType2String(int type)
 {
@@ -214,6 +216,8 @@ bool ImageFeatureSet::Restore(const Path& path)
     return true;
 }
 
+//==[ FeatureDetextractorFactory ]============================================//
+
 FeatureDetextractor::Own FeatureDetextractorFactory::Create(const seq2map::String& detectorName, const seq2map::String& extractorName)
 {
     FeatureDetextractor::Own dxtor;
@@ -271,6 +275,8 @@ FeatureDetextractor::Own FeatureDetextractorFactory::Create(const cv::FileNode& 
     return dxtor;
 }
 
+//==[ FeatureDetextractor ]===================================================//
+
 bool FeatureDetextractor::Store(cv::FileStorage& fs) const
 {
     fs << "keypoint"   << m_keypointType;
@@ -319,6 +325,8 @@ bool FeatureDetextractor::Restore(const cv::FileNode& fn)
     return true;
 }
 
+//==[ HetergeneousDetextractor ]==============================================//
+
 void HetergeneousDetextractor::WriteParams(cv::FileStorage& fs) const
 {
     fs << s_detectorFileNodeName << "{";
@@ -357,6 +365,8 @@ ImageFeatureSet HetergeneousDetextractor::DetectAndExtractFeatures(const Mat& im
     return m_extractor->ExtractFeatures(im, keypoints);
 }
 
+//==[ CvFeatureDetectorAdaptor ]==============================================//
+
 KeyPoints CvFeatureDetectorAdaptor::DetectFeatures(const cv::Mat& im) const
 {
     KeyPoints keypoints;
@@ -365,6 +375,8 @@ KeyPoints CvFeatureDetectorAdaptor::DetectFeatures(const cv::Mat& im) const
     return keypoints;
 }
 
+//==[ CvFeatureExtractorAdaptor ]=============================================//
+
 ImageFeatureSet CvFeatureExtractorAdaptor::ExtractFeatures(const Mat& im, KeyPoints& keypoints) const
 {
     Mat descriptors;
@@ -372,6 +384,8 @@ ImageFeatureSet CvFeatureExtractorAdaptor::ExtractFeatures(const Mat& im, KeyPoi
 
     return ImageFeatureSet(keypoints, descriptors, m_cvExtractor->defaultNorm());
 }
+
+//==[ CvFeatureDetextractorAdaptor ]==========================================//
 
 ImageFeatureSet CvFeatureDetextractorAdaptor::DetectAndExtractFeatures(const Mat& im) const
 {
@@ -383,6 +397,8 @@ ImageFeatureSet CvFeatureDetextractorAdaptor::DetectAndExtractFeatures(const Mat
     return ImageFeatureSet(keypoints, descriptors, m_cvDxtor->defaultNorm());
 }
 
+//==[ CvSuperDetextractorAdaptor ]============================================//
+
 template<class T>
 void CvSuperDetextractorAdaptor<T>::SetCvSuperDetextractorPtr(CvDextractorPtr cvDxtor)
 {
@@ -390,6 +406,8 @@ void CvSuperDetextractorAdaptor<T>::SetCvSuperDetextractorPtr(CvDextractorPtr cv
     SetCvExtractorPtr   (cvDxtor);
     SetCvDetextractorPtr(cvDxtor);
 }
+
+//==[ ImageFeatureMap ]=======================================================//
 
 Indices ImageFeatureMap::Select(int mask) const
 {
@@ -406,15 +424,18 @@ void ImageFeatureMap::Draw(Mat& canvas)
     const KeyPoints& src = m_src.GetKeyPoints();
     const KeyPoints& dst = m_dst.GetKeyPoints();
 
-    cv::Scalar inlierColour  = cv::Scalar(  0, 255,   0);
-    cv::Scalar outlierColour = cv::Scalar(200, 200, 200);
+    cv::Scalar inlierColour   = cv::Scalar(  0, 255,   0);
+    cv::Scalar outlierColour1 = cv::Scalar(200, 200, 200);
+    cv::Scalar outlierColour2 = cv::Scalar(192,   0, 255);
 
     BOOST_FOREACH (const FeatureMatch& match, m_matches)
     {
         if (match.state & FeatureMatch::RATIO_TEST_FAILED) continue;
 
-        bool inlier = match.state & FeatureMatch::INLIER;
-        cv::line(canvas, src[match.srcIdx].pt, dst[match.dstIdx].pt, inlier ? inlierColour : outlierColour);
+        const bool inlier = match.state & FeatureMatch::INLIER;
+        const bool highlight = !inlier && match.state & FeatureMatch::GEOMETRIC_TEST_FAILED;
+
+        cv::line(canvas, src[match.srcIdx].pt, dst[match.dstIdx].pt, inlier ? inlierColour : (highlight ? outlierColour2 : outlierColour1));
     }
 }
 
@@ -426,7 +447,9 @@ Mat ImageFeatureMap::Draw(const cv::Mat& src, const cv::Mat& dst)
     return canvas;
 }
 
-ImageFeatureMap FeatureMatcher::MatchFeatures(const ImageFeatureSet& src, const ImageFeatureSet& dst)
+//==[ FeatureMatcher ]========================================================//
+
+ImageFeatureMap FeatureMatcher::operator() (const ImageFeatureSet& src, const ImageFeatureSet& dst)
 {
     ImageFeatureMap map(src, dst);
 
@@ -465,25 +488,25 @@ ImageFeatureMap FeatureMatcher::MatchFeatures(const ImageFeatureSet& src, const 
 
     Indices inliers = map.Select(FeatureMatch::INLIER);
 
-    BOOST_FOREACH(FeatureMatchFilter* filter, m_filters)
+    BOOST_FOREACH(Filter::Own& f, m_filters)
     {
         size_t total = inliers.size();
         size_t passed = 0;
 
         AutoSpeedometreMeasure measure(m_filteringMetre, total);
 
-        if (!filter->Filter(map, inliers))
+        if (!(*f)(map, inliers))
         {
-            E_INFO << "filtering stopped because a filter failed";
+            E_WARNING << "filtering discontinued due to a failed failter";
             break;
         }
 
         passed = inliers.size();
-        E_INFO << "survival rate: " << passed << " / " << total;
+        E_TRACE << "survival rate: " << passed << " / " << total;
 
         if (passed == 0)
         {
-            E_INFO << "filtering stopped because no inlier survived";
+            E_TRACE << "filtering stopped because no inlier survived";
             break;
         }
     }
@@ -491,9 +514,9 @@ ImageFeatureMap FeatureMatcher::MatchFeatures(const ImageFeatureSet& src, const 
     return map;
 }
 
-FeatureMatcher& FeatureMatcher::AddFilter(FeatureMatchFilter& filter)
+FeatureMatcher& FeatureMatcher::AddFilter(Filter::Own& filter)
 {
-    m_filters.push_back(&filter);
+    m_filters.push_back(filter);
     return *this;
 };
 
@@ -618,7 +641,9 @@ seq2map::String FeatureMatcher::Report() const
     return boost::algorithm::join(summary, " / ") + (m_useGpu ? " [GPU]" : "");
 }
 
-bool FundamentalMatrixFilter::Filter(ImageFeatureMap& map, Indices& inliers)
+//==[ FundamentalMatrixFilter ]===============================================//
+
+bool FundamentalMatrixFilter::operator() (ImageFeatureMap& map, Indices& inliers)
 {
     // at least 8 point correspondences are required 
     //  to estimate the fundamental matrix
@@ -668,6 +693,8 @@ bool FundamentalMatrixFilter::Filter(ImageFeatureMap& map, Indices& inliers)
     return true;
 }
 
+//==[ EssentialMatrixFilter ]=================================================//
+
 void EssentialMatrixFilter::SetCameraMatrices(const cv::Mat& K0, const cv::Mat& K1)
 {
     if (!checkCameraMatrix(K0) || !checkCameraMatrix(K1))
@@ -689,7 +716,7 @@ void EssentialMatrixFilter::SetCameraMatrices(const cv::Mat& K0, const cv::Mat& 
     m_K1inv.convertTo(m_K1inv, CV_64F);
 }
 
-bool EssentialMatrixFilter::Filter(ImageFeatureMap& map, Indices& inliers)
+bool EssentialMatrixFilter::operator() (ImageFeatureMap& map, Indices& inliers)
 {
     // at least 5 point correspondences are required 
     //  to estimate the essential matrix
@@ -773,7 +800,9 @@ void EssentialMatrixFilter::BackprojectPoints(Points2D& pts, const cv::Mat& Kinv
     }
 }
 
-bool SigmaFilter::Filter(ImageFeatureMap& map, Indices& inliers)
+//==[ SigmaFilter ]===========================================================//
+
+bool SigmaFilter::operator() (ImageFeatureMap& map, Indices& inliers)
 {
     if (inliers.size() < 2) return true;
 

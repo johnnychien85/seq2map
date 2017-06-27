@@ -6,25 +6,47 @@ using namespace seq2map;
 
 //==[ AlignmentObjective::InlierSelector ]====================================//
 
-Indices AlignmentObjective::InlierSelector::operator() (const EuclideanTransform& x) const
+bool AlignmentObjective::InlierSelector::operator() (const EuclideanTransform& x, Indices& inliers, Indices& outliers) const
 {
-    Indices inliers;
-    cv::Mat error = (*objective)(x);
+    inliers.clear();
+    outliers.clear();
 
-    if (error.type() != CV_64F)
+    try
     {
-        error.convertTo(error, CV_64F);
+        cv::Mat error = (*objective)(x);
+
+        if (error.type() != CV_64F)
+        {
+            error.convertTo(error, CV_64F);
+        }
+
+        const double* e = error.ptr<double>();
+
+        for (size_t i = 0; i < error.total(); i++)
+        {
+            if (e[i] > threshold)
+            {
+                outliers.push_back(i);
+            }
+            else
+            {
+                inliers.push_back(i);
+            }
+        }
+    }
+    catch (std::exception& ex)
+    {
+        E_ERROR << "error selecting inliers : " << ex.what();
+        return false;
     }
 
-    const double* e = error.ptr<double>();
+    return true;
+}
 
-    for (size_t i = 0; i < error.total(); i++)
-    {
-        if (e[i] > threshold) continue;
-        inliers.push_back(i);
-    }
-
-    return inliers;
+bool AlignmentObjective::InlierSelector::operator() (const EuclideanTransform& x, Indices& inliers) const
+{
+    Indices outliers;
+    return (*this)(x, inliers, outliers);
 }
 
 //==[ EpipolarObjective ]=====================================================//
@@ -60,6 +82,7 @@ bool EpipolarObjective::SetData(const GeometricMapping& data, ProjectionModel::C
         return false;
     }
 
+    m_data.indices = data.indices;
     m_data.src = src->Backproject(data.src); //.Reshape(Geometry::ROW_MAJOR);
     m_data.dst = dst->Backproject(data.dst); //.Reshape(Geometry::ROW_MAJOR);
     m_data.metric = data.metric ? data.metric : Metric::Own(new EuclideanMetric());
@@ -152,6 +175,7 @@ bool ProjectionObjective::SetData(const GeometricMapping& data)
         return false;
     }
 
+    m_data.indices = data.indices;
     m_data.src = (d0 == 3 ? Geometry::MakeHomogeneous(data.src) : data.src); //.Reshape(Geometry::ROW_MAJOR);
     m_data.dst = (d1 == 3 ? Geometry::FromHomogeneous(data.dst) : data.dst); //.Reshape(Geometry::ROW_MAJOR);
     m_data.metric = data.metric ? data.metric : Metric::Own(new EuclideanMetric());
@@ -159,7 +183,7 @@ bool ProjectionObjective::SetData(const GeometricMapping& data)
     return true;
 }
 
-cv::Mat ProjectionObjective::operator() (const EuclideanTransform& tform) const
+cv::Mat ProjectionObjective::operator() (const EuclideanTransform& f) const
 {
     if (!m_proj)
     {
@@ -170,7 +194,7 @@ cv::Mat ProjectionObjective::operator() (const EuclideanTransform& tform) const
     const Metric& d = *m_data.metric;
 
     Geometry x = m_data.src;
-    Geometry y = m_proj->Project(tform(x, true), ProjectionModel::EUCLIDEAN_2D);
+    Geometry y = m_proj->Project(m_forward ? f(x, true) : f.GetInverse()(x, true), ProjectionModel::EUCLIDEAN_2D);
 
     return d(y, m_data.dst).mat;
 
@@ -213,6 +237,7 @@ bool PhotometricObjective::SetData(const GeometricMapping& data)
         return false;
     }
 
+    m_data.indices = data.indices;
     m_data.src = (d0 == 3 ? Geometry::MakeHomogeneous(data.src) : data.src);
     m_data.dst = data.dst;
     m_data.metric = data.metric ? data.metric : Metric::Own(new EuclideanMetric());
@@ -278,7 +303,7 @@ bool PhotometricObjective::SetData(const Geometry& g, const cv::Mat& src)
     return SetData(data);
 }
 
-cv::Mat PhotometricObjective::operator() (const EuclideanTransform& tform) const
+cv::Mat PhotometricObjective::operator() (const EuclideanTransform& f) const
 {
     if (!m_proj)
     {
@@ -306,7 +331,7 @@ cv::Mat PhotometricObjective::operator() (const EuclideanTransform& tform) const
     //PersistentMat y0(interp(m_dst, p0.reshape(2), cv::INTER_LINEAR)); y0.Store(Path("y0" + ss.str() + ".bin"));
     //PersistentMat y1(interp(m_dst, p1.reshape(2), cv::INTER_LINEAR)); y1.Store(Path("y1" + ss.str() + ".bin"));
 
-    m_proj->Project(tform(x, true), ProjectionModel::EUCLIDEAN_2D).Reshape(Geometry::PACKED).mat.convertTo(y, CV_32F);
+    m_proj->Project(f(x, true), ProjectionModel::EUCLIDEAN_2D).Reshape(Geometry::PACKED).mat.convertTo(y, CV_32F);
 
     return (*m_data.metric)(m_data.dst, Geometry(Geometry::PACKED, interp(m_dst, y, m_interp))).mat;
 }
@@ -332,18 +357,20 @@ bool RigidObjective::SetData(const GeometricMapping& data)
         return false;
     }
 
+    m_data.indices = data.indices;
     m_data.src = (d0 == 3 ? Geometry::MakeHomogeneous(data.src) : data.src);
     m_data.dst = (d1 == 3 ? Geometry::MakeHomogeneous(data.dst) : data.dst);
+    m_data.metric = data.metric;
 
     return true;
 }
 
-cv::Mat RigidObjective::operator() (const EuclideanTransform& tform) const
+cv::Mat RigidObjective::operator() (const EuclideanTransform& f) const
 {
     const Metric& d = *m_data.metric;
 
     Geometry x = m_data.src;
-    Geometry y = tform(x);
+    Geometry y = f(x);
 
     return d(m_data.dst, y).mat;
 }
@@ -354,34 +381,313 @@ cv::Mat RigidObjective::operator() (const EuclideanTransform& tform) const
 
 bool EssentialMatrixDecomposer::operator() (const GeometricMapping& mapping, Estimate& estimate) const
 {
-    return false;
+    if (!mapping.Check(2, 2))
+    {
+        E_ERROR << "invalid mapping";
+        return false;
+    }
+
+    if (mapping.GetSize() < GetMinPoints())
+    {
+        E_ERROR << "insufficient mapping size (" << mapping.GetSize() << " < " << GetMinPoints() << ")";
+        return false;
+    }
+
+    if (!m_srcProj || !m_dstProj)
+    {
+        E_ERROR << "missing projeciton model(s)";
+        return false;
+    }
+
+    GeometricMapping bpm;
+    bpm.src.mat = Geometry::FromHomogeneous(m_srcProj->Backproject(mapping.src)).mat;
+    bpm.dst.mat = Geometry::FromHomogeneous(m_dstProj->Backproject(mapping.dst)).mat;
+
+    cv::Mat E;
+
+    try
+    {
+        E = cv::findEssentialMat(bpm.src.mat, bpm.dst.mat, cv::Mat::eye(3, 3, CV_64F));
+    }
+    catch (std::exception& ex)
+    {
+        E_ERROR << "cv::findEssentialMat failed : " << ex.what();
+        return false;
+    }
+
+    return estimate.pose.FromEssentialMatrix(E, bpm);
 }
 
 //==[ PerspevtivePoseEstimator ]==============================================//
 
 bool PerspevtivePoseEstimator::operator() (const GeometricMapping& mapping, Estimate& estimate) const
 {
-    return false;
+    if (!mapping.Check(3, 2))
+    {
+        E_ERROR << "invalid mapping";
+        return false;
+    }
+
+    if (mapping.GetSize() < GetMinPoints())
+    {
+        E_ERROR << "insufficient mapping size (" << mapping.GetSize() << " < " << GetMinPoints() << ")";
+        return false;
+    }
+
+    if (!m_proj)
+    {
+        E_ERROR << "missing projection model";
+        return false;
+    }
+
+    cv::Mat K = cv::Mat::eye(3, 3, CV_64F);
+    cv::Mat D = cv::Mat();
+    cv::Mat rvec, tvec;
+
+    bool success = cv::solvePnP(mapping.src.mat, m_proj->Backproject(mapping.dst).mat, K, D, rvec, tvec, false, cv::SOLVEPNP_EPNP);
+
+    if (!success)
+    {
+        E_ERROR << "cv::solvePnP failed";
+        return false;
+    }
+
+    if (!estimate.pose.GetRotation().FromVector(rvec))
+    {
+        E_ERROR << "error setting rotation vector";
+        return false;
+    }
+
+    if (!estimate.pose.SetTranslation(tvec))
+    {
+        E_ERROR << "error setting translation vector";
+        return false;
+    }
+
+    return true;
 }
 
 //==[ QuatAbsOrientationSolver ]==============================================//
 
 bool QuatAbsOrientationSolver::operator() (const GeometricMapping& mapping, Estimate& estimate) const
 {
+    throw std::logic_error("not implemented");
     return false;
+}
+
+//==[ DummyPoseEstimator ]====================================================//
+
+bool DummyPoseEstimator::operator() (const GeometricMapping& mapping, Estimate& estimate) const
+{
+    estimate.pose = m_pose;
+    return true;
+}
+
+//==[ InversePoseEstimator ]=================================================//
+
+bool InversePoseEstimator::operator() (const GeometricMapping& mapping, Estimate& estimate) const
+{
+    if (!m_estimator || !(*m_estimator)(mapping, estimate))
+    {
+        return false;
+    }
+
+    // invert the solution
+    estimate.pose = estimate.pose.GetInverse();
+
+    // TODO: need to invert the metric as well
+    // ...
+    // ..
+    // .
+
+    return true;
 }
 
 //==[ ConsensusPoseEstimator ]================================================//
 
 bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estimate& estimate) const
 {
-    std::vector<Indices> inliers;
-    return (*this)(mapping, estimate, inliers);
+    IndexLists inliers, outliers;
+    return (*this)(mapping, estimate, inliers, outliers);
 }
 
-bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estimate& estimate, std::vector<Indices> inliers) const
+bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estimate& estimate, IndexLists& inliers, IndexLists& outliers) const
 {
-    return false;
+    if (!m_solver)
+    {
+        E_ERROR << "missing inner pose estimator";
+        return false;
+    }
+
+    if (m_selectors.empty())
+    {
+        E_ERROR << "missing selector";
+        return false;
+    }
+
+    const PoseEstimator& f = *m_solver;
+    const size_t m = mapping.GetSize();
+    const size_t n = f.GetMinPoints();
+
+    if (m < n)
+    {
+        E_ERROR << "insufficient number of correspondences";
+        return false;
+    }
+
+    const size_t population = GetPopulation();
+    const size_t minInliers = static_cast<size_t>(population * m_minInlierRatio);
+    const double logOneMinusConfidence = std::log(1 - m_confidence);
+    size_t numInliers = 0;
+
+    Speedometre solveMetre;
+    Speedometre evalMetre;
+
+    if (m_verbose)
+    {
+        E_INFO << std::setw(80) << std::setfill('=') << "";
+        E_INFO << std::setw(6)  << std::right << "Trial"
+               << std::setw(19) << std::right << "Inliers"
+               << std::setw(19) << std::right << "Best"
+               << std::setw(18) << std::right << "Solve Time"
+               << std::setw(18) << std::right << "Eval. Time";
+        E_INFO << std::setw(80) << std::setfill('=') << "";
+    }
+
+    struct Result
+    {
+        IndexLists inliers;
+        IndexLists outliers;
+    };
+
+    for (size_t k = 0, iter = m_maxIter; k < iter; k++)
+    {
+        Indices idx = DrawSamples(m, n);
+        GeometricMapping samples = mapping[idx];
+        PoseEstimator::Estimate trial;
+        Result result;
+        size_t hits = 0;
+
+        solveMetre.Start();
+        if (!f(samples, trial))
+        {
+            E_ERROR << "inner pose estimator failed";
+            return false;
+        }
+        solveMetre.Stop(1);
+
+        evalMetre.Start();
+        BOOST_FOREACH (const AlignmentObjective::InlierSelector& g, m_selectors)
+        {
+            Indices accepted, rejected;
+            if (!g(trial.pose, accepted, rejected))
+            {
+                E_ERROR << "selector failed";
+                return false;
+            }
+
+            result.inliers.push_back(accepted);
+            result.outliers.push_back(rejected);
+
+            hits += accepted.size();
+        }
+        evalMetre.Stop(1);
+
+        if (m_verbose)
+        {
+            E_INFO << std::setw(6)  << std::right << (k + 1)
+                   << std::setw(12) << std::right << hits       << " (" << std::setw(3) << std::right << (100*hits/population)       << "%)"
+                   << std::setw(12) << std::right << numInliers << " (" << std::setw(3) << std::right << (100*numInliers/population) << "%)"
+                   << std::setw(15) << std::right << (solveMetre.GetElapsedSeconds() * 1000) << " ms"
+                   << std::setw(15) << std::right << (evalMetre.GetElapsedSeconds() * 1000)  << " ms";
+        }
+
+        if (hits < minInliers || hits < numInliers) continue;
+
+        // accept the trial
+        numInliers = hits;
+        estimate = trial;
+        inliers  = result.inliers;
+        outliers = result.outliers;
+
+        // convergence control
+        iter = std::min(iter, static_cast<size_t>(std::ceil(logOneMinusConfidence / std::log(1 - std::pow(hits / population, n)))));
+    }
+
+    // post-estimation non-linear optimisation
+    if (numInliers > 0 && m_optimisation)
+    {
+        MultiObjectivePoseEstimation refinement;
+        refinement.SetPose(estimate.pose);
+
+        BOOST_FOREACH (const AlignmentObjective::InlierSelector& g, m_selectors)
+        {
+            refinement.AddObjective(AlignmentObjective::ConstOwn(g.objective));
+        }
+
+        LevenbergMarquardtAlgorithm levmar;
+        levmar.SetVervbose(m_verbose);
+
+        if (!levmar.Solve(refinement))
+        {
+            E_ERROR << "nonlinear optimisation failed";
+            return false;
+        }
+
+        estimate.pose = refinement.GetPose();
+        inliers.clear();
+        outliers.clear();
+
+        BOOST_FOREACH (const AlignmentObjective::InlierSelector& g, m_selectors)
+        {
+            Indices accepted, rejected;
+
+            g(estimate.pose, accepted, rejected);
+
+            inliers.push_back(accepted);
+            outliers.push_back(rejected);
+
+            numInliers += accepted.size();
+        }
+    }
+
+    return numInliers > 0;
+}
+
+size_t ConsensusPoseEstimator::GetPopulation() const
+{
+    size_t n = 0;
+
+    BOOST_FOREACH (const AlignmentObjective::InlierSelector& selector, m_selectors)
+    {
+        n += selector.objective ? selector.objective->GetData().GetSize() : 0;
+    }
+
+    return n;
+}
+
+Indices ConsensusPoseEstimator::DrawSamples(size_t population, size_t samples)
+{
+    if (population < samples)
+    {
+        E_ERROR << "insufficient population (n=" << population << ") for " << samples << " sample(s)";
+        return Indices();
+    }
+
+    if (samples == 0)
+    {
+        return Indices();
+    }
+
+    std::vector<size_t> idx(population);
+    for (size_t i = 0; i < population; i++)
+    {
+        idx[i] = i;
+    }
+
+    std::random_shuffle(idx.begin(), idx.end());
+
+    return Indices(idx.begin(), std::next(idx.begin(), samples));
 }
 
 //==[ MultiObjectivePoseEstimation ]==========================================//
@@ -407,7 +713,7 @@ VectorisableD::Vec MultiObjectivePoseEstimation::operator() (const VectorisableD
 
     y.reserve(m_conds);
 
-    BOOST_FOREACH (const AlignmentObjective::Own& obj, m_objectives)
+    BOOST_FOREACH (const AlignmentObjective::ConstOwn& obj, m_objectives)
     {
         if (!obj) continue;
 
@@ -434,7 +740,7 @@ size_t MultiObjectivePoseEstimation::GetConds() const
 {
     size_t m = 0;
 
-    BOOST_FOREACH (const AlignmentObjective::Own& obj, m_objectives)
+    BOOST_FOREACH (const AlignmentObjective::ConstOwn& obj, m_objectives)
     {
         if (!obj) continue;
         m += obj->GetData().dst.GetElements();

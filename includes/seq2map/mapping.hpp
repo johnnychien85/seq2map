@@ -3,6 +3,7 @@
 
 #include <seq2map/sequence.hpp>
 #include <seq2map/sparse_node.hpp>
+#include <seq2map/geometry_problems.hpp>
 
 namespace seq2map
 {
@@ -35,6 +36,8 @@ namespace seq2map
     class Landmark : public HitNode::DimensionZero<>
     {
     public:
+        typedef std::vector<Landmark*> Ptrs;
+
         Hit& Hit(Frame& frame, Source& src, size_t index);
         Point3D position;
 
@@ -49,10 +52,7 @@ namespace seq2map
     class Frame : public HitNode::Dimension<1>
     {
     public:
-        typedef std::vector<size_t> IdList;
-        typedef std::map<size_t, IdList> IdLists;
-
-        IdLists featureIdLookup;
+        std::map<size_t, Landmark::Ptrs> featureLandmarkLookup;
 
     protected:
         friend class Map3<Hit, Landmark, Frame, Source>;
@@ -107,38 +107,93 @@ namespace seq2map
         {
             FramedStore(FeatureStore::ConstOwn& store = FeatureStore::ConstOwn(), int offset = 0) : store(store), offset(offset) {}
 
-            bool operator==(const FramedStore fs) const { return store && fs.store && store->GetIndex() == fs.store->GetIndex() && offset == fs.offset; }
+            bool operator== (const FramedStore fs) const { return store && fs.store && store->GetIndex() == fs.store->GetIndex() && offset == fs.offset; }
+
+            static const FramedStore Null;
 
             FeatureStore::ConstOwn store;
             int offset;
-            static const FramedStore Null;
+        };
+
+        class MultiModalOutlierFilter : public FeatureMatcher::Filter
+        {
+        public:
+            class Model : public Referenced<Model>
+            {
+            public:
+                virtual void AddData(size_t k, const ImageFeature& fi, const ImageFeature& fj, const Landmark* li, const Landmark* lj) = 0;
+                virtual PoseEstimator::Own GetSolver() = 0;
+                virtual AlignmentObjective::InlierSelector Build(GeometricMapping& data) = 0;
+            };
+
+            MultiModalOutlierFilter(Landmark::Ptrs& ui, Landmark::Ptrs& uj) : ui(ui), uj(uj) {}
+
+            virtual bool operator() (ImageFeatureMap& map, Indices& inliers);
+
+            Landmark::Ptrs& ui;
+            Landmark::Ptrs& uj;
+            std::vector<Model::Own> models;
+        };
+
+        class EpipolarOutlierModel : public MultiModalOutlierFilter::Model
+        {
+        public:
+            EpipolarOutlierModel(ProjectionModel::ConstOwn& pi, ProjectionModel::ConstOwn& pj) : pi(pi), pj(pj) {}
+
+            virtual void AddData(size_t k, const ImageFeature& fi, const ImageFeature& fj, const Landmark* li, const Landmark* lj);
+            virtual PoseEstimator::Own GetSolver();
+            virtual AlignmentObjective::InlierSelector Build(GeometricMapping& data);
+
+            ProjectionModel::ConstOwn pi;
+            ProjectionModel::ConstOwn pj;
+
+        private:
+            GeometricMapping::ImageToImageBuilder m_builder;
+        };
+
+        class ProjectiveOutlierModel : public MultiModalOutlierFilter::Model
+        {
+        public:
+            ProjectiveOutlierModel(ProjectionModel::ConstOwn& p, bool forward) : p(p), forward(forward) {}
+
+            virtual void AddData(size_t k, const ImageFeature& fi, const ImageFeature& fj, const Landmark* li, const Landmark* lj);
+            virtual PoseEstimator::Own GetSolver();
+            virtual AlignmentObjective::InlierSelector Build(GeometricMapping& data);
+
+            ProjectionModel::ConstOwn p;
+            EuclideanTransform tf;
+            bool forward;
+
+        private:
+            GeometricMapping::WorldToImageBuilder m_builder;
         };
 
         // the policy to deal with two joined marching paths originating from different landmarks
         // with inconsistent observations 
         enum ConflictResolution
         {
-            NO_MERGE,       ///< do not do merging
-            KEEP_BOTH,      ///< merge landmarks but keep both histories
-            KEEP_LONGEST,   ///< merge landmarks and keep the longer history
-            KEEP_SHORTEST,  ///< merge landmarks and keep the shorter history
-            KEEP_BEST,      ///< merge landmarks and keep the history with lower error
-            REMOVE_BOTH     ///< erase both landmarks' histories
+            NO_MERGE,      ///< do not do merging
+            KEEP_BOTH,     ///< merge landmarks but keep both histories
+            KEEP_LONGEST,  ///< merge landmarks and keep the longer history
+            KEEP_SHORTEST, ///< merge landmarks and keep the shorter history
+            KEEP_BEST,     ///< merge landmarks and keep the history with lower error
+            REMOVE_BOTH    ///< erase both landmarks' histories
         };
 
         enum OutlierRejectionScheme
         {
-            EPIPOLAR    = 1 << 0, ///< outlier detection using Epipolar constraints
-            PROJECTIVE  = 1 << 1, ///< outlier detection using projective constraints when 3D-to-2D correspondences are available
-            RIGID       = 1 << 2, ///< outlier detection using rigid alignment when 3D-to-3D correspondences are available
-            PHOTOMETRIC = 1 << 3, ///< outlier detection using photometric alignment when intensity data are available
+            EPIPOLAR            = 1 << 0, ///< outlier detection using Epipolar constraints
+            FORWARD_PROJECTIVE  = 1 << 1, ///< outlier detection using projective constraints when 3D-to-2D correspondences are available
+            BACKWARD_PROJECTIVE = 1 << 2, ///< outlier detection using projective constraints when 2D-to-3D correspondences are available
+            RIGID               = 1 << 3, ///< outlier detection using rigid alignment when 3D-to-3D correspondences are available
+            PHOTOMETRIC         = 1 << 4  ///< outlier detection using photometric alignment when intensity data are available
         };
 
         /**
          *
          */
         FeatureTracking(const FramedStore& src = FramedStore::Null, const FramedStore& dst = FramedStore::Null)
-        : src(src), dst(dst), policy(KEEP_BOTH), outlierRejection(EPIPOLAR + PROJECTIVE) {}
+        : src(src), dst(dst), policy(KEEP_BOTH), outlierRejection(EPIPOLAR) {}
 
         /**
          *
@@ -202,10 +257,10 @@ namespace seq2map
         virtual Capability GetCapability() const;
         virtual bool SLAM(Map& map, size_t t0, size_t tn);
 
-        bool AddMatching(const FeatureTracking& matching);
+        bool AddTracking(const FeatureTracking& tracking);
 
     private:
-        std::vector<FeatureTracking> m_matchings;
+        std::vector<FeatureTracking> m_tracking;
         std::vector<DisparityStore::ConstOwn> m_dispStores;
     };
 

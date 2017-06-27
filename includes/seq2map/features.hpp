@@ -236,20 +236,25 @@ namespace seq2map
     };
 
     /**
-     * Interface to filter out outliers from a feature map.
-     */
-    class FeatureMatchFilter
-    {
-    public:
-        virtual bool Filter(ImageFeatureMap& map, Indices& inliers) = 0;
-    };
-
-    /**
      * Feature matching from descriptors.
      */
     class FeatureMatcher
     {
     public:
+        /**
+         * Interface to filter out outliers from a feature map.
+         */
+        class Filter : public Referenced<Filter>
+        {
+        public:
+            virtual bool operator() (ImageFeatureMap& map, Indices& inliers) = 0;
+        };
+
+        typedef std::vector<Filter::Own> Filters;
+
+        /**
+         *
+         */
         FeatureMatcher(bool exhaustive = true, bool symmetric = true, float maxRatio = 0.6f, bool useGpu = true)
         : m_exhaustive(exhaustive), m_symmetric(symmetric), m_maxRatio(maxRatio), m_useGpu(useGpu),
           m_descMatchingMetre("Descriptors Matching", "features/s"),
@@ -257,17 +262,36 @@ namespace seq2map
           m_symmetryTestMetre("Symmetry Test",        "matches/s"),
           m_filteringMetre   ("Filtering",            "matches/s") {}
         
-        /* dtor */ virtual ~FeatureMatcher() {}
-        
-        FeatureMatcher& AddFilter(FeatureMatchFilter& filter);
-        ImageFeatureMap MatchFeatures(const ImageFeatureSet& src, const ImageFeatureSet& dst);
+        /**
+         *
+         */
+        virtual ~FeatureMatcher() {}
+
+        /**
+         *
+         */
+        ImageFeatureMap operator() (const ImageFeatureSet& src, const ImageFeatureSet& dst);
+
+        /**
+         *
+         */
+        FeatureMatcher& AddFilter(Filter::Own& filter);
+
+        /**
+         *
+         */
+        inline Filters& GetFilters() { return m_filters; }
+
+        /**
+         *
+         */
         String Report() const;
 
     protected:
         static cv::Mat NormaliseDescriptors(const cv::Mat& desc);
         FeatureMatches MatchDescriptors(const cv::Mat& src, const cv::Mat& dst, int metric);
 
-        std::vector<FeatureMatchFilter*> m_filters;
+        Filters m_filters;
         bool  m_exhaustive;
         bool  m_symmetric;
         bool  m_useGpu;
@@ -281,14 +305,30 @@ namespace seq2map
         static void RunSymmetryTest(FeatureMatches& forward, const FeatureMatches& backward, size_t maxSrcIdx);
     };
 
-    class FundamentalMatrixFilter : public FeatureMatchFilter
+    class FundamentalMatrixFilter : public FeatureMatcher::Filter
     {
     public:
-        /* ctor */ FundamentalMatrixFilter(double epsilon = 1, double confidence = 0.99f, bool ransac = true)
-            : m_epsilon(epsilon), m_confidence(confidence), m_ransac(ransac) {}
-        /* dtor */ virtual ~FundamentalMatrixFilter() {}
-        virtual bool Filter(ImageFeatureMap& map, Indices& inliers);
+        /**
+         *
+         */
+        FundamentalMatrixFilter(double epsilon = 1, double confidence = 0.99f, bool ransac = true)
+        : m_epsilon(epsilon), m_confidence(confidence), m_ransac(ransac) {}
+
+        /**
+         *
+         */
+        virtual ~FundamentalMatrixFilter() {}
+
+        /**
+         *
+         */
+        virtual bool operator() (ImageFeatureMap& map, Indices& inliers);
+
+        /**
+         *
+         */
         inline cv::Mat GetFundamentalMatrix() const { return m_fmat.clone(); }
+
     protected:
         double  m_epsilon;
         double  m_confidence;
@@ -296,18 +336,47 @@ namespace seq2map
         cv::Mat m_fmat;
     };
 
-    class EssentialMatrixFilter : public FeatureMatchFilter
+    class EssentialMatrixFilter : public FeatureMatcher::Filter
     {
     public:
-        /* ctor */ EssentialMatrixFilter(double epsilon = 1, double confidence = 0.99f, bool ransac = true, bool poseRecovery = false,
-                   const cv::Mat& K0 = cv::Mat::eye(3, 3, CV_64F), const cv::Mat&K1 = cv::Mat::eye(3, 3, CV_64F))
-                   : m_epsilon(epsilon), m_confidence(confidence), m_ransac(ransac), m_poseRecovery(poseRecovery) { SetCameraMatrices(K0, K1); }
-        /* dtor */ virtual ~EssentialMatrixFilter() {}
-        virtual bool Filter(ImageFeatureMap& map, Indices& inliers);
+        /**
+         *
+         */
+        EssentialMatrixFilter(double epsilon = 1, double confidence = 0.99f, bool ransac = true, bool poseRecovery = false,
+            const cv::Mat& K0 = cv::Mat::eye(3, 3, CV_64F), const cv::Mat&K1 = cv::Mat::eye(3, 3, CV_64F))
+        : m_epsilon(epsilon), m_confidence(confidence), m_ransac(ransac), m_poseRecovery(poseRecovery)
+        { SetCameraMatrices(K0, K1); }
+
+        /**
+         *
+         */
+        virtual ~EssentialMatrixFilter() {}
+
+        /**
+         *
+         */
+        virtual bool operator() (ImageFeatureMap& map, Indices& inliers);
+
+        /**
+         *
+         */
         inline cv::Mat GetEssentialMatrix() const { return m_emat.clone(); }
+
+        /**
+         *
+         */
         inline void GetPose(cv::Mat& rmat, cv::Mat& tvec) const { rmat = m_rmat.clone(); tvec = m_tvec.clone(); };
+        
+        /**
+         *
+         */
         inline void SetPoseRecovery(bool poseRecovery) { m_poseRecovery = poseRecovery; }
+        
+        /**
+         *
+         */
         void SetCameraMatrices(const cv::Mat& K0, const cv::Mat& K1);
+
     protected:
         double  m_epsilon;
         double  m_confidence;
@@ -316,19 +385,35 @@ namespace seq2map
         cv::Mat m_emat;
         cv::Mat m_rmat;
         cv::Mat m_tvec;
+
     private:
+        /**
+         *
+         */
         static void BackprojectPoints(Points2D& pts, const cv::Mat& Kinv);
+
         cv::Mat m_K0inv;
         cv::Mat m_K1inv;
-
     };
 
-    class SigmaFilter : public FeatureMatchFilter
+    class SigmaFilter : public FeatureMatcher::Filter
     {
     public:
-        /* ctor */ SigmaFilter(float k = 2.0f) : m_k(k) {}
-        /* dtor */ virtual ~SigmaFilter() {}
-        virtual bool Filter(ImageFeatureMap& map, Indices& inliers);
+        /**
+         *
+         */
+        SigmaFilter(float k = 2.0f) : m_k(k) {}
+        
+        /**
+         *
+         */
+        virtual ~SigmaFilter() {}
+        
+        /**
+         *
+         */
+        virtual bool operator() (ImageFeatureMap& map, Indices& inliers);
+
     protected:
         float m_k;
         float m_mean;

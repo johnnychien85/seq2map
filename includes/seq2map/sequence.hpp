@@ -55,8 +55,8 @@ namespace seq2map
         inline String GetModel() const                   { return m_model;  }
         inline void SetModel(const String& model)        { m_model = model; }
 
-        inline EuclideanTransform  GetExtrinsics() const { return m_extrinsics; }
-		inline EuclideanTransform& GetExtrinsics()       { return m_extrinsics; }
+        inline const EuclideanTransform& GetExtrinsics() const { return m_extrinsics; }
+		inline EuclideanTransform& GetExtrinsics()             { return m_extrinsics; }
 		inline void SetExtrinsics(const EuclideanTransform& tform) { m_extrinsics = tform; }
 
         virtual bool Store(cv::FileStorage& fs) const;
@@ -119,6 +119,7 @@ namespace seq2map
         inline void SetIntrinsics(ProjectionModel::Own& intrinsics) { m_intrinsics = intrinsics; }
         inline ProjectionModel::ConstOwn GetIntrinsics() const      { return m_intrinsics; }
         inline ProjectionModel::Own      GetIntrinsics()            { return m_intrinsics; }
+        inline ProjectionModel::ConstOwn GetPosedProjection() const { return m_intrinsics ? ProjectionModel::ConstOwn(new PosedProjection(GetExtrinsics(), *m_intrinsics)) : ProjectionModel::ConstOwn(); }
         ImageStore&       GetImageStore()                           { return m_imageStore; }
         const ImageStore& GetImageStore() const                     { return m_imageStore; }
         inline size_t GetFrames() const                             { return m_imageStore.GetItems(); }

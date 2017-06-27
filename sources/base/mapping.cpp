@@ -1,5 +1,4 @@
 #include <seq2map/mapping.hpp>
-#include <seq2map/geometry_problems.hpp>
 
 using namespace seq2map;
 
@@ -12,7 +11,7 @@ Landmark& Map::AddLandmark()
 
 void Map::RemoveLandmark(Landmark& l)
 {
-    // update ID lookup table
+    // unlink all references in lookup tables
     for (Landmark::const_iterator h = l.cbegin(); h; h++)
     {
         const Hit& hit = *h;
@@ -20,7 +19,7 @@ void Map::RemoveLandmark(Landmark& l)
         Frame& t = h.GetContainer<1, Frame>();
         const Source& c = h.GetContainer<2, Source>();
 
-        t.featureIdLookup[c.GetIndex()][hit.index] = INVALID_INDEX;
+        t.featureLandmarkLookup[c.GetIndex()][hit.index] = NULL;
     }
 
     l.clear();
@@ -84,8 +83,8 @@ Landmark& Map::JoinLandmark(Landmark& li, Landmark& lj)
         li.Hit(tj, cj, hit.index) = hit;
 
         // ID table rewriting
-        Frame::IdList& uj = tj.featureIdLookup[cj.GetIndex()];
-        uj[hit.index] = li.GetIndex();
+        Landmark::Ptrs& uj = tj.featureLandmarkLookup[cj.GetIndex()];
+        uj[hit.index] = &li;
     }
 
     lj.clear(); // abondaned
@@ -125,131 +124,83 @@ bool FeatureTracking::operator() (Map& map, size_t t)
 
     ImageFeatureSet fi = Fi[ti.GetIndex()];
     ImageFeatureSet fj = Fj[tj.GetIndex()];
-    ImageFeatureMap fmap = matcher.MatchFeatures(fi, fj);
+    Landmark::Ptrs& ui = ti.featureLandmarkLookup[Fi.GetIndex()];
+    Landmark::Ptrs& uj = tj.featureLandmarkLookup[Fj.GetIndex()];
 
-    Frame::IdList& ui = ti.featureIdLookup[Fi.GetIndex()];
-    Frame::IdList& uj = tj.featureIdLookup[Fj.GetIndex()];
+    // initialise frame's feature-landmark lookup table for first time access
+    if (ui.empty()) ui.resize(fi.GetSize(), NULL);
+    if (uj.empty()) uj.resize(fj.GetSize(), NULL);
 
-    // initialise frame's feature ID list(s) for first time access
-    if (ui.empty()) ui.resize(fi.GetSize(), INVALID_INDEX);
-    if (uj.empty()) uj.resize(fj.GetSize(), INVALID_INDEX);
-
-    //if (tj.GetIndex() == 1 && sj.GetIndex() == 1)
-    //    BOOST_FOREACH(const FeatureMatch& m, fmap.GetMatches())
-    //{
-    //    E_INFO << m.srcIdx << " -> " << m.dstIdx << "[" << m.state << "]";
-    //}
-
+    // build outlier filter and models
     if (outlierRejection)
     {
-        ConsensusPoseEstimator estimator;
-        PoseEstimator::Own innerEstimator;
-        GeometricMapping innerMapping;
-
         Camera::ConstOwn ci = Fi.GetCamera();
         Camera::ConstOwn cj = Fj.GetCamera();
-        ProjectionModel::ConstOwn pi = ci ? ci->GetIntrinsics() : ProjectionModel::ConstOwn();
-        ProjectionModel::ConstOwn pj = cj ? cj->GetIntrinsics() : ProjectionModel::ConstOwn();
+        ProjectionModel::ConstOwn pi = ci ? ci->GetPosedProjection() : ProjectionModel::ConstOwn();
+        ProjectionModel::ConstOwn pj = cj ? cj->GetPosedProjection() : ProjectionModel::ConstOwn();
+
+        MultiModalOutlierFilter* filter = new MultiModalOutlierFilter(ui, uj);
+
+        if (outlierRejection & FORWARD_PROJECTIVE)
+        {
+            if (pj)
+            {
+                filter->models.push_back(MultiModalOutlierFilter::Model::Own(new ProjectiveOutlierModel(pj, true)));
+            }
+            else
+            {
+                E_WARNING << "error adding projective outlier model due to missing projection model";
+                E_WARNING << "forward projection-based outlier rejection now deactivated for " << ToString();
+
+                outlierRejection &= ~FORWARD_PROJECTIVE;
+            }
+        }
+
+        if (outlierRejection & BACKWARD_PROJECTIVE)
+        {
+            if (pi)
+            {
+                filter->models.push_back(MultiModalOutlierFilter::Model::Own(new ProjectiveOutlierModel(pi, false)));
+            }
+            else
+            {
+                E_WARNING << "error adding projective outlier model due to missing projection model";
+                E_WARNING << "backward projection-based outlier rejection now deactivated for " << ToString();
+
+                outlierRejection &= ~BACKWARD_PROJECTIVE;
+            }
+        }
 
         if (outlierRejection & EPIPOLAR)
         {
             if (pi && pj)
             {
-                AlignmentObjective::Own objective = AlignmentObjective::Own(new EpipolarObjective(pi, pj));
-                GeometricMapping mapping;
-
-                BOOST_FOREACH(const FeatureMatch& m, fmap.GetMatches())
-                {
-                    if (!(m.state & FeatureMatch::INLIER))
-                    {
-                        continue;
-                    }
-
-                }
-
-                if (objective->SetData(mapping))
-                {
-                    estimator.AddSelector(AlignmentObjective::InlierSelector(objective, 1.0f));
-                }
-                else
-                {
-                    E_WARNING << "error setting epipolar mapping data";
-                }
+                filter->models.push_back(MultiModalOutlierFilter::Model::Own(new EpipolarOutlierModel(pi, pj)));
             }
             else
             {
-                E_WARNING << "error building epipolar objective due to missing projection model(s)";
+                E_WARNING << "error adding epipolar outlier model due to missing projection model(s)";
                 E_WARNING << "epipolar-based outlier rejection now deactivated for " << ToString();
 
                 outlierRejection &= ~EPIPOLAR;
             }
         }
 
-        if (outlierRejection & PROJECTIVE)
-        {
-            if (pj)
-            {
-                AlignmentObjective::Own objective = AlignmentObjective::Own(new ProjectionObjective(pj));
-                GeometricMapping mapping;
-
-                BOOST_FOREACH(const FeatureMatch& m, fmap.GetMatches())
-                {
-                    if (!(m.state & FeatureMatch::INLIER))
-                    {
-                        continue;
-                    }
-
-                }
-
-                if (objective->SetData(mapping))
-                {
-                    estimator.AddSelector(AlignmentObjective::InlierSelector(objective, 1.0f));
-                }
-                else
-                {
-                    E_WARNING << "error setting projective mapping data";
-                }
-            }
-            else
-            {
-                E_WARNING << "error building projective objective due to missing projection model";
-                E_WARNING << "projection-based outlier rejection now deactivated for " << ToString();
-
-                outlierRejection &= ~PROJECTIVE;
-            }
-        }
-
-        PoseEstimator::Estimate estimate;
-        std::vector<Indices> inliers;
-        std::vector<size_t> hits(fmap.GetMatches().size(), 0);
-        estimator.SetEstimator(PoseEstimator::ConstOwn(innerEstimator));
-        
-        if (!estimator(innerMapping, estimate, inliers))
-        {
-            E_ERROR << "consensus outlier detection failed";
-            return false;
-        }
-
-        // aggregate all inliers from all the selectors
-        for (size_t i = 0; i < inliers.size(); i++)
-        {
-            const std::vector<size_t> fidx = estimator.GetSelectors()[i].objective->GetData().indices;
-            BOOST_FOREACH (size_t j, inliers[i])
-            {
-                hits[fidx[j]]++;
-            }
-        }
-
-        for (size_t i = 0; i < hits.size(); i++)
-        {
-            if (hits[i] < estimator.GetSelectors().size())
-            {
-                fmap[i].Reject(FeatureMatch::GEOMETRIC_TEST_FAILED);
-            }
-        }
-
-        // estimate.pose might be use
+        matcher.GetFilters().push_back(FeatureMatcher::Filter::Own(filter));
     }
+
+    ImageFeatureMap fmap = matcher(fi, fj);
+
+    // remove the outlier filter
+    if (outlierRejection) matcher.GetFilters().pop_back();
+
+    cv::Mat Ii = Fi.GetCamera()->GetImageStore()[ti.GetIndex()].im;
+    cv::Mat Ij = Fj.GetCamera()->GetImageStore()[tj.GetIndex()].im;
+    cv::Mat im = imfuse(Ii, Ij);
+    fmap.Draw(im);
+
+    cv::imshow(ToString(), im);
+    cv::waitKey(0);
 
     BOOST_FOREACH(const FeatureMatch& m, fmap.GetMatches())
     {
@@ -258,11 +209,11 @@ bool FeatureTracking::operator() (Map& map, size_t t)
             continue;
         }
 
-        size_t& ui_k = ui[m.srcIdx];
-        size_t& uj_k = uj[m.dstIdx];
+        Landmark*& ui_k = ui[m.srcIdx];
+        Landmark*& uj_k = uj[m.dstIdx];
 
-        bool bi = (ui_k == INVALID_INDEX);
-        bool bj = (uj_k == INVALID_INDEX);
+        bool bi = (ui_k == NULL);
+        bool bj = (uj_k == NULL);
 
         bool firstHit = bi == true && bj == true;
         bool converge = bi != true && bj != true && ui_k != uj_k;
@@ -272,12 +223,12 @@ bool FeatureTracking::operator() (Map& map, size_t t)
 
         if (!converge)
         {
-            Landmark& lk = firstHit ? map.AddLandmark() : (bj ? map.GetLandmark(ui_k) : map.GetLandmark(uj_k));
+            Landmark& lk = firstHit ? map.AddLandmark() : (bj ? *ui_k : *uj_k);
 
             if (bi) lk.Hit(ti, si, m.srcIdx).proj = fi[m.srcIdx].keypoint.pt;
             if (bj) lk.Hit(tj, sj, m.dstIdx).proj = fj[m.dstIdx].keypoint.pt;
 
-            ui_k = uj_k = lk.GetIndex();
+            ui_k = uj_k = &lk;
 
             //E_INFO << "ui[" << m.srcIdx << "] = " << lk.GetIndex();
             //E_INFO << "uj[" << m.dstIdx << "] = " << lk.GetIndex();
@@ -296,8 +247,8 @@ bool FeatureTracking::operator() (Map& map, size_t t)
         //E_INFO << map.joinChkMetre.ToString();
         //E_INFO << map.joinMetre.ToString();
 
-        Landmark& li = map.GetLandmark(ui_k);
-        Landmark& lj = map.GetLandmark(uj_k);
+        Landmark& li = *ui_k;
+        Landmark& lj = *uj_k;
 
         if (policy == ConflictResolution::KEEP_BOTH || map.IsJoinable(li, lj))
         {
@@ -369,9 +320,171 @@ String FeatureTracking::ToString() const
     return ss.str();
 }
 
+//==[ FeatureTracking::MultiObjectiveOutlierFilter ]==========================//
+
+bool FeatureTracking::MultiModalOutlierFilter::operator() (ImageFeatureMap& fmap, Indices& inliers)
+{
+    if (models.empty())
+    {
+        E_ERROR << "no outlier rejection model available";
+        return false;
+    }
+
+    //
+    // build modal data
+    //
+    const ImageFeatureSet& Fi = fmap.From();
+    const ImageFeatureSet& Fj = fmap.To();
+
+    size_t i = 0;
+    BOOST_FOREACH (size_t k, inliers)
+    {
+        const FeatureMatch& m = fmap[k];
+        Landmark*& ui_k = ui[m.srcIdx];
+        Landmark*& uj_k = uj[m.dstIdx];
+
+        BOOST_FOREACH (MultiModalOutlierFilter::Model::Own model, models)
+        {
+            model->AddData(i++, Fi[m.srcIdx], Fj[m.dstIdx], ui_k, uj_k);
+        }
+    }
+
+    //
+    // apply outlier detection on the built models
+    //
+    ConsensusPoseEstimator estimator;
+    PoseEstimator::Estimate estimate;
+    PoseEstimator::ConstOwn solver;
+    GeometricMapping solverData;
+
+    BOOST_FOREACH (MultiModalOutlierFilter::Model::Own model, models)
+    {
+        GeometricMapping data;
+        AlignmentObjective::InlierSelector selector = model->Build(data);
+
+        if (selector.IsEnabled())
+        {
+            estimator.AddSelector(selector);
+
+            if (!solver)
+            {
+                solver = model->GetSolver();
+                solverData = data;
+            }
+        }
+    }
+
+    if (!solver)
+    {
+        E_ERROR << "no rejection model succesfully built";
+        return false;
+    }
+
+    estimator.SetStrategy(ConsensusPoseEstimator::RANSAC);
+    estimator.SetMaxIterations(30);
+    estimator.SetMinInlierRatio(0.75f);
+    estimator.SetConfidence(0.8f);
+    estimator.SetSolver(solver);
+
+    std::vector<Indices> survived, eliminated;
+
+    if (!estimator(solverData, estimate, survived, eliminated))
+    {
+        E_ERROR << "consensus outlier detection failed";
+        return false;
+    }
+
+    // aggregate all inliers from all the selectors
+    std::vector<size_t> hits(inliers.size(), 0);
+
+    for (size_t s = 0; s < survived.size(); s++)
+    {
+        const std::vector<size_t>& idmap = estimator.GetSelectors()[s].objective->GetData().indices;
+        BOOST_FOREACH (size_t j, survived[s])
+        {
+            hits[idmap[j]]++;
+        }
+    }
+
+    std::vector<size_t>::const_iterator h = hits.begin();
+    for (Indices::iterator itr = inliers.begin(); itr != inliers.end(); itr++)
+    {
+        if (*h < estimator.GetSelectors().size())
+        {
+            fmap[*itr].Reject(FeatureMatch::GEOMETRIC_TEST_FAILED);
+            inliers.erase(itr);
+        }
+
+        h++;
+    }
+
+    // estimate.pose might be useful..
+    // ...
+    // ..
+    // .
+}
+
+//==[ FeatureTracking::EpipolarOutlierModel ]=================================//
+
+void FeatureTracking::EpipolarOutlierModel::AddData(size_t i, const ImageFeature& fi, const ImageFeature& fj, const Landmark* li, const Landmark* lj)
+{
+    m_builder.Add(fi.keypoint.pt, fj.keypoint.pt, i);
+}
+
+AlignmentObjective::InlierSelector FeatureTracking::EpipolarOutlierModel::Build(GeometricMapping& data)
+{
+    AlignmentObjective::Own objective = AlignmentObjective::Own(new EpipolarObjective(pi, pj));
+    data = m_builder.Build();
+    
+    if (!objective->SetData(data))
+    {
+        E_WARNING << "error setting epipolar constraints";
+        return objective->GetSelector(0);
+    }
+
+    return objective->GetSelector(0.1f);
+}
+
+PoseEstimator::Own FeatureTracking::EpipolarOutlierModel::GetSolver()
+{
+    return PoseEstimator::Own(new EssentialMatrixDecomposer(pi, pj));
+}
+
+//==[ FeatureTracking::ProjectiveOutlierModel ]===============================//
+
+void FeatureTracking::ProjectiveOutlierModel::AddData(size_t i, const ImageFeature& fi, const ImageFeature& fj, const Landmark* li, const Landmark* lj)
+{
+    const Landmark*     l = forward ? li : lj;
+    const ImageFeature& f = forward ? fj : fi;
+
+    if (l == NULL) return;
+
+    m_builder.Add(tf(Point3D(l->position)), f.keypoint.pt, i);
+}
+
+AlignmentObjective::InlierSelector FeatureTracking::ProjectiveOutlierModel::Build(GeometricMapping& data)
+{
+    AlignmentObjective::Own objective = AlignmentObjective::Own(new ProjectionObjective(p, forward));
+    data = m_builder.Build();
+
+    if (!objective->SetData(data))
+    {
+        E_WARNING << "error setting perspective constraints";
+        return objective->GetSelector(0);
+    }
+
+    return objective->GetSelector(1.0f);
+}
+
+PoseEstimator::Own FeatureTracking::ProjectiveOutlierModel::GetSolver()
+{
+    PoseEstimator::Own estimator = PoseEstimator::Own(new PerspevtivePoseEstimator(p));
+    return forward ? estimator : PoseEstimator::Own(new InversePoseEstimator(estimator));
+}
+
 //==[ MultiFrameFeatureIntegration ]==========================================//
 
-bool MultiFrameFeatureIntegration::AddMatching(const FeatureTracking& matching)
+bool MultiFrameFeatureIntegration::AddTracking(const FeatureTracking& matching)
 {
     if (!matching.IsOkay())
     {
@@ -379,7 +492,7 @@ bool MultiFrameFeatureIntegration::AddMatching(const FeatureTracking& matching)
         return false;
     }
 
-    BOOST_FOREACH (const FeatureTracking& m, m_matchings)
+    BOOST_FOREACH (const FeatureTracking& m, m_tracking)
     {
         bool duplicated = (m.src == matching.src) && (m.dst == matching.dst);
 
@@ -390,7 +503,7 @@ bool MultiFrameFeatureIntegration::AddMatching(const FeatureTracking& matching)
         }
     }
 
-    m_matchings.push_back(matching);
+    m_tracking.push_back(matching);
     return true;
 }
 
@@ -402,7 +515,7 @@ Mapper::Capability MultiFrameFeatureIntegration::GetCapability() const
     capability.metric = m_dispStores.size() > 0;
     capability.dense = false;
 
-    BOOST_FOREACH (const FeatureTracking& m, m_matchings)
+    BOOST_FOREACH (const FeatureTracking& m, m_tracking)
     {
         capability.motion |= !m.IsSynchronised();
         capability.metric |= m.IsCrossed();
@@ -415,14 +528,16 @@ bool MultiFrameFeatureIntegration::SLAM(Map& map, size_t t0, size_t tn)
 {
     for (size_t t = t0; t < tn; t++)
     {
-        BOOST_FOREACH (FeatureTracking& m, m_matchings)
+        BOOST_FOREACH (FeatureTracking& f, m_tracking)
         {
-            if (m.InRange(t, tn) && !m(map, t))
+            if (f.InRange(t, tn) && !f(map, t))
             {
-                E_ERROR << "error matching " << m.ToString();
+                E_ERROR << "error matching " << f.ToString();
                 return false;
             }
         }
+
+
     }
 
     return true;

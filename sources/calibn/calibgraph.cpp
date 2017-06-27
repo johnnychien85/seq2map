@@ -443,14 +443,13 @@ bool CalibGraph::Optimise(size_t iter, double eps, size_t threads)
     }
 
     CalibGraphBundler::Ptr bundler = CalibGraphBundler::Create(*this, camIdx, viewIdx);
-    VectorisableD::Vec x = bundler->Initialise();
 
     // solve the bundle adjustment problem by LM algorithm
     LevenbergMarquardtAlgorithm solver;
 
     solver.SetVervbose(true);
     
-    if (!solver.Solve(*bundler, x))
+    if (!solver.Solve(*bundler))
     {
         E_ERROR << "error optimising calibration graph";
         return false;

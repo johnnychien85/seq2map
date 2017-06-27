@@ -80,7 +80,12 @@ namespace seq2map
         Geometry& Dehomogenise();
 
         /**
-         * Change the ordering of elements.
+         * Extract sub-elements.
+         */
+        Geometry operator[] (const Indices& indices) const;
+
+        /**
+         * Change the memory layout of elements.
          */
         Geometry Reshape(Shape shape) const { return Geometry(shape) = *this; }
         Geometry Reshape(Shape shape)       { return Geometry(shape) = *this; }
@@ -170,16 +175,104 @@ namespace seq2map
      */
     struct GeometricMapping
     {
+        /**
+         * Incremental data builder
+         */
+         template<typename T0, typename T1> class Builder
+         {
+         public:
+            /**
+             * Constructor.
+             */
+            Builder() : m_size(0) {}
+
+            //
+            // Data construction
+            //
+
+            /**
+             * Add a new correspondence with optional index of source.
+             */
+            size_t Add(const T0& pt0, const T1& pt1, size_t idx = INVALID_INDEX)
+            {
+                m_pts0.push_back(pt0);
+                m_pts1.push_back(pt1);
+                m_indices.push_back(idx);
+
+                return m_size = m_pts0.size();
+            }
+
+            /**
+             * Build a GeometricMapping from accumulated elements.
+             */
+            GeometricMapping Build() const
+            {
+                GeometricMapping mapping;
+
+                mapping.src = Geometry(Geometry::PACKED, cv::Mat(m_pts0));
+                mapping.dst = Geometry(Geometry::PACKED, cv::Mat(m_pts1));
+                mapping.indices = m_indices;
+
+                return mapping;
+            }
+            
+            //
+            // Accessors
+            //
+            inline size_t GetSize() const              { return m_size; }
+            inline const std::vector<T0>& From() const { return m_pts0;  }
+            inline const std::vector<T1>& To()   const { return m_pts1;  }
+
+        private:
+            size_t m_size;
+            std::vector<size_t> m_indices;
+            std::vector<T0> m_pts0;
+            std::vector<T1> m_pts1;
+        };
+
+        typedef Builder<Point2D, Point2D> ImageToImageBuilder;
+        typedef Builder<Point3D, Point2D> WorldToImageBuilder;
+
+        /**
+         * Constructor
+         */
         GeometricMapping(cv::Mat& srcData = cv::Mat(), cv::Mat& dstData = cv::Mat())
         : src(Geometry::ROW_MAJOR, srcData), dst(Geometry::ROW_MAJOR, dstData) {}
 
-        bool IsConsistent() const { return src.GetElements() == dst.GetElements(); }
+        /**
+         * Copy constructor
+         */
+        GeometricMapping(GeometricMapping& mapping) : indices(mapping.indices), src(mapping.src), dst(mapping.dst), metric(mapping.metric) {}
 
-        std::vector<size_t> indices;
+        /**
+         * Extract sub-elements.
+         */
+        GeometricMapping operator[] (const Indices& indices) const;
 
-        Geometry src; ///< source geometry data
-        Geometry dst; ///< target geometry data
-        Metric::Own metric;
+        /**
+         * Check if the mapping is one-to-one.
+         */
+        bool IsConsistent() const;
+
+        /**
+         * Dimensionality check.
+         *
+         * \param d0 Dimension of source geometry.
+         * \param d1 Dimension of target geometry.
+         *
+         * \return true is check passed, otherwise false.
+         */
+        bool Check(size_t d0, size_t d1) const;
+
+        /**
+         * Get number of correspondences in the mapping.
+         */
+        size_t GetSize() const { return IsConsistent() ? src.GetElements() : 0; }
+
+        std::vector<size_t> indices; ///< optional reference
+        Geometry src;                ///< source geometry data
+        Geometry dst;                ///< target geometry data
+        Metric::Own metric;          ///< associated metric to indicate the confidence of each correspondence
     };
 
     /**
@@ -585,21 +678,21 @@ namespace seq2map
         virtual Point3D& operator() (Point3D& pt) const { return proj(pose(pt)); }
 
         virtual Geometry Project(const Geometry& g, ProjectiveSpace space = EUCLIDEAN_2D) const { return proj.Project(pose(Geometry(g), true), space); }
-        virtual Geometry Backproject(const Geometry& g) const { return pose.GetInverse()(Geometry::MakeHomogeneous(proj.Backproject(g), 0.0f)); }
+        virtual Geometry Backproject(const Geometry& g) const { return pose.GetInverse().GetRotation()(proj.Backproject(g)); }
 
         const EuclideanTransform& pose;
         ProjectionModel& proj;
 
         virtual String GetModelName() const { return proj.GetModelName(); }
 
-        virtual bool Store(cv::FileStorage& fs) const { return false; }
-        virtual bool Restore(const cv::FileNode& fn) { return false; }
+        virtual bool Store(cv::FileStorage& fs) const { return proj.Store(fs);   }
+        virtual bool Restore(const cv::FileNode& fn)  { return proj.Restore(fn); }
 
         //
         // Vectorisation and de-vectorisation
         //
-        virtual bool Store(Vec& v) const { return proj.Store(v); }
-        virtual bool Restore(const Vec& v) { return proj.Restore(v); }
+        virtual bool Store(Vec& v) const    { return proj.Store(v);   }
+        virtual bool Restore(const Vec& v)  { return proj.Restore(v); }
         virtual size_t GetDimension() const { return proj.GetDimension(); }
     };
 

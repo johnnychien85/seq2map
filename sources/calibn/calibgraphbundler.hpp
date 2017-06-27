@@ -22,7 +22,7 @@ public:
     // Inherited via LeastSquaresProblem
     virtual VectorisableD::Vec Initialise() { return m_params.ToVector(); }
     virtual VectorisableD::Vec operator() (const VectorisableD::Vec& x) const;
-    virtual bool SetSolution(const VectorisableD::Vec& x) { return m_params.Restore(x); }
+    virtual bool Finalise(const VectorisableD::Vec& x) { return m_params.Restore(x); }
 
 private:
     class BundleParams : public VectorisableD

@@ -21,13 +21,14 @@ namespace seq2map
          */
         struct InlierSelector
         {
-            InlierSelector(AlignmentObjective::Own& objective, double threshold)
+            InlierSelector(AlignmentObjective::ConstOwn& objective, double threshold)
             : objective(objective), threshold(threshold) {}
 
-            Indices operator() (const EuclideanTransform& tform) const;
+            bool operator() (const EuclideanTransform& tform, Indices& inliers) const;
+            bool operator() (const EuclideanTransform& tform, Indices& inliers, Indices& outliers) const;
             inline bool IsEnabled() const { return threshold > 0; }
 
-            AlignmentObjective::Own objective;
+            AlignmentObjective::ConstOwn objective;
             double threshold;
         };
 
@@ -42,6 +43,11 @@ namespace seq2map
          * Read-only data getter.
          */
         const GeometricMapping& GetData() const { return m_data; }
+
+        /**
+         * Make an InlierSelector using this objective.
+         */
+        InlierSelector GetSelector(double threshold) const { return InlierSelector(shared_from_this(), threshold); }
 
     protected:
         GeometricMapping m_data;
@@ -93,7 +99,7 @@ namespace seq2map
         //
         // Constructor and destructor
         //
-        ProjectionObjective(ProjectionModel::ConstOwn& proj) : m_proj(proj) {}
+        ProjectionObjective(ProjectionModel::ConstOwn& proj, bool forward = true) : m_proj(proj), m_forward(forward) {}
 
         //
         // Accessor
@@ -108,6 +114,7 @@ namespace seq2map
 
     protected:
         ProjectionModel::ConstOwn m_proj;
+        bool m_forward;
     };
 
     /**
@@ -174,7 +181,22 @@ namespace seq2map
             Metric::Own metric;
         };
 
+        /**
+         * Solve relative pose from the source geometry to the target specified by mapping.
+         *
+         * \param mapping Correspondences used to find the pose.
+         * \param estimate An estimate of pose.
+         *
+         * \return True if the estimate is valid, otherwise false.
+         */
         virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate) const = 0;
+        
+        /**
+         * Get the minimum number of correspondences required to yeild a valid pose estimate.
+         *
+         * \return Number of correspondences minimally required.
+         */
+        virtual size_t GetMinPoints() const = 0;
     };
 
     /**
@@ -187,6 +209,7 @@ namespace seq2map
         : m_srcProj(srcProj), m_dstProj(dstProj) {}
 
         virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate) const;
+        virtual size_t GetMinPoints() const { return 8; }
 
     private:
         const ProjectionModel::ConstOwn m_srcProj;
@@ -194,26 +217,60 @@ namespace seq2map
     };
 
     /**
-     * Pose estimation by a perspective-n-points solver
+     * Pose estimation by a perspective-n-points solver.
      */
     class PerspevtivePoseEstimator : public PoseEstimator
     {
     public:
         PerspevtivePoseEstimator(ProjectionModel::ConstOwn& proj) : m_proj(proj) {}
+
         virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate) const;
+        virtual size_t GetMinPoints() const { return 6; }
 
     private:
         const ProjectionModel::ConstOwn m_proj;
     };
 
     /**
-     * Pose estimation by Horn's quaternion-based absolute orientation solving method
+     * Pose estimation by Horn's quaternion-based absolute orientation solving method.
      */
     class QuatAbsOrientationSolver : public PoseEstimator
     {
     public:
         QuatAbsOrientationSolver(const RigidObjective& objective) {}
+
         virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate) const;
+        virtual size_t GetMinPoints() const { return 3; }
+    };
+
+    /**
+     * Dummy pose estimator always returns same pose.
+     */
+    class DummyPoseEstimator : public PoseEstimator
+    {
+    public:
+        DummyPoseEstimator(const EuclideanTransform& pose) : m_pose(pose) {}
+
+        virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate) const;
+        virtual size_t GetMinPoints() const { return 0; }
+
+    private:
+        const EuclideanTransform m_pose;
+    };
+
+    /**
+     *
+     */
+    class InversePoseEstimator : public PoseEstimator
+    {
+    public:
+        InversePoseEstimator(PoseEstimator::ConstOwn estimator) : m_estimator(estimator) {}
+
+        virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate) const;
+        virtual size_t GetMinPoints() const { return m_estimator ? m_estimator->GetMinPoints() : 0; }
+
+    private:
+        const PoseEstimator::ConstOwn m_estimator;
     };
 
     /**
@@ -226,21 +283,28 @@ namespace seq2map
         {
             RANSAC,
             LMEDS,
-            MASC
+            MSAC
         };
 
         typedef std::vector<AlignmentObjective::InlierSelector> Selectors;
+        typedef std::vector<Indices> IndexLists;
 
         //
         // Constructor
         //
-        ConsensusPoseEstimator() {}
+        ConsensusPoseEstimator()
+        : m_maxIter(100), m_minInlierRatio(0.5f), m_confidence(0.95f), m_optimisation(false) {}
 
         //
         // Pose estimation
         //
         virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate) const;
-        virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate, std::vector<Indices> inliers) const;
+        virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate, IndexLists& inliers, IndexLists& outliers) const;
+
+        /**
+         * Return the minimum number of correspondences the delegated inner pose solver requires.
+         */
+        virtual size_t GetMinPoints() const { return m_solver ? m_solver->GetMinPoints() : 0; }
 
         //
         // Accessors
@@ -248,14 +312,30 @@ namespace seq2map
         inline void SetStrategy(Strategy strategy) { m_strategy = strategy; }
         inline Strategy GetStrategy() const { return m_strategy; }
 
+        inline void SetMaxIterations(size_t maxIter) { m_maxIter = maxIter; }
+        inline void SetMinInlierRatio(double ratio)  { m_minInlierRatio = ratio; }
+        inline void SetConfidence(double p) { m_confidence = p > 1.0f ? 1.0f : (p < 0.0f ? 0.0f : p); }
+        inline void EnableOptimisation()  { m_optimisation = true;  }
+        inline void DisableOptimisation() { m_optimisation = false; }
+        inline void SetVerbose(bool verbose) { m_verbose = verbose; }
+
         inline void AddSelector(const AlignmentObjective::InlierSelector& selector) { m_selectors.push_back(selector); }
-        inline void SetEstimator(PoseEstimator::ConstOwn& estimator) { m_estimator = estimator; }
+        inline void SetSolver(PoseEstimator::ConstOwn& solver) { m_solver = solver; }
         inline Selectors& GetSelectors() { return m_selectors; }
+        size_t GetPopulation() const;
 
     private:
+        static Indices DrawSamples(size_t population, size_t samples);
+
         Strategy m_strategy;
-        PoseEstimator::ConstOwn m_estimator;
+        PoseEstimator::ConstOwn m_solver;
         Selectors m_selectors;
+
+        size_t m_maxIter;
+        double m_minInlierRatio;
+        double m_confidence;
+        bool m_optimisation;
+        bool m_verbose;
     };
 
     /**
@@ -272,7 +352,7 @@ namespace seq2map
         //
         // Accessors
         //
-        inline void AddObjective(AlignmentObjective::Own& objective) { m_objectives.push_back(objective); }
+        inline void AddObjective(AlignmentObjective::ConstOwn& objective) { m_objectives.push_back(objective); }
         EuclideanTransform  GetPose() const         { return m_tform; }
         EuclideanTransform& GetPose()               { return m_tform; }
         void SetPose(const EuclideanTransform pose) { m_tform = pose; }
@@ -287,7 +367,7 @@ namespace seq2map
     private:
         size_t GetConds() const;
 
-        std::vector<AlignmentObjective::Own> m_objectives;
+        std::vector<AlignmentObjective::ConstOwn> m_objectives;
         EuclideanTransform m_tform;
     };
 
@@ -341,33 +421,5 @@ namespace seq2map
     protected:
         static void DecomposeProjMatrix(const cv::Mat& P, cv::Mat& KRinv, cv::Mat& c);
     };
-
-    /**
-     * ........
-     */
-    /*
-    template<class T0, class T1> class Mapping
-    {
-    public:
-        Mapping() : m_size(0) {}
-        size_t Add(const T0& pt0, const T1& pt1)
-        {
-            m_pts0.push_back(pt0);
-            m_pts1.push_back(pt1);
-
-            return m_size = m_pts0.size();
-        }
-        inline size_t GetSize() const { return m_size; }
-        inline const std::vector<T0>& From() const { return m_pts0; }
-        inline const std::vector<T1>& To()   const { return m_pts1; }
-    protected:
-        size_t m_size;
-        std::vector<T0> m_pts0;
-        std::vector<T1> m_pts1;
-    };
-
-    typedef Mapping<Point2D, Point2D> PointMap2Dto2D;
-    typedef Mapping<Point3D, Point2D> PointMap3Dto2D;
-    */
 }
 #endif // GEOMETRY_HPP

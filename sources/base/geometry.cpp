@@ -269,6 +269,38 @@ Geometry& Geometry::Dehomogenise()
     return *this;
 }
 
+Geometry Geometry::operator[] (const Indices& indices) const
+{
+    Geometry g(shape);
+
+    const int n = static_cast<int>(indices.size());
+    int i = 0;
+
+    switch (shape)
+    {
+    case ROW_MAJOR:
+        g.mat = cv::Mat(n, mat.cols, mat.type());
+        BOOST_FOREACH (size_t idx, indices)
+        {
+            mat.row(static_cast<int>(idx)).copyTo(g.mat.row(i++));
+        }
+        break;
+
+    case COL_MAJOR:
+        g.mat = cv::Mat(mat.rows, n, mat.type());
+        BOOST_FOREACH (size_t idx, indices)
+        {
+            mat.col(static_cast<int>(idx)).copyTo(g.mat.col(i++));
+        }
+        break;
+
+    case PACKED:
+        g = Reshape(ROW_MAJOR)[indices]; // the assignment is required to make the shape right
+    }
+
+    return g;
+}
+
 //==[ Metric ]================================================================//
 
 //==[ EuclideanMetric ]=======================================================//
@@ -290,13 +322,12 @@ Geometry EuclideanMetric::operator() (const Geometry& x) const
         return (*this)(x.Reshape(Geometry::ROW_MAJOR)).Reshape(x.shape);
     }
 
-    cv::Mat d;
+    cv::Mat d = cv::Mat::zeros(x.mat.rows, 1, x.mat.type());
 
     // work only for row-major shape
     for (int j = 0; j < x.mat.cols; j++)
     {
         cv::Mat dj;
-        
         cv::multiply(x.mat.col(j), x.mat.col(j), dj); // dj = dj .^ 2
         cv::add(d, dj, d);                            // d  = d + dj
     }
@@ -375,6 +406,55 @@ Geometry MahalanobisMetric::operator() (const Geometry& x) const
 
     throw std::exception("not implemented");
     return Geometry(x.shape);
+}
+
+//==[ GeometricMapping ]======================================================//
+
+bool GeometricMapping::IsConsistent() const
+{
+    const size_t n = src.GetElements();
+    return (n == dst.GetElements()) && (indices.empty() || indices.size() == n);;
+}
+
+bool GeometricMapping::Check(size_t d0, size_t d1) const
+{
+    if (!IsConsistent())
+    {
+        E_ERROR << "consistency check failed";
+        return false;
+    }
+
+    if (src.GetDimension() != d0)
+    {
+        E_ERROR << "source points have to be in " << d0 << "D space (d=" << src.GetDimension() << ")";
+        return false;
+    }
+
+    if (dst.GetDimension() != d1)
+    {
+        E_ERROR << "target points have to be in " << d1 << "D space (d=" << dst.GetDimension() << ")";
+        return false;
+    }
+
+    return true;
+}
+
+GeometricMapping GeometricMapping::operator[] (const Indices& idx) const
+{
+    GeometricMapping mapping;
+    mapping.src = src[idx];
+    mapping.dst = dst[idx];
+    mapping.metric = metric;
+
+    if (!indices.empty())
+    {
+        BOOST_FOREACH(size_t i, idx)
+        {
+            mapping.indices.push_back(indices[i]);
+        }
+    }
+
+    return mapping;
 }
 
 //==[ GeometricTransform ]====================================================//
@@ -710,14 +790,20 @@ cv::Mat EuclideanTransform::ToEssentialMatrix() const
 
 bool EuclideanTransform::FromEssentialMatrix(const cv::Mat& E, const GeometricMapping& m)
 {
-    // TODO: finish this
-    // ...
-    // ..
-    // .
+    cv::Mat rvec, tvec;
+    int inliers;
+    
+    try
+    {
+        inliers = cv::recoverPose(E, m.src.mat, m.dst.mat, rvec, tvec);
+    }
+    catch (std::exception& ex)
+    {
+        E_ERROR << "cv::recoverPose failed : " << ex.what();
+        return false;
+    }
 
-    throw std::exception("not implemented");
-
-    return false;
+    return m_rotation.FromMatrix(rvec) && SetTranslation(tvec);
 }
 
 EuclideanTransform EuclideanTransform::GetInverse() const
