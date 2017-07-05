@@ -751,6 +751,17 @@ size_t MultiObjectivePoseEstimation::GetConds() const
 
 //==[ StructureEstimation ]===================================================//
 
+//==[ StructureEstimation::Estimate ]=========================================//
+
+StructureEstimation::Estimate StructureEstimation::Estimate::operator[] (const Indices& indices) const
+{
+    Estimate estimate(structure.shape);
+    estimate.structure = structure[indices];
+    estimate.metric    = metric ? (*metric)[indices] : Metric::Own();
+
+    return estimate;
+}
+
 //==[ OptimalTriangulation ]==================================================//
 
 StructureEstimation::Estimate OptimalTriangulation::operator() (const GeometricMapping& m) const
@@ -794,14 +805,13 @@ void MidPointTriangulation::DecomposeProjMatrix(const cv::Mat& P, cv::Mat& KRinv
 StructureEstimation::Estimate MidPointTriangulation::operator() (const GeometricMapping& m) const
 {
     Estimate est(m.src.shape);
+    //MahalanobisMetric e;
 
     if (m.src.IsConsistent(m.dst))
     {
         E_ERROR << "given mapping is inconsistent";
         return est;
     }
-
-    MahalanobisMetric e;
 
     Geometry p0 = P0.Backproject(m.src).Reshape(Geometry::ROW_MAJOR);
     Geometry p1 = P1.Backproject(m.dst).Reshape(Geometry::ROW_MAJOR);
@@ -836,7 +846,7 @@ StructureEstimation::Estimate MidPointTriangulation::operator() (const Geometric
     //of << mat2string(x1, "x1_h") << std::endl;
 
     g.mat = cv::Mat(x0.rows, 3, x0.type());
-    e.icv.mat = cv::Mat(x0.rows, 1, x0.type());
+    //cv::Mat cov = cv::Mat(x0.rows, 1, x0.type());
 
     for (int i = 0; i < g.mat.rows; i++)
     {
@@ -853,11 +863,11 @@ StructureEstimation::Estimate MidPointTriangulation::operator() (const Geometric
         cv::Mat x = (B * k + s) * 0.5f;
         cv::Mat d = (A * k - t);
 
-        double n = cv::norm(d);
-        double n2 = n * n;
+        //double n = cv::norm(d);
+        //double n2 = n * n;
 
         g.mat.row(i) = x.t();
-        e.icv.mat.row(i) = 1.0f / n2;
+        //e.icv.mat.row(i) = 1.0f / n2;
 
         //if (i == 0)
         //{

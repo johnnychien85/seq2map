@@ -102,6 +102,7 @@ add_executable(calibn      sources/calibn/args.hpp               # Multi-camera 
 add_executable(im2disp     sources/im2disp/im2disp.cpp          )# Stereo matcher-based disparity map computation
 add_executable(im2flow     sources/im2flow/im2flow.cpp          )# Optical flow computation
 add_executable(im2kpts     sources/im2kpts/im2kpts.cpp          )# Image feature detection and extraction
+add_executable(monovo      sources/monovo/monovo.cpp            )# Monocular VO implementation
 add_executable(raw2seq     sources/raw2seq/builder.hpp           # Process raw data to build structured sequence profiles
                            sources/raw2seq/builder.cpp           # 
                            sources/raw2seq/raw2seq.cpp          )# 

@@ -6,6 +6,7 @@
 #include <seq2map/features.hpp>
 #include <seq2map/disparity.hpp>
 #include <seq2map/geometry.hpp>
+#include <seq2map/geometry_problems.hpp>
 #include <seq2map/seq_file_store.hpp>
 
 namespace seq2map
@@ -211,7 +212,16 @@ namespace seq2map
         // Misc.
         //
         static Configuration GetConfiguration(const EuclideanTransform& rel, double& baseline);
+        
+        /**
+         * Back-project a disparity map to obtain 3D points.
+         */
         Geometry Backproject(const cv::Mat& dp) const;
+
+        /**
+         * Back-project a disparity map with error variance map to obtain 3D points and the propagated error covariances.
+         */
+        StructureEstimation::Estimate Backproject(const cv::Mat& dp, const cv::Mat& var) const;
 
     private:
         friend class Sequence; // for restoring camera references

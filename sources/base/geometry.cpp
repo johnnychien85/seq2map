@@ -339,6 +339,85 @@ Geometry EuclideanMetric::operator() (const Geometry& x) const
 
 //==[ MahalanobisMetric ]=====================================================//
 
+Metric::Own MahalanobisMetric::operator[] (const Indices& indices) const
+{
+    MahalanobisMetric* metric = new MahalanobisMetric(type, dims);
+    metric->m_cov = m_cov[indices];
+
+    return Metric::Own(metric);
+}
+
+size_t MahalanobisMetric::GetCovMatCols() const
+{
+    switch (type)
+    {
+    case ISOTROPIC:              return 1;
+    case ANISOTROPIC_ORTHOGONAL: return dims;
+    case ANISOTROPIC_ROTATED:    return dims * (dims + 1) / 2;
+    }
+}
+
+bool MahalanobisMetric::SetCovarianceMat(const cv::Mat& cov)
+{
+    if (cov.channels() != 1)
+    {
+        E_WARNING << "covariance matrix has to be single-channel";
+        return false;
+    }
+
+    const size_t cols = GetCovMatCols();
+
+    if (cols != static_cast<size_t>(cov.cols))
+    {
+        E_WARNING << "covariance matrix has " << cov.cols << " column(s) instead of " << cols;
+        return false;
+    }
+
+    m_cov.mat = cov.clone();
+    m_icv.mat = cv::Mat(); // do lazy evaluation
+    // m_icv.mat = GetInverseCovMat(cov);
+}
+
+cv::Mat MahalanobisMetric::GetInverseCovMat(const cv::Mat& cov) const
+{
+    if (type != ANISOTROPIC_ROTATED)
+    {
+        return 1 / cov;
+    }
+
+    cv::Mat icv = cv::Mat(cov.rows, cov.cols, cov.type());
+
+    for (int i = 0; i < cov.rows; i++)
+    {
+        // make a full covariance matrix
+        cv::Mat S2 = cv::Mat(dims, dims, icv.type()), S2_inv;
+
+        for (int d0 = 0; d0 < dims; d0++)
+        {
+            for (int d1 = 0; d1 < dims; d1++)
+            {
+                const int j = (d0 < d1) ? d0 * dims + d1 : d1 * dims + d0;
+                S2.at<double>(d0, d1) = cov.at<double>(i, j);
+            }
+        }
+
+        // find the inverse of i-th covariance matrix
+        cv::invert(S2, S2_inv);
+
+        // fill back
+        for (int d0 = 0; d0 < dims; d0++)
+        {
+            for (int d1 = 0; d1 < dims; d1++)
+            {
+                const int j = (d0 < d1) ? d0 * dims + d1 : d1 * dims + d0;
+                icv.at<double>(i, j) = S2_inv.at<double>(d0, d1);
+            }
+        }
+    }
+
+    return icv;
+}
+
 Geometry MahalanobisMetric::operator() (const Geometry& x, const Geometry& y) const
 {
     return (*this)(x - y);
@@ -346,66 +425,81 @@ Geometry MahalanobisMetric::operator() (const Geometry& x, const Geometry& y) co
 
 Geometry MahalanobisMetric::operator() (const Geometry& x) const
 {
+    if (dims != x.GetDimension())
+    {
+        E_ERROR << "mis-matched dimensionalities (" << dims << " != " << x.GetDimension() << ")";
+        return Geometry(x.shape);
+    }
+
+    if (m_cov.GetElements() != x.GetElements())
+    {
+        E_ERROR << "mis-matched number of elements (" << m_cov.GetElements() << " != " << x.GetElements() << ")";
+        return Geometry(x.shape);
+    }
+
+    if (m_icv.mat.empty())
+    {
+        m_icv.mat = GetInverseCovMat(m_cov.mat);
+    }
+
     if (x.shape != Geometry::ROW_MAJOR)
     {
         return (*this)(x.Reshape(Geometry::ROW_MAJOR)).Reshape(x.shape);
     }
 
-    /*
-    const size_t d0 = err.rows;
-    const size_t d1 = icv.GetDimension();
+    cv::Mat d = cv::Mat::zeros(x.mat.rows, 1, x.mat.type());
 
-    const size_t n0 = err.cols;
-    const size_t n1 = icv.GetElements();
-
-    if (n1 == 0)
+    switch (type)
     {
-        return err;
-    }
+    case ISOTROPIC:
 
-    bool perElementEval = n1 != 1;
-
-    cv::Mat dist = cv::Mat::zeros(1, n0, err.type());
-    cv::Mat isgm = icv.mat;
-
-    isgm.convertTo(isgm, CV_64F);
-
-    if (!perElementEval)
-    {
-        if (d1 == 1)
+        for (int j = 0; j < x.mat.cols; j++)
         {
-            for (size_t i = 0; i < d0; i++)
+            cv::Mat dj;
+            cv::multiply(x.mat.col(j), x.mat.col(j), dj); // dj = xj .^ 2
+            cv::add(d, dj, d);                            // d  = d + dj
+        }
+
+        cv::multiply(m_icv.mat, d, d); // d = w .* d
+        cv::sqrt(d, d);                // d = sqrt(d)
+
+        break;
+
+    case ANISOTROPIC_ORTHOGONAL:
+
+        for (int j = 0; j < x.mat.cols; j++)
+        {
+            cv::Mat dj;
+            cv::multiply(x.mat.col(j), x.mat.col(j), dj); // dj = xj .^ 2
+            cv::multiply(m_icv.mat.col(j), dj, dj);       // dj = wj .* dj
+            cv::add(d, dj, d);                            // d  = d + dj
+        }
+
+        cv::sqrt(d, d); // d = sqrt(d)
+
+        break;
+
+    case ANISOTROPIC_ROTATED:
+
+        for (int j0 = 0; j0 < x.mat.cols; j0++)
+        {
+            for (int j1 = 0; j1 < x.mat.cols; j1++)
             {
-                cv::Mat x = err.mat.row(i);
-                dist += x.mul(x);
+                const int j = (j0 < j1) ? j0 * x.mat.cols + j1 : j1 * x.mat.cols + j0;
+                cv::Mat dj;
+
+                cv::multiply(x.mat.col(j0), x.mat.col(j1), dj); // dj = x_j0 .* x_j1
+                cv::multiply(m_icv.mat.col(j), dj, dj);         // dj = wj .* dj
+                cv::add(d, dj, d);
             }
-
-            dist = dist * isgm.at<double>
         }
-        else if (d1 == d0)
-        {
 
-        }
+        cv::sqrt(d, d);
+
+        break;
     }
-    else
-    {
-        if (n0 != n1)
-        {
-            E_ERROR << "number of icv elements (n=" << n1 << ") does not match the length of error vector (n=" << n0 << ")";
-            return err;
-        }
-
-        if (d1 == 1)
-        {
-
-        }
-    }
-
-    return dist;
-    */
-
-    throw std::exception("not implemented");
-    return Geometry(x.shape);
+    
+    return Geometry(x.shape, d);
 }
 
 //==[ GeometricMapping ]======================================================//

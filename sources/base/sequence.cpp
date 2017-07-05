@@ -508,13 +508,13 @@ RectifiedStereo::Configuration RectifiedStereo::GetConfiguration(const Euclidean
 
         if (tx > EPS)
         {
-            E_WARNING << "invalid top-down geometry : the length of tz = " << tx << " is not zero";
+            E_WARNING << "invalid top-bottom geometry : the length of tz = " << tx << " is not zero";
             return UNKNOWN;
         }
 
         if (tz > EPS)
         {
-            E_WARNING << "invalid top-down geometry : the length of tz = " << tz << " is not zero";
+            E_WARNING << "invalid top-bottom geometry : the length of tz = " << tz << " is not zero";
             return UNKNOWN;
         }
 
@@ -542,7 +542,7 @@ RectifiedStereo::Configuration RectifiedStereo::GetConfiguration(const Euclidean
         return BACK_FORWARD;
     }
 
-    E_WARNING << "unable to determine the geometric configuration";
+    E_WARNING << "unable to determine the geometric configuration from relative pose";
     return UNKNOWN;
 }
 
@@ -559,8 +559,8 @@ Geometry RectifiedStereo::Backproject(const cv::Mat& dp) const
     const int m = static_cast<int>(m_rays.GetElements());
 
     const cv::Mat src = m_rays.mat.reshape(1, m);
-    /***/ cv::Mat dpm = dp.reshape(1, m);
     /***/ cv::Mat dst = cv::Mat(src.rows, src.cols, src.type());
+    /***/ cv::Mat dpm = dp.reshape(1, m);
 
     if (dpm.depth() != dst.depth())
     {
@@ -572,6 +572,66 @@ Geometry RectifiedStereo::Backproject(const cv::Mat& dp) const
     cv::multiply(src.col(1), dst.col(2), dst.col(1)); // y = z*y
 
     return Geometry(Geometry::ROW_MAJOR, dst).Reshape(m_rays);
+}
+
+StructureEstimation::Estimate RectifiedStereo::Backproject(const cv::Mat& dp, const cv::Mat& var) const
+{
+    StructureEstimation::Estimate estimate(Backproject(dp));
+
+    if (!var.empty())
+    {
+        if (var.rows != dp.rows || var.cols != dp.cols || var.channels() != 1)
+        {
+            E_ERROR << "given variance map is ill-formed (shape=" << var.rows << "x" << var.cols << "x" << var.channels() << ")";
+            E_ERROR << "the estimated structure will have no error metric";
+
+            return estimate;
+        }
+    }
+
+    cv::Mat dp2;
+    cv::multiply(dp, dp, dp2);
+
+    cv::Mat jac = Backproject(-dp2).Reshape(Geometry::ROW_MAJOR).mat;
+    cv::Mat cov = cv::Mat(estimate.structure.GetElements(), 6, estimate.structure.mat.depth());
+
+    for (int i = 0; i < 3; i++)
+    {
+        for (int j = i; j < 3; j++)
+        {
+            const int dst = i * 3 + j;
+            cv::multiply(jac.col(i), jac.col(j), cov.col(dst));
+        }
+    }
+
+    // apply per-pixel error variance when the variance map is available
+    if (!var.empty())
+    {
+        cv::Mat var64F = var.reshape(1, cov.rows);
+
+        if (var64F.depth() != CV_64F)
+        {
+            var64F.convertTo(var64F, CV_64F);
+        }
+
+        for (int i = 0; i < cov.rows; i++)
+        {
+            cov.row(i) *= var64F.at<double>(i);
+        }
+    }
+
+    MahalanobisMetric* metric = new MahalanobisMetric(MahalanobisMetric::ANISOTROPIC_ROTATED, 3);
+
+    if (!metric->SetCovarianceMat(cov))
+    {
+        E_ERROR << "error setting covariance matrix";
+    }
+    else
+    {
+        estimate.metric = Metric::Own(metric);
+    }
+
+    return estimate;
 }
 
 bool RectifiedStereo::Create(Camera::ConstOwn& pri, Camera::ConstOwn& sec)

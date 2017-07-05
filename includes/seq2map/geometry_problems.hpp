@@ -21,6 +21,8 @@ namespace seq2map
          */
         struct InlierSelector
         {
+            InlierSelector() : threshold(-1) {}
+
             InlierSelector(AlignmentObjective::ConstOwn& objective, double threshold)
             : objective(objective), threshold(threshold) {}
 
@@ -177,8 +179,11 @@ namespace seq2map
     public:
         struct Estimate
         {
+            Estimate() : valid(false) {}
+
             EuclideanTransform pose;
             Metric::Own metric;
+            bool valid;
         };
 
         /**
@@ -381,6 +386,8 @@ namespace seq2map
         {
             Estimate(Geometry::Shape shape) : structure(shape) {}
             Estimate(Geometry g) : structure(g) {}
+
+            Estimate operator[] (const Indices& indices) const;
 
             Geometry structure;
             Metric::Own metric;

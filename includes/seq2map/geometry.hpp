@@ -98,6 +98,7 @@ namespace seq2map
         //
         size_t GetElements()  const;
         size_t GetDimension() const;
+        inline bool IsEmpty() const { return mat.empty(); }
 
         cv::Mat mat;
         const Shape shape;
@@ -126,7 +127,7 @@ namespace seq2map
          *
          * \param first geometry data
          * \param second geometry data that have the same dimensionality of the first one.
-         * \return The returned geometry has the same element of x and y and the dimension is always one.
+         * \return The returned geometry has the same number of elements as x and y, and the dimension is always one.
          */
         virtual Geometry operator() (const Geometry& x, const Geometry& y) const = 0;
 
@@ -137,6 +138,14 @@ namespace seq2map
          * \return Norm of x.
          */
         virtual Geometry operator() (const Geometry& x) const = 0;
+
+        /**
+         * Extraction of sub-elements.
+         *
+         * \param indices list of element indices.
+         * \return a new metric containing extracted sub-elements.
+         */
+        virtual Metric::Own operator[] (const Indices& indices) const = 0;
     };
 
     /**
@@ -147,6 +156,8 @@ namespace seq2map
     public:
         virtual Geometry operator() (const Geometry& x, const Geometry& y) const;
         virtual Geometry operator() (const Geometry& x) const;
+
+        virtual Metric::Own operator[] (const Indices& indices) const { return Metric::Own(new EuclideanMetric()); }
     };
 
     /**
@@ -155,19 +166,31 @@ namespace seq2map
     class MahalanobisMetric : public Metric
     {
     public:
-        enum InverseCovarianceType
+        enum CovarianceType
         {
             ISOTROPIC,              ///< the matrix is M-by-1
             ANISOTROPIC_ORTHOGONAL, ///< the matrix is M-by-D
             ANISOTROPIC_ROTATED     ///< the matrix is M-by-D*(D+1)/2
         };
 
-        MahalanobisMetric() : icv(Geometry::ROW_MAJOR) {}
+        MahalanobisMetric(CovarianceType type, size_t dim)
+        : type(type), dims(dims), m_cov(Geometry::ROW_MAJOR), m_icv(Geometry::ROW_MAJOR) {}
 
         virtual Geometry operator() (const Geometry& x, const Geometry& y) const;
         virtual Geometry operator() (const Geometry& x) const;
 
-        Geometry icv; // inverse covariance coefficients for error modelling
+        virtual Metric::Own operator[] (const Indices& indices) const;
+
+        size_t GetCovMatCols() const;
+        cv::Mat GetInverseCovMat(const cv::Mat& cov) const;
+        bool SetCovarianceMat(const cv::Mat& cov);
+
+        const CovarianceType type; ///< shape of covariance matrix
+        const size_t dims;         ///< dimensionality
+
+    private:
+        Geometry m_cov; ///< error covariance coefficients
+        mutable Geometry m_icv; ///< inverse covariance coefficients, automatically calculated from cov
     };
 
     /**
@@ -631,7 +654,7 @@ namespace seq2map
         virtual Geometry Project(const Geometry& g, ProjectiveSpace space = EUCLIDEAN_2D) const = 0;
 
         /**
-         * Perform backward projection.
+         * Perform back-projection.
          *
          * \param g input geometry in image plane
          * \return geometry representing directional vector 

@@ -92,6 +92,18 @@ Landmark& Map::JoinLandmark(Landmark& li, Landmark& lj)
     return li;
 }
 
+StructureEstimation::Estimate Map::UpdateStructure(const Landmark::Ptrs& u, const StructureEstimation::Estimate& g, const EuclideanTransform& pose)
+{
+    StructureEstimation::Estimate updated(Geometry::ROW_MAJOR);
+
+    for (size_t k = 0; k < u.size(); k++)
+    {
+        // TODO: finish the fusion
+    }
+
+    return updated;
+}
+
 //==[ Landmark ]==============================================================//
 
 Hit& Landmark::Hit(Frame& frame, Source& src, size_t index)
@@ -104,9 +116,116 @@ Hit& Landmark::Hit(Frame& frame, Source& src, size_t index)
     return Insert(::Hit(index), d12);
 }
 
-//==[ FeatureTracking ]=======================================================//
+//==[ MultiObjectiveOutlierFilter ]==========================================//
 
-bool FeatureTracking::operator() (Map& map, size_t t)
+bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, Indices& inliers)
+{
+    if (builders.empty())
+    {
+        E_WARNING << "no objective builder available";
+        return false;
+    }
+
+    //
+    // build objectives
+    //
+    const ImageFeatureSet& Fi = fmap.From();
+    const ImageFeatureSet& Fj = fmap.To();
+
+    size_t idx = 0;
+    BOOST_FOREACH (size_t k, inliers)
+    {
+        const FeatureMatch& m = fmap[k];
+
+        BOOST_FOREACH (ObjectiveBuilder::Own builder, builders)
+        {
+            builder->AddData(k, Fi[m.srcIdx], Fj[m.dstIdx], idx);
+        }
+
+        idx++;
+    }
+
+    //
+    // apply outlier detection on the built models
+    //
+    ConsensusPoseEstimator estimator;
+    PoseEstimator::Estimate estimate;
+    PoseEstimator::ConstOwn solver;
+    GeometricMapping solverData;
+
+    BOOST_FOREACH (ObjectiveBuilder::Own builder, builders)
+    {
+        GeometricMapping data;
+        AlignmentObjective::InlierSelector selector;
+        
+        if (builder->Build(data, selector))
+        {
+            E_WARNING << "objective building failed for " << builder->ToString();
+            continue;
+        }
+
+        estimator.AddSelector(selector);
+
+        if (!solver)
+        {
+            solver = builder->GetSolver();
+            solverData = data;
+        }
+    }
+
+    if (!solver)
+    {
+        E_WARNING << "no objective succesfully built";
+        return false;
+    }
+
+    estimator.SetStrategy(ConsensusPoseEstimator::RANSAC);
+    estimator.SetMaxIterations(30);
+    estimator.SetMinInlierRatio(0.75f);
+    estimator.SetConfidence(0.8f);
+    estimator.SetSolver(solver);
+
+    std::vector<Indices> survived, eliminated;
+
+    if (!estimator(solverData, estimate, survived, eliminated))
+    {
+        E_ERROR << "consensus outlier detection failed";
+        return false;
+    }
+
+    // aggregate all inliers from all the selectors
+    std::vector<size_t> hits(inliers.size(), 0);
+
+    for (size_t s = 0; s < survived.size(); s++)
+    {
+        const std::vector<size_t>& idmap = estimator.GetSelectors()[s].objective->GetData().indices;
+        BOOST_FOREACH (size_t j, survived[s])
+        {
+            hits[idmap[j]]++;
+        }
+    }
+
+    std::vector<size_t>::const_iterator h = hits.begin();
+    for (Indices::iterator itr = inliers.begin(); itr != inliers.end(); itr++)
+    {
+        if (*h < estimator.GetSelectors().size())
+        {
+            fmap[*itr].Reject(FeatureMatch::GEOMETRIC_TEST_FAILED);
+            inliers.erase(itr);
+        }
+
+        h++;
+    }
+
+    // estimate.pose might be useful..
+    // ...
+    // ..
+    // .
+}
+
+//==[ FeatureTracker ]=======================================================//
+
+bool FeatureTracker::operator() (Map& map, size_t t)
 {
     Source& si = map.GetSource(src.store->GetIndex());
     Source& sj = map.GetSource(dst.store->GetIndex());
@@ -118,20 +237,28 @@ bool FeatureTracking::operator() (Map& map, size_t t)
 
     const FeatureStore& Fi = *src.store;
     const FeatureStore& Fj = *dst.store;
-
     Frame& ti = map.GetFrame(static_cast<size_t>(static_cast<int>(t) + src.offset));
     Frame& tj = map.GetFrame(static_cast<size_t>(static_cast<int>(t) + dst.offset));
-
     ImageFeatureSet fi = Fi[ti.GetIndex()];
     ImageFeatureSet fj = Fj[tj.GetIndex()];
     Landmark::Ptrs& ui = ti.featureLandmarkLookup[Fi.GetIndex()];
     Landmark::Ptrs& uj = tj.featureLandmarkLookup[Fj.GetIndex()];
+    StructureEstimation::Estimate gi(Geometry::ROW_MAJOR);
+    StructureEstimation::Estimate gj(Geometry::ROW_MAJOR);
 
     // initialise frame's feature-landmark lookup table for first time access
     if (ui.empty()) ui.resize(fi.GetSize(), NULL);
     if (uj.empty()) uj.resize(fj.GetSize(), NULL);
 
-    // build outlier filter and models
+    // get feature structure from depthmap
+    if (src.disp && src.disp->GetStereoPair()) gi = GetFeatureStructure(fi, src.disp->GetStereoPair()->Backproject((*src.disp)[ti.GetIndex()].im, cv::Mat()));
+    if (dst.disp && dst.disp->GetStereoPair()) gj = GetFeatureStructure(fj, dst.disp->GetStereoPair()->Backproject((*dst.disp)[tj.GetIndex()].im, cv::Mat()));
+
+    // perform pre-motion structure update
+    if (ti.poseEstimate.valid) gi = map.UpdateStructure(ui, gi, ti.poseEstimate.pose);
+    if (tj.poseEstimate.valid) gj = map.UpdateStructure(uj, gj, tj.poseEstimate.pose);
+
+    // build the outlier filter and filtering models
     if (outlierRejection)
     {
         Camera::ConstOwn ci = Fi.GetCamera();
@@ -139,35 +266,38 @@ bool FeatureTracking::operator() (Map& map, size_t t)
         ProjectionModel::ConstOwn pi = ci ? ci->GetPosedProjection() : ProjectionModel::ConstOwn();
         ProjectionModel::ConstOwn pj = cj ? cj->GetPosedProjection() : ProjectionModel::ConstOwn();
 
-        MultiModalOutlierFilter* filter = new MultiModalOutlierFilter(ui, uj);
+        cv::Mat Ii = Fi.GetCamera()->GetImageStore()[ti.GetIndex()].im;
+        cv::Mat Ij = Fj.GetCamera()->GetImageStore()[tj.GetIndex()].im;
 
-        if (outlierRejection & FORWARD_PROJECTIVE)
+        MultiObjectiveOutlierFilter* filter = new MultiObjectiveOutlierFilter();
+
+        if (outlierRejection & FORWARD_PROJECTION)
         {
             if (pj)
             {
-                filter->models.push_back(MultiModalOutlierFilter::Model::Own(new ProjectiveOutlierModel(pj, true)));
+                filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(new PerspectiveObjectiveBuilder(pj, gi, true)));
             }
             else
             {
-                E_WARNING << "error adding projective outlier model due to missing projection model";
-                E_WARNING << "forward projection-based outlier rejection now deactivated for " << ToString();
+                E_WARNING << "error adding forward projection objective to the outlier filter due to missing projection model";
+                E_WARNING << "forward projection-based outlier rejection deactivated for " << ToString();
 
-                outlierRejection &= ~FORWARD_PROJECTIVE;
+                outlierRejection &= ~FORWARD_PROJECTION;
             }
         }
 
-        if (outlierRejection & BACKWARD_PROJECTIVE)
+        if (outlierRejection & BACKWARD_PROJECTION)
         {
             if (pi)
             {
-                filter->models.push_back(MultiModalOutlierFilter::Model::Own(new ProjectiveOutlierModel(pi, false)));
+                filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(new PerspectiveObjectiveBuilder(pi, gj, false)));
             }
             else
             {
-                E_WARNING << "error adding projective outlier model due to missing projection model";
-                E_WARNING << "backward projection-based outlier rejection now deactivated for " << ToString();
+                E_WARNING << "error adding backward projection objective to the outlier filter due to missing projection model";
+                E_WARNING << "backward projection-based outlier rejection deactivated for " << ToString();
 
-                outlierRejection &= ~BACKWARD_PROJECTIVE;
+                outlierRejection &= ~BACKWARD_PROJECTION;
             }
         }
 
@@ -175,12 +305,12 @@ bool FeatureTracking::operator() (Map& map, size_t t)
         {
             if (pi && pj)
             {
-                filter->models.push_back(MultiModalOutlierFilter::Model::Own(new EpipolarOutlierModel(pi, pj)));
+                filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(new EpipolarObjectiveBuilder(pi, pj)));
             }
             else
             {
-                E_WARNING << "error adding epipolar outlier model due to missing projection model(s)";
-                E_WARNING << "epipolar-based outlier rejection now deactivated for " << ToString();
+                E_WARNING << "error adding epipolar objective to the outlier filter due to missing projection model(s)";
+                E_WARNING << "epipolar-based outlier rejection deactivated for " << ToString();
 
                 outlierRejection &= ~EPIPOLAR;
             }
@@ -191,17 +321,19 @@ bool FeatureTracking::operator() (Map& map, size_t t)
 
     ImageFeatureMap fmap = matcher(fi, fj);
 
-    // remove the outlier filter
-    if (outlierRejection) matcher.GetFilters().pop_back();
+    // dispose the outlier filter
+    if (outlierRejection)
+    {
+        matcher.GetFilters().pop_back();
+    }
 
-    cv::Mat Ii = Fi.GetCamera()->GetImageStore()[ti.GetIndex()].im;
-    cv::Mat Ij = Fj.GetCamera()->GetImageStore()[tj.GetIndex()].im;
-    cv::Mat im = imfuse(Ii, Ij);
-    fmap.Draw(im);
+    //cv::Mat im = imfuse(Ii, Ij);
+    //fmap.Draw(im);
+    //
+    //cv::imshow(ToString(), im);
+    //cv::waitKey(0);
 
-    cv::imshow(ToString(), im);
-    cv::waitKey(0);
-
+    // insert the observations into the map
     BOOST_FOREACH(const FeatureMatch& m, fmap.GetMatches())
     {
         if (!(m.state & FeatureMatch::INLIER))
@@ -281,18 +413,35 @@ bool FeatureTracking::operator() (Map& map, size_t t)
     return true;
 }
 
-bool FeatureTracking::IsOkay() const
+StructureEstimation::Estimate FeatureTracker::GetFeatureStructure(const ImageFeatureSet& f, const StructureEstimation::Estimate& structure)
+{
+    Indices indices;
+    const cv::Size size = structure.structure.mat.size();
+
+    // convert subscripts to rounded integer indices
+    for (size_t k = 0; k < f.GetSize(); k++)
+    {
+        const Point2F& sub = f[k].keypoint.pt;
+        const size_t ind = static_cast<size_t>(std::round(sub.y) * size.width + std::round(sub.x));
+
+        indices.push_back(ind);
+    }
+
+    return structure[indices];
+}
+
+bool FeatureTracker::IsOkay() const
 {
     return src.store && dst.store && !(src.store->GetIndex() == dst.store->GetIndex() && src.offset == dst.offset);
 }
 
-bool FeatureTracking::IsCrossed() const
+bool FeatureTracker::IsCrossed() const
 {
     Camera::ConstOwn cam0, cam1;
     return IsOkay() && (cam0 = src.store->GetCamera()) && (cam1 = dst.store->GetCamera()) && cam0->GetIndex() != cam1->GetIndex();
 }
 
-bool FeatureTracking::InRange(size_t t, size_t tn) const
+bool FeatureTracker::InRange(size_t t, size_t tn) const
 {
     int ti = static_cast<int>(t) + src.offset;
     int tj = static_cast<int>(t) + dst.offset;
@@ -301,7 +450,7 @@ bool FeatureTracking::InRange(size_t t, size_t tn) const
             tj >= 0 && tj < static_cast<int>(tn));
 }
 
-String FeatureTracking::ToString() const
+String FeatureTracker::ToString() const
 {
     std::stringstream ss, f0, f1, s0, s1;
 
@@ -320,163 +469,54 @@ String FeatureTracking::ToString() const
     return ss.str();
 }
 
-//==[ FeatureTracking::MultiObjectiveOutlierFilter ]==========================//
+//==[ FeatureTracker::EpipolarOutlierModel ]=================================//
 
-bool FeatureTracking::MultiModalOutlierFilter::operator() (ImageFeatureMap& fmap, Indices& inliers)
+void FeatureTracker::EpipolarObjectiveBuilder::AddData(size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx)
 {
-    if (models.empty())
-    {
-        E_ERROR << "no outlier rejection model available";
-        return false;
-    }
-
-    //
-    // build modal data
-    //
-    const ImageFeatureSet& Fi = fmap.From();
-    const ImageFeatureSet& Fj = fmap.To();
-
-    size_t i = 0;
-    BOOST_FOREACH (size_t k, inliers)
-    {
-        const FeatureMatch& m = fmap[k];
-        Landmark*& ui_k = ui[m.srcIdx];
-        Landmark*& uj_k = uj[m.dstIdx];
-
-        BOOST_FOREACH (MultiModalOutlierFilter::Model::Own model, models)
-        {
-            model->AddData(i++, Fi[m.srcIdx], Fj[m.dstIdx], ui_k, uj_k);
-        }
-    }
-
-    //
-    // apply outlier detection on the built models
-    //
-    ConsensusPoseEstimator estimator;
-    PoseEstimator::Estimate estimate;
-    PoseEstimator::ConstOwn solver;
-    GeometricMapping solverData;
-
-    BOOST_FOREACH (MultiModalOutlierFilter::Model::Own model, models)
-    {
-        GeometricMapping data;
-        AlignmentObjective::InlierSelector selector = model->Build(data);
-
-        if (selector.IsEnabled())
-        {
-            estimator.AddSelector(selector);
-
-            if (!solver)
-            {
-                solver = model->GetSolver();
-                solverData = data;
-            }
-        }
-    }
-
-    if (!solver)
-    {
-        E_ERROR << "no rejection model succesfully built";
-        return false;
-    }
-
-    estimator.SetStrategy(ConsensusPoseEstimator::RANSAC);
-    estimator.SetMaxIterations(30);
-    estimator.SetMinInlierRatio(0.75f);
-    estimator.SetConfidence(0.8f);
-    estimator.SetSolver(solver);
-
-    std::vector<Indices> survived, eliminated;
-
-    if (!estimator(solverData, estimate, survived, eliminated))
-    {
-        E_ERROR << "consensus outlier detection failed";
-        return false;
-    }
-
-    // aggregate all inliers from all the selectors
-    std::vector<size_t> hits(inliers.size(), 0);
-
-    for (size_t s = 0; s < survived.size(); s++)
-    {
-        const std::vector<size_t>& idmap = estimator.GetSelectors()[s].objective->GetData().indices;
-        BOOST_FOREACH (size_t j, survived[s])
-        {
-            hits[idmap[j]]++;
-        }
-    }
-
-    std::vector<size_t>::const_iterator h = hits.begin();
-    for (Indices::iterator itr = inliers.begin(); itr != inliers.end(); itr++)
-    {
-        if (*h < estimator.GetSelectors().size())
-        {
-            fmap[*itr].Reject(FeatureMatch::GEOMETRIC_TEST_FAILED);
-            inliers.erase(itr);
-        }
-
-        h++;
-    }
-
-    // estimate.pose might be useful..
-    // ...
-    // ..
-    // .
+    m_builder.Add(fi.keypoint.pt, fj.keypoint.pt, localIdx);
 }
 
-//==[ FeatureTracking::EpipolarOutlierModel ]=================================//
-
-void FeatureTracking::EpipolarOutlierModel::AddData(size_t i, const ImageFeature& fi, const ImageFeature& fj, const Landmark* li, const Landmark* lj)
-{
-    m_builder.Add(fi.keypoint.pt, fj.keypoint.pt, i);
-}
-
-AlignmentObjective::InlierSelector FeatureTracking::EpipolarOutlierModel::Build(GeometricMapping& data)
+bool FeatureTracker::EpipolarObjectiveBuilder::Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector)
 {
     AlignmentObjective::Own objective = AlignmentObjective::Own(new EpipolarObjective(pi, pj));
     data = m_builder.Build();
     
     if (!objective->SetData(data))
     {
-        E_WARNING << "error setting epipolar constraints";
-        return objective->GetSelector(0);
+        E_WARNING << "error setting epipolar constraints for " << ToString();
+        return false;
     }
 
-    return objective->GetSelector(0.1f);
+    selector = objective->GetSelector(0.1f);
+    return true;
 }
 
-PoseEstimator::Own FeatureTracking::EpipolarOutlierModel::GetSolver()
+//==[ FeatureTracker::ProjectiveOutlierModel ]===============================//
+
+void FeatureTracker::PerspectiveObjectiveBuilder::AddData(size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx)
 {
-    return PoseEstimator::Own(new EssentialMatrixDecomposer(pi, pj));
+    const ImageFeature& fk = forward ? fj : fi;
+    const Point3D& gk = g.structure.mat.at<Point3D>(k);
+
+    m_builder.Add(gk, fk.keypoint.pt, localIdx);
 }
 
-//==[ FeatureTracking::ProjectiveOutlierModel ]===============================//
-
-void FeatureTracking::ProjectiveOutlierModel::AddData(size_t i, const ImageFeature& fi, const ImageFeature& fj, const Landmark* li, const Landmark* lj)
-{
-    const Landmark*     l = forward ? li : lj;
-    const ImageFeature& f = forward ? fj : fi;
-
-    if (l == NULL) return;
-
-    m_builder.Add(tf(Point3D(l->position)), f.keypoint.pt, i);
-}
-
-AlignmentObjective::InlierSelector FeatureTracking::ProjectiveOutlierModel::Build(GeometricMapping& data)
+bool FeatureTracker::PerspectiveObjectiveBuilder::Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector)
 {
     AlignmentObjective::Own objective = AlignmentObjective::Own(new ProjectionObjective(p, forward));
     data = m_builder.Build();
 
     if (!objective->SetData(data))
     {
-        E_WARNING << "error setting perspective constraints";
-        return objective->GetSelector(0);
+        E_WARNING << "error setting perspective constraints for " << ToString();
+        return false;
     }
 
-    return objective->GetSelector(1.0f);
+    selector = objective->GetSelector(1.0f);
+    return true;
 }
 
-PoseEstimator::Own FeatureTracking::ProjectiveOutlierModel::GetSolver()
+PoseEstimator::Own FeatureTracker::PerspectiveObjectiveBuilder::GetSolver()
 {
     PoseEstimator::Own estimator = PoseEstimator::Own(new PerspevtivePoseEstimator(p));
     return forward ? estimator : PoseEstimator::Own(new InversePoseEstimator(estimator));
@@ -484,7 +524,7 @@ PoseEstimator::Own FeatureTracking::ProjectiveOutlierModel::GetSolver()
 
 //==[ MultiFrameFeatureIntegration ]==========================================//
 
-bool MultiFrameFeatureIntegration::AddTracking(const FeatureTracking& matching)
+bool MultiFrameFeatureIntegration::AddTracking(const FeatureTracker& matching)
 {
     if (!matching.IsOkay())
     {
@@ -492,7 +532,7 @@ bool MultiFrameFeatureIntegration::AddTracking(const FeatureTracking& matching)
         return false;
     }
 
-    BOOST_FOREACH (const FeatureTracking& m, m_tracking)
+    BOOST_FOREACH (const FeatureTracker& m, m_tracking)
     {
         bool duplicated = (m.src == matching.src) && (m.dst == matching.dst);
 
@@ -515,7 +555,7 @@ Mapper::Capability MultiFrameFeatureIntegration::GetCapability() const
     capability.metric = m_dispStores.size() > 0;
     capability.dense = false;
 
-    BOOST_FOREACH (const FeatureTracking& m, m_tracking)
+    BOOST_FOREACH (const FeatureTracker& m, m_tracking)
     {
         capability.motion |= !m.IsSynchronised();
         capability.metric |= m.IsCrossed();
@@ -528,7 +568,7 @@ bool MultiFrameFeatureIntegration::SLAM(Map& map, size_t t0, size_t tn)
 {
     for (size_t t = t0; t < tn; t++)
     {
-        BOOST_FOREACH (FeatureTracking& f, m_tracking)
+        BOOST_FOREACH (FeatureTracker& f, m_tracking)
         {
             if (f.InRange(t, tn) && !f(map, t))
             {
