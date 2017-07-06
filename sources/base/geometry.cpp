@@ -329,15 +329,24 @@ Geometry EuclideanMetric::operator() (const Geometry& x) const
     {
         cv::Mat dj;
         cv::multiply(x.mat.col(j), x.mat.col(j), dj); // dj = dj .^ 2
-        cv::add(d, dj, d);                            // d  = d + dj
+        cv::add(d, dj, d);                            // DIMS  = DIMS + dj
     }
 
-    cv::sqrt(d, d); // d = sqrt(d)
+    cv::sqrt(d, d); // DIMS = sqrt(DIMS)
 
     return Geometry(x.shape, d);
 }
 
 //==[ MahalanobisMetric ]=====================================================//
+
+MahalanobisMetric::MahalanobisMetric(CovarianceType type, size_t dims, const cv::Mat& cov)
+: MahalanobisMetric(type, dims)
+{
+    if (!SetCovarianceMat(cov))
+    {
+        E_ERROR << "error setting covariance matrix";
+    }
+}
 
 Metric::Own MahalanobisMetric::operator[] (const Indices& indices) const
 {
@@ -347,7 +356,163 @@ Metric::Own MahalanobisMetric::operator[] (const Indices& indices) const
     return Metric::Own(metric);
 }
 
-size_t MahalanobisMetric::GetCovMatCols() const
+Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform) const
+{
+    if (dims != 3)
+    {
+        E_ERROR << "Euclidean transformation can only apply to a 3D Mahalanobis metric (d=" << dims << ")";
+        return Metric::Own();
+    }
+
+    const int DIMS = static_cast<int>(dims);
+
+    MahalanobisMetric* metric = new MahalanobisMetric(ANISOTROPIC_ROTATED, DIMS);
+    cv::Mat cov = GetFullCovMat();
+    cv::Mat R = tform.GetRotation().ToMatrix();
+    cv::Mat Rt = R.t();
+
+    if (R.depth() != cov.depth())
+    {
+        R.convertTo(R, cov.depth());
+    }
+
+    for (int i = 0; i < cov.rows; i++)
+    {
+        cv::Mat Ci = cv::Mat(DIMS, DIMS, cov.type());
+
+        for (int d0 = 0; d0 < DIMS; d0++)
+        {
+            for (int d1 = d0; d1 < DIMS; d1++)
+            {
+                const int j = sub2symind(d0, d1, DIMS);
+                Ci.at<double>(d0, d1) = cov.at<double>(i, j);
+            }
+        }
+
+        Ci = R * Ci * Rt;
+
+        for (int d0 = 0; d0 < DIMS; d0++)
+        {
+            for (int d1 = d0; d1 < DIMS; d1++)
+            {
+                const int j = sub2symind(d0, d1, DIMS);
+                cov.at<double>(i, j) = Ci.at<double>(d0, d1);
+            }
+        }
+    }
+
+    metric->SetCovarianceMat(cov);
+
+    return Metric::Own(metric);
+}
+
+cv::Mat MahalanobisMetric::Update(const MahalanobisMetric& metric)
+{
+    if (this->type != metric.type)
+    {
+        E_ERROR << "incompatible types (d0=" << this->type << ", d1=" << metric.type << ")";
+        return cv::Mat();
+    }
+
+    if (m_cov.GetElements() != metric.m_cov.GetElements())
+    {
+        E_ERROR << "incompatible dimensionality (n0=" << m_cov.GetElements() << ", n1=" << metric.m_cov.GetElements() << ")";
+        return cv::Mat();
+    }
+
+    /***/ cv::Mat K;
+    /***/ cv::Mat& cov0 = m_cov.mat;
+    const cv::Mat& cov1 = metric.m_cov.mat;
+
+    if (type != ANISOTROPIC_ROTATED)
+    {
+        cv::Mat sum;
+        cv::add(cov0, cov1, sum);
+        cv::divide(cov0, sum, K); // K = C0 / (C0 + C1)
+
+        if (type == ISOTROPIC)
+        {
+            for (int j = 0; j < cov0.cols; j++)
+            {
+                cv::Mat delta;
+                cv::multiply(cov0.col(j), K, delta);
+                cv::subtract(cov0, delta, cov0);
+            }
+        }
+        else
+        {
+            for (int j = 0; j < cov0.cols; j++)
+            {
+                cv::Mat delta;
+                cv::multiply(cov0.col(j), K.col(j), delta);
+                cv::subtract(cov0, delta, cov0);
+            }
+        }
+
+        return K;
+    }
+
+    const int DIMS = static_cast<int>(dims);
+    K = cv::Mat::zeros(cov0.rows, cov0.cols, cov0.depth());
+
+    // initialise Kalman gain with the identity matrix
+    for (int d0 = 0; d0 < DIMS; d0++)
+    {
+        for (int d1 = 0; d1 < DIMS; d1++)
+        {
+            K.col(sub2symind(d0, d1, DIMS)).setTo(1.0f);
+        }
+    }
+
+    for (int i = 0; i < cov0.rows; i++)
+    {
+        const bool valid = cov0.at<double>(i, 0) > 0;
+
+        if (!valid)
+        {
+            cov1.row(i).copyTo(cov0.row(i));
+            continue;
+        }
+
+        // make a full covariance matrix
+        cv::Mat sum = cv::Mat(DIMS, DIMS, cov0.depth());
+        cv::Mat cov = cv::Mat(DIMS, DIMS, cov0.depth());
+
+        for (int d0 = 0; d0 < DIMS; d0++)
+        {
+            for (int d1 = 0; d1 < DIMS; d1++)
+            {
+                const int j = sub2symind(d0, d1, DIMS);
+
+                cov.at<double>(d0, d1) = cov0.at<double>(i, j);
+                sum.at<double>(d0, d1) = cov0.at<double>(i, j) + cov1.at<double>(i, j);
+            }
+        }
+
+        // find the inverse of sum of the i-th covariance matrices
+        cv::Mat inv, kal;
+        cv::invert(sum, inv);
+        cv::multiply(cov, inv, kal); // Kalman gain, in full matrix
+
+        cov = cov - kal * cov; // updated covariance
+
+        // fill back
+        for (int d0 = 0; d0 < DIMS; d0++)
+        {
+            for (int d1 = d0; d1 < DIMS; d1++)
+            {
+                const int j = sub2symind(d0, d1, DIMS);
+
+                K.   at<double>(i, j) = kal.at<double>(d0, d1);
+                cov0.at<double>(i, j) = cov.at<double>(d0, d1);
+            }
+        }
+    }
+
+    return K;
+}
+
+size_t MahalanobisMetric::GetCovMatCols(CovarianceType type, size_t dims)
 {
     switch (type)
     {
@@ -355,6 +520,8 @@ size_t MahalanobisMetric::GetCovMatCols() const
     case ANISOTROPIC_ORTHOGONAL: return dims;
     case ANISOTROPIC_ROTATED:    return dims * (dims + 1) / 2;
     }
+
+    return 0;
 }
 
 bool MahalanobisMetric::SetCovarianceMat(const cv::Mat& cov)
@@ -376,6 +543,8 @@ bool MahalanobisMetric::SetCovarianceMat(const cv::Mat& cov)
     m_cov.mat = cov.clone();
     m_icv.mat = cv::Mat(); // do lazy evaluation
     // m_icv.mat = GetInverseCovMat(cov);
+
+    return true;
 }
 
 cv::Mat MahalanobisMetric::GetInverseCovMat(const cv::Mat& cov) const
@@ -385,37 +554,82 @@ cv::Mat MahalanobisMetric::GetInverseCovMat(const cv::Mat& cov) const
         return 1 / cov;
     }
 
+    const int DIMS = static_cast<int>(dims);
     cv::Mat icv = cv::Mat(cov.rows, cov.cols, cov.type());
 
     for (int i = 0; i < cov.rows; i++)
     {
         // make a full covariance matrix
-        cv::Mat S2 = cv::Mat(dims, dims, icv.type()), S2_inv;
+        cv::Mat S2 = cv::Mat(DIMS, DIMS, icv.type());
 
-        for (int d0 = 0; d0 < dims; d0++)
+        for (int d0 = 0; d0 < DIMS; d0++)
         {
-            for (int d1 = 0; d1 < dims; d1++)
+            for (int d1 = 0; d1 < DIMS; d1++)
             {
-                const int j = (d0 < d1) ? d0 * dims + d1 : d1 * dims + d0;
+                const int j = sub2symind(d0, d1, DIMS);
                 S2.at<double>(d0, d1) = cov.at<double>(i, j);
             }
         }
 
         // find the inverse of i-th covariance matrix
+        cv::Mat S2_inv;
         cv::invert(S2, S2_inv);
 
         // fill back
-        for (int d0 = 0; d0 < dims; d0++)
+        for (int d0 = 0; d0 < DIMS; d0++)
         {
-            for (int d1 = 0; d1 < dims; d1++)
+            for (int d1 = d0; d1 < DIMS; d1++)
             {
-                const int j = (d0 < d1) ? d0 * dims + d1 : d1 * dims + d0;
+                const int j = sub2symind(d0, d1, DIMS);
                 icv.at<double>(i, j) = S2_inv.at<double>(d0, d1);
             }
         }
     }
 
     return icv;
+}
+
+cv::Mat MahalanobisMetric::GetFullCovMat() const
+{
+    if (m_cov.IsEmpty())
+    {
+        E_WARNING << "empty covariance matrix";
+        return cv::Mat();
+    }
+
+    if (type == ANISOTROPIC_ROTATED)
+    {
+        return m_cov.mat.clone();
+    }
+
+    const int DIMS = static_cast<int>(dims);
+    const int COLS = static_cast<int>(GetCovMatCols(ANISOTROPIC_ROTATED, dims));
+
+    cv::Mat cov = cv::Mat::zeros(m_cov.mat.rows, COLS, m_cov.mat.depth());
+
+    switch (type)
+    {
+    case ISOTROPIC:
+
+        for (int d = 0; d < DIMS; d++)
+        {
+            const int j = sub2symind(d, d, DIMS);
+            m_cov.mat.copyTo(cov.col(j));
+        }
+
+        break;
+
+    case ANISOTROPIC_ORTHOGONAL:
+
+        for (int d = 0; d < DIMS; d++)
+        {
+            const int j = sub2symind(d, d, DIMS);
+            m_cov.mat.col(d).copyTo(cov.col(j));
+        }
+
+    }
+
+    return cov;
 }
 
 Geometry MahalanobisMetric::operator() (const Geometry& x, const Geometry& y) const
@@ -475,7 +689,7 @@ Geometry MahalanobisMetric::operator() (const Geometry& x) const
             cv::add(d, dj, d);                            // d  = d + dj
         }
 
-        cv::sqrt(d, d); // d = sqrt(d)
+        cv::sqrt(d, d); // DIMS = sqrt(DIMS)
 
         break;
 
@@ -485,7 +699,7 @@ Geometry MahalanobisMetric::operator() (const Geometry& x) const
         {
             for (int j1 = 0; j1 < x.mat.cols; j1++)
             {
-                const int j = (j0 < j1) ? j0 * x.mat.cols + j1 : j1 * x.mat.cols + j0;
+                const int j = sub2symind(j0, j1, static_cast<int>(dims));
                 cv::Mat dj;
 
                 cv::multiply(x.mat.col(j0), x.mat.col(j1), dj); // dj = x_j0 .* x_j1

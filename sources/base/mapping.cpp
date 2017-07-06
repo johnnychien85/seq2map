@@ -92,16 +92,54 @@ Landmark& Map::JoinLandmark(Landmark& li, Landmark& lj)
     return li;
 }
 
-StructureEstimation::Estimate Map::UpdateStructure(const Landmark::Ptrs& u, const StructureEstimation::Estimate& g, const EuclideanTransform& pose)
+StructureEstimation::Estimate Map::UpdateStructure(const Landmark::Ptrs& u, const StructureEstimation::Estimate& g, const EuclideanTransform& ref)
 {
-    StructureEstimation::Estimate updated(Geometry::ROW_MAJOR);
+    assert(g.structure.shape == Geometry::ROW_MAJOR);
+    assert(g.structure.GetElements() == u.size());
+    assert(g.structure.GetDimension() == 3);
+
+    typedef cv::Vec6d Covar6D; // 6 coefficients of full 3D covariance matrix
+
+    cv::Mat mat = cv::Mat(u.size(), 3, g.structure.mat.depth()).reshape(3);
+    cv::Mat cov = cv::Mat(u.size(), 6, g.structure.mat.depth()).reshape(6);
 
     for (size_t k = 0; k < u.size(); k++)
     {
-        // TODO: finish the fusion
+        if (u[k] == NULL)
+        {
+            mat.at<Point3D>(k) = Point3D(0, 0, 0);
+            cov.at<Covar6D>(k) = Covar6D(0, 0, 0, 0, 0, 0);
+        }
+        else
+        {
+            const Landmark& lk = *u[k];
+            const Landmark::Covar3D ck = lk.cov;
+
+            mat.at<Point3D>(k) = lk.position;
+            cov.at<Covar6D>(k) = Covar6D(ck.xx, ck.xy, ck.xz, ck.yy, ck.yz, ck.zz);
+        }
     }
 
-    return updated;
+    StructureEstimation::Estimate g0(
+        Geometry(Geometry::ROW_MAJOR, mat),
+        Metric::Own(new MahalanobisMetric(MahalanobisMetric::ANISOTROPIC_ROTATED, 3, cov))
+    );
+
+    // state update
+    g0 += g.Transform(ref.GetInverse());
+
+    // write back to the landmarks
+    for (size_t k = 0; k < u.size(); k++)
+    {
+        if (u[k] == NULL) continue;
+
+        Landmark& lk = *u[k];
+
+        lk.position = mat.at<Point3D>(k);
+        lk.cov      = mat.at<Covar6D>(k);
+    }
+
+    return g0.Transform(ref);
 }
 
 //==[ Landmark ]==============================================================//

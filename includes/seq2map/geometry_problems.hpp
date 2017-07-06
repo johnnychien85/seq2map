@@ -264,7 +264,8 @@ namespace seq2map
     };
 
     /**
-     *
+     * Inverse pose estimator makes pose estimation by means of a desginated PoseEstimator and
+     * returns the inverse of the estimated pose.
      */
     class InversePoseEstimator : public PoseEstimator
     {
@@ -382,12 +383,62 @@ namespace seq2map
     class StructureEstimation
     {
     public:
+        /**
+         * An estimate of structure containing geometry of points and an
+         * optionally associated metric modelling the uncertainty of the
+         * estimation.
+         */
         struct Estimate
         {
+            /**
+             * Construct an empty estimate.
+             *
+             * \param shape The storage shape of the geometry.
+             */
             Estimate(Geometry::Shape shape) : structure(shape) {}
+
+            /**
+             * Construct an estimate with given geometry.
+             */
             Estimate(Geometry g) : structure(g) {}
 
+            /**
+             * Construct an estimate with given geometry and metric.
+             */
+            Estimate(Geometry g, Metric::Own& m) : structure(g), metric(m) {}
+
+            /**
+             * Retrieve subset of the estimated structure.
+             *
+             * \param indices List of indices of elements to be extracted from structure and metric.
+             * \return extracted sub-elements.
+             */
             Estimate operator[] (const Indices& indices) const;
+
+            /**
+             * Update the current estimate using a recursive Bayesian filter.
+             * In current implementation both estimates have to be associted
+             * with Mahanlanobis metrics, from which the error covariances
+             * can be retrieved to derive the sum of two Gaussian distribution.
+             */
+            Estimate& operator+= (const Estimate& estimate);
+
+            /**
+             * Merge two estimates using a recursive Bayesian filter.
+             *
+             * \param estimate Another estimate transformed to the frame of the estimate being merged with.
+             * \return fusion of two estimates.
+             */
+            Estimate operator+ (const Estimate& estimate) const;
+
+            /**
+             * Apply an Euclidean transform to the estimate.
+             *
+             * \param tform The transform to be applied to the underlying geometry and any associated metric.
+             * \return Transformed estimate.
+             */
+            Estimate Transform(const EuclideanTransform& tform) const
+            { return Estimate(tform(Geometry(structure)), metric ? metric->Transform(tform) : Metric::Own()); }
 
             Geometry structure;
             Metric::Own metric;

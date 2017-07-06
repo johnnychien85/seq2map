@@ -115,6 +115,8 @@ namespace seq2map
         static bool Reshape(Shape src, Shape dst, cv::Mat& mat, size_t rows = 0);
     };
 
+    class EuclideanTransform;
+
     /**
      * A metric measures distances between two geometry data.
      */
@@ -140,12 +142,26 @@ namespace seq2map
         virtual Geometry operator() (const Geometry& x) const = 0;
 
         /**
+        * Make a deep copy of metric.
+        * \return Pointer to the cloned metric.
+        */
+        virtual Metric::Own Clone() const = 0;
+
+        /**
          * Extraction of sub-elements.
          *
          * \param indices list of element indices.
          * \return a new metric containing extracted sub-elements.
          */
         virtual Metric::Own operator[] (const Indices& indices) const = 0;
+
+        /**
+         * Apply an Euclidean transform to the metric.
+         *
+         * \param tform The transform to be applied.
+         * \return The transformed metric.
+         */
+        virtual Metric::Own Transform(const EuclideanTransform& tform) const = 0;
     };
 
     /**
@@ -156,8 +172,9 @@ namespace seq2map
     public:
         virtual Geometry operator() (const Geometry& x, const Geometry& y) const;
         virtual Geometry operator() (const Geometry& x) const;
-
-        virtual Metric::Own operator[] (const Indices& indices) const { return Metric::Own(new EuclideanMetric()); }
+        virtual Metric::Own Clone() const { return Metric::Own(new EuclideanMetric()); }
+        virtual Metric::Own operator[] (const Indices& indices) const { return Clone(); }
+        virtual Metric::Own Transform(const EuclideanTransform& tform) const { return Clone(); }
     };
 
     /**
@@ -173,23 +190,40 @@ namespace seq2map
             ANISOTROPIC_ROTATED     ///< the matrix is M-by-D*(D+1)/2
         };
 
-        MahalanobisMetric(CovarianceType type, size_t dim)
+        MahalanobisMetric(CovarianceType type, size_t dims)
         : type(type), dims(dims), m_cov(Geometry::ROW_MAJOR), m_icv(Geometry::ROW_MAJOR) {}
+
+        MahalanobisMetric(CovarianceType type, size_t dims, const cv::Mat& cov);
 
         virtual Geometry operator() (const Geometry& x, const Geometry& y) const;
         virtual Geometry operator() (const Geometry& x) const;
 
+        virtual Metric::Own Clone() const { return Metric::Own(new MahalanobisMetric(type, dims, m_cov.mat.clone())); }
+
         virtual Metric::Own operator[] (const Indices& indices) const;
 
-        size_t GetCovMatCols() const;
+        virtual Metric::Own Transform(const EuclideanTransform& tform) const;
+
+        /**
+         * Update the current covariance by a new observation by summing up
+         * two Gaussian distributions.
+         *
+         * \return Kalman gain.
+         */
+        cv::Mat Update(const MahalanobisMetric& metric);
+
+        inline  size_t GetCovMatCols() const { return GetCovMatCols(type, dims); }
         cv::Mat GetInverseCovMat(const cv::Mat& cov) const;
+        cv::Mat GetFullCovMat() const;
         bool SetCovarianceMat(const cv::Mat& cov);
+
+        static size_t GetCovMatCols(CovarianceType type, size_t dims);
 
         const CovarianceType type; ///< shape of covariance matrix
         const size_t dims;         ///< dimensionality
 
     private:
-        Geometry m_cov; ///< error covariance coefficients
+        Geometry m_cov;         ///< error covariance coefficients
         mutable Geometry m_icv; ///< inverse covariance coefficients, automatically calculated from cov
     };
 

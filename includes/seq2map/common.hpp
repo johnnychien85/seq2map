@@ -66,6 +66,7 @@ namespace seq2map
     String mat2string(const cv::Mat& x, const String& name = "", size_t precision = 6);
     bool mat2raw(const cv::Mat& im, const Path& path);
     bool checkCameraMatrix(const cv::Mat& K);
+    int sub2symind(int i, int j, int n);
 
     // file system
     bool dirExists(const Path& path);

@@ -35,6 +35,14 @@ namespace seq2map
         return degree * CV_PI / 180.0f;
     }
 
+    int sub2symind(int i, int j, int n)
+    {
+        assert(i < n && j < n);
+
+        if (i < j) return i * n - (i - 1) * i / 2 + j - i;
+        else       return j * n - (j - 1) * j / 2 + i - j;
+    }
+
     double rms(const cv::Mat& e)
     {
         size_t n = e.total();

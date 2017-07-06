@@ -44,6 +44,21 @@ namespace seq2map
         {
             Covar3D() : xx(0), xy(0), xz(0), yy(0), yz(0), zz(0) {}
 
+            Covar3D(const cv::Vec6d& cov)
+            : xx(cov[0]), xy(cov[1]), xz(cov[2]), yy(cov[3]), yz(cov[4]), zz(cov[5]) {}
+
+            Covar3D& operator= (const cv::Vec6d& cov)
+            {
+                xx = cov[0];
+                xy = cov[1];
+                xz = cov[2];
+                yy = cov[3];
+                yz = cov[4];
+                zz = cov[5];
+
+                return *this;
+            }
+
             double xx;
             double xy;
             double xz;
@@ -114,7 +129,7 @@ namespace seq2map
          * \param pose transformation to the frame of g
          * \return updated landmark structure in the frame of g
          */
-        StructureEstimation::Estimate UpdateStructure(const Landmark::Ptrs& u, const StructureEstimation::Estimate& g, const EuclideanTransform& pose);
+        StructureEstimation::Estimate UpdateStructure(const Landmark::Ptrs& u, const StructureEstimation::Estimate& g, const EuclideanTransform& ref);
 
         inline Landmark& GetLandmark(size_t index) { return Dim0(index); }
         inline Frame&    GetFrame   (size_t index) { return Dim1(index); }

@@ -762,6 +762,80 @@ StructureEstimation::Estimate StructureEstimation::Estimate::operator[] (const I
     return estimate;
 }
 
+StructureEstimation::Estimate StructureEstimation::Estimate::operator+ (const Estimate& estimate) const
+{
+    Estimate clone(Geometry(structure), metric ? metric->Clone() : Metric::Own());
+    return clone += estimate;
+}
+
+StructureEstimation::Estimate& StructureEstimation::Estimate::operator+= (const Estimate& estimate)
+{
+    boost::shared_ptr</***/ MahalanobisMetric> m0 = boost::dynamic_pointer_cast</***/ MahalanobisMetric, Metric>(metric);
+    boost::shared_ptr<const MahalanobisMetric> m1 = boost::dynamic_pointer_cast<const MahalanobisMetric, Metric>(estimate.metric);
+
+    if (!m0 || !m1)
+    {
+        E_ERROR << "update failed due to missing mahalanobis metric(s)";
+        return *this;
+    }
+
+    Geometry g0  = structure.Reshape(Geometry::ROW_MAJOR);
+    Geometry g01 = g0 - estimate.structure;
+
+    if (g01.IsEmpty())
+    {
+        E_WARNING << "the subtraction of structure geometry returns a null entity";
+        return *this;
+    }
+    
+    cv::Mat K = m0->Update(*m1);
+
+    if (K.empty())
+    {
+        E_ERROR << "error updating metric, invalid Kalman gain returned";
+        return *this;
+    }
+
+    switch (m0->type)
+    {
+    case MahalanobisMetric::ISOTROPIC:
+
+        for (int j = 0; j < g0.mat.cols; j++)
+        {
+            g0.mat.col(j) += K.mul(g01.mat.col(j));
+        }
+
+        break;
+
+    case MahalanobisMetric::ANISOTROPIC_ORTHOGONAL:
+
+        for (int j = 0; j < g0.mat.cols; j++)
+        {
+            g0.mat.col(j) += K.col(j).mul(g01.mat.col(j));
+        }
+
+        break;
+
+    case MahalanobisMetric::ANISOTROPIC_ROTATED:
+
+        for (int j0 = 0; j0 < g0.mat.cols; j0++)
+        {
+            for (int j1 = 0; j1 < g01.mat.cols; j1++)
+            {
+                const int j = sub2symind(j0, j1, m0->dims);
+                g0.mat.col(j0) += K.col(j).mul(g01.mat.col(j1));
+            }
+        }
+
+        break;
+    }
+
+    // just in case : structure.shape == Geometry::COL_MAJOR
+    structure = g0;
+
+    return *this;
+}
+
 //==[ OptimalTriangulation ]==================================================//
 
 StructureEstimation::Estimate OptimalTriangulation::operator() (const GeometricMapping& m) const

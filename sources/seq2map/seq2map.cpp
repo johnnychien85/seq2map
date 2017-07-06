@@ -67,12 +67,12 @@ bool MyApp::Execute()
     FeatureStore::ConstOwn f0 = seq.GetFeatureStore(0);
     FeatureStore::ConstOwn f1 = seq.GetFeatureStore(1);
 
-    FeatureTracking::FramedStore f00(f0, 0), f01(f0, 1), f10(f1, 0), f11(f1, 1);
+    FeatureTracker::FramedStore f00(f0, 0), f01(f0, 1), f10(f1, 0), f11(f1, 1);
 
-    mapper.AddTracking(FeatureTracking(f00, f01));
-    mapper.AddTracking(FeatureTracking(f01, f10));
-    mapper.AddTracking(FeatureTracking(f10, f11));
-    mapper.AddTracking(FeatureTracking(f11, f00));
+    mapper.AddTracking(FeatureTracker(f00, f01));
+    mapper.AddTracking(FeatureTracker(f01, f10));
+    mapper.AddTracking(FeatureTracker(f10, f11));
+    mapper.AddTracking(FeatureTracker(f11, f00));
     
     if (!mapper.SLAM(map, 0, seq.GetFrames()))
     {
