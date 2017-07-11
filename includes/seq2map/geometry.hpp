@@ -116,6 +116,7 @@ namespace seq2map
     };
 
     class EuclideanTransform;
+    class MahalanobisMetric;
 
     /**
      * A metric measures distances between two geometry data.
@@ -131,7 +132,7 @@ namespace seq2map
          * \param second geometry data that have the same dimensionality of the first one.
          * \return The returned geometry has the same number of elements as x and y, and the dimension is always one.
          */
-        virtual Geometry operator() (const Geometry& x, const Geometry& y) const = 0;
+        virtual Geometry operator() (const Geometry& x, const Geometry& y) const { return (*this)(x - y); }
 
         /**
          * Compute norm of a geometry data (i.e. the distances to origin)
@@ -151,9 +152,17 @@ namespace seq2map
          * Extraction of sub-elements.
          *
          * \param indices list of element indices.
-         * \return a new metric containing extracted sub-elements.
+         * \return A new metric containing extracted sub-elements.
          */
         virtual Metric::Own operator[] (const Indices& indices) const = 0;
+
+        /**
+         * Combine two metrices.
+         *
+         * \param metric Metric to be combined.
+         * \return A new metric obtained from two metrices.
+         */
+        virtual Metric::Own operator+ (const Metric& metric) const = 0;
 
         /**
          * Apply an Euclidean transform to the metric.
@@ -162,6 +171,21 @@ namespace seq2map
          * \return The transformed metric.
          */
         virtual Metric::Own Transform(const EuclideanTransform& tform) const = 0;
+
+        /**
+         *
+         */
+        virtual boost::shared_ptr<MahalanobisMetric> ToMahalanobis(bool& native) = 0;
+
+        /**
+         *
+         */
+        virtual boost::shared_ptr<const MahalanobisMetric> ToMahalanobis() const = 0;
+
+        /**
+         *
+         */
+        virtual bool FromMahalanobis(const MahalanobisMetric& metric) = 0;
     };
 
     /**
@@ -170,11 +194,43 @@ namespace seq2map
     class EuclideanMetric : public Metric
     {
     public:
-        virtual Geometry operator() (const Geometry& x, const Geometry& y) const;
+        EuclideanMetric(double scale = 1.0f) : scale(scale) {}
+
         virtual Geometry operator() (const Geometry& x) const;
-        virtual Metric::Own Clone() const { return Metric::Own(new EuclideanMetric()); }
+        virtual Metric::Own Clone() const { return Metric::Own(new EuclideanMetric(scale)); }
         virtual Metric::Own operator[] (const Indices& indices) const { return Clone(); }
+        virtual Metric::Own operator+ (const Metric& metric) const;
         virtual Metric::Own Transform(const EuclideanTransform& tform) const { return Clone(); }
+        virtual boost::shared_ptr<MahalanobisMetric> ToMahalanobis(bool& native) { return 0; }
+        virtual boost::shared_ptr<const MahalanobisMetric> ToMahalanobis() const { return 0; }
+        virtual bool FromMahalanobis(const MahalanobisMetric& metric) { return false; }
+
+        double scale;
+    };
+
+    /**
+     * Euclidean distance with per-element weightings.
+     */
+    class WeightedEuclideanMetric : public EuclideanMetric
+    {
+    public:
+        WeightedEuclideanMetric(cv::Mat weights, double scale = 1.0f);
+
+        virtual Geometry operator() (const Geometry& x) const;
+        virtual Metric::Own Clone() const { return Metric::Own(new WeightedEuclideanMetric(m_weights.clone(), scale)); }
+        virtual Metric::Own operator[] (const Indices& indices) const;
+        virtual Metric::Own operator+ (const Metric& metric) const;
+
+        virtual boost::shared_ptr<MahalanobisMetric> ToMahalanobis(bool& native);
+        virtual boost::shared_ptr<const MahalanobisMetric> ToMahalanobis() const;
+        virtual bool FromMahalanobis(const MahalanobisMetric& metric);
+
+        const cv::Mat& GetWeights() const { return m_weights; }
+
+        bool bayesian;
+
+    private:
+        cv::Mat m_weights;
     };
 
     /**
@@ -195,14 +251,21 @@ namespace seq2map
 
         MahalanobisMetric(CovarianceType type, size_t dims, const cv::Mat& cov);
 
-        virtual Geometry operator() (const Geometry& x, const Geometry& y) const;
         virtual Geometry operator() (const Geometry& x) const;
 
         virtual Metric::Own Clone() const { return Metric::Own(new MahalanobisMetric(type, dims, m_cov.mat.clone())); }
 
         virtual Metric::Own operator[] (const Indices& indices) const;
 
+        virtual Metric::Own operator+ (const Metric& metric) const;
+
         virtual Metric::Own Transform(const EuclideanTransform& tform) const;
+
+        virtual Metric::Own Reduce() const;
+
+        virtual boost::shared_ptr<MahalanobisMetric> ToMahalanobis(bool& native);
+        virtual boost::shared_ptr<const MahalanobisMetric> ToMahalanobis() const;
+        virtual bool FromMahalanobis(const MahalanobisMetric& metric);
 
         /**
          * Update the current covariance by a new observation by summing up
@@ -216,6 +279,7 @@ namespace seq2map
         cv::Mat GetInverseCovMat(const cv::Mat& cov) const;
         cv::Mat GetFullCovMat() const;
         bool SetCovarianceMat(const cv::Mat& cov);
+        inline const Geometry& GetCovariance() const { return m_cov; };
 
         static size_t GetCovMatCols(CovarianceType type, size_t dims);
 
@@ -225,6 +289,26 @@ namespace seq2map
     private:
         Geometry m_cov;         ///< error covariance coefficients
         mutable Geometry m_icv; ///< inverse covariance coefficients, automatically calculated from cov
+    };
+
+    class DualMetric : public Metric
+    {
+    public:
+        DualMetric(const Metric::ConstOwn& m0, Metric::ConstOwn m1) : m0(m0), m1(m1) {}
+
+        virtual Geometry operator() (const Geometry& x) const { return (*(*m0 + *m1))(x); }
+        virtual Metric::Own Clone() const { return Metric::Own(new DualMetric(m0->Clone(), m1->Clone())); }
+        virtual Metric::Own operator[] (const Indices& indices) const { return Metric::Own(new DualMetric((*m0)[indices], (*m1)[indices])); }
+        virtual Metric::Own operator+  (const Metric& metric)   const { return Metric::Own(new DualMetric((*m0) + metric, (*m1) + metric)); }
+
+        virtual Metric::Own Transform(const EuclideanTransform& tform) const { return Metric::Own(new DualMetric(m0->Transform(tform), m1)); }
+
+        virtual boost::shared_ptr<MahalanobisMetric> ToMahalanobis(bool& native) { return 0; }
+        virtual boost::shared_ptr<const MahalanobisMetric> ToMahalanobis() const { return 0; }
+        virtual bool FromMahalanobis(const MahalanobisMetric& metric) { return false; }
+
+        const Metric::ConstOwn m0;
+        const Metric::ConstOwn m1;
     };
 
     /**
@@ -289,6 +373,7 @@ namespace seq2map
 
         typedef Builder<Point2D, Point2D> ImageToImageBuilder;
         typedef Builder<Point3D, Point2D> WorldToImageBuilder;
+        typedef Builder<Point3D, Point3D> WorldToWorldBuilder;
 
         /**
          * Constructor

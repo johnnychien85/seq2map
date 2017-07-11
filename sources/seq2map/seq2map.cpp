@@ -2,6 +2,107 @@
 
 using namespace seq2map;
 
+class Mapper
+{
+public:
+    struct Capability
+    {
+        bool motion; // ego-motion estimation
+        bool metric; // metric reconstruction
+        bool dense;  // dense or semi-dense reconstruction
+    };
+
+    virtual Capability GetCapability() const = 0;
+    virtual bool SLAM(Map& map, size_t t0, size_t tn) = 0;
+};
+
+/**
+* Implementation of a generalised multi-frame feature integration algorithm
+* based on the paper "Visual Odometry by Multi-frame Feature Integration"
+*/
+class MultiFrameFeatureIntegration : public Mapper
+{
+public:
+    virtual Capability GetCapability() const;
+    virtual bool SLAM(Map& map, size_t t0, size_t tn);
+
+    bool AddTracking(const FeatureTracker& tracking);
+
+private:
+    std::vector<FeatureTracker> m_tracking;
+    std::vector<DisparityStore::ConstOwn> m_dispStores;
+};
+
+// class OrbSLAM : public Mapper {
+// ...
+// };
+//
+// class LargeScaleDenseSLAM : public Mapper {
+// ...
+// };
+
+//==[ MultiFrameFeatureIntegration ]==========================================//
+
+bool MultiFrameFeatureIntegration::AddTracking(const FeatureTracker& matching)
+{
+    if (!matching.IsOkay())
+    {
+        E_WARNING << "invalid matching " << matching.ToString();
+        return false;
+    }
+
+    BOOST_FOREACH (const FeatureTracker& m, m_tracking)
+    {
+        bool duplicated = (m.src == matching.src) && (m.dst == matching.dst);
+
+        if (duplicated)
+        {
+            E_WARNING << "duplicated matching " << matching.ToString();
+            return false;
+        }
+    }
+
+    m_tracking.push_back(matching);
+    return true;
+}
+
+Mapper::Capability MultiFrameFeatureIntegration::GetCapability() const
+{
+    Capability capability;
+
+    capability.motion = false;
+    capability.metric = m_dispStores.size() > 0;
+    capability.dense = false;
+
+    BOOST_FOREACH (const FeatureTracker& m, m_tracking)
+    {
+        capability.motion |= !m.IsSynchronised();
+        capability.metric |= m.IsCrossed();
+    }
+
+    return capability;
+}
+
+bool MultiFrameFeatureIntegration::SLAM(Map& map, size_t t0, size_t tn)
+{
+    for (size_t t = t0; t < tn; t++)
+    {
+        BOOST_FOREACH (FeatureTracker& f, m_tracking)
+        {
+            if (f.InRange(t, tn) && !f(map, t))
+            {
+                E_ERROR << "error matching " << f.ToString();
+                return false;
+            }
+        }
+
+
+    }
+
+    return true;
+}
+
+
 class MyApp : public App
 {
 public:

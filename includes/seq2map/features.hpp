@@ -257,10 +257,10 @@ namespace seq2map
          */
         FeatureMatcher(bool exhaustive = true, bool symmetric = true, float maxRatio = 0.6f, bool useGpu = true)
         : m_exhaustive(exhaustive), m_symmetric(symmetric), m_maxRatio(maxRatio), m_useGpu(useGpu),
-          m_descMatchingMetre("Descriptors Matching", "features/s"),
-          m_ratioTestMetre   ("Ratio Test",           "matches/s"),
-          m_symmetryTestMetre("Symmetry Test",        "matches/s"),
-          m_filteringMetre   ("Filtering",            "matches/s") {}
+          m_descMatchingMetre("DMatching",     "features/s"),
+          m_ratioTestMetre   ("Ratio Test",    "matches/s"),
+          m_symmetryTestMetre("Symmetry Test", "matches/s"),
+          m_filteringMetre   ("Filtering",     "matches/s") {}
         
         /**
          *

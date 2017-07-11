@@ -305,16 +305,11 @@ Geometry Geometry::operator[] (const Indices& indices) const
 
 //==[ EuclideanMetric ]=======================================================//
 
-Geometry EuclideanMetric::operator() (const Geometry& x, const Geometry& y) const
-{
-    return (*this)(x - y);
-}
-
 Geometry EuclideanMetric::operator() (const Geometry& x) const
 {
     if (x.GetDimension() == 1)
     {
-        return Geometry(x.shape, cv::abs(x.mat));
+        return Geometry(x.shape, scale * cv::abs(x.mat));
     }
 
     if (x.shape != Geometry::ROW_MAJOR)
@@ -323,18 +318,137 @@ Geometry EuclideanMetric::operator() (const Geometry& x) const
     }
 
     cv::Mat d = cv::Mat::zeros(x.mat.rows, 1, x.mat.type());
+    const double s2 = scale * scale;
 
     // work only for row-major shape
     for (int j = 0; j < x.mat.cols; j++)
     {
         cv::Mat dj;
-        cv::multiply(x.mat.col(j), x.mat.col(j), dj); // dj = dj .^ 2
-        cv::add(d, dj, d);                            // DIMS  = DIMS + dj
+        cv::multiply(x.mat.col(j), x.mat.col(j), dj, s2); // dj = dj .^ 2
+        cv::add(d, dj, d);                                // d  = d + dj
     }
 
     cv::sqrt(d, d); // DIMS = sqrt(DIMS)
 
     return Geometry(x.shape, d);
+}
+
+Metric::Own EuclideanMetric::operator+ (const Metric& metric) const
+{
+    const EuclideanMetric* m = dynamic_cast<const EuclideanMetric*>(&metric);
+
+    if (!m)
+    {
+        E_ERROR << "incompatible metric";
+        return Metric::Own();
+    }
+
+    return Metric::Own(new EuclideanMetric(0.5f * (scale + m->scale)));
+}
+
+//==[ WeightedEuclideanMetric ]===============================================//
+
+WeightedEuclideanMetric::WeightedEuclideanMetric(cv::Mat weights, double scale)
+: bayesian(true), m_weights(weights.cols == 1 && weights.channels() == 1 ? weights : cv::Mat()), EuclideanMetric(scale)
+{
+    if (m_weights.empty())
+    {
+        E_ERROR << "weights has to be a non-empty row vector, while the given matrix is "
+            << weights.rows << "x" << weights.cols << "x" << weights.channels();
+
+        throw std::exception("!!");
+    }
+}
+
+Geometry WeightedEuclideanMetric::operator() (const Geometry& x) const
+{
+    Geometry d(Geometry::ROW_MAJOR);
+
+    if (m_weights.rows != x.GetElements())
+    {
+        E_ERROR << "inconsistent geometry weightings, the given geometry has "
+                << x.GetElements() << " element(s) while there are "
+                << m_weights.rows  << " weighting term(s)";
+
+        return d;
+    }
+
+    d = EuclideanMetric::operator()(x);
+    cv::multiply(d.mat, m_weights, d.mat, 1.0f, m_weights.type());
+
+    return d.Reshape(x.shape);
+}
+
+Metric::Own WeightedEuclideanMetric::operator[] (const Indices& indices) const
+{
+    cv::Mat w = cv::Mat(indices.size(), 1, m_weights.depth());
+
+    size_t dst = 0;
+    BOOST_FOREACH (size_t src, indices)
+    {
+        m_weights.row(src).copyTo(w.row(dst++));
+    }
+
+    return Metric::Own(new WeightedEuclideanMetric(w, scale));
+}
+
+Metric::Own WeightedEuclideanMetric::operator+ (const Metric& metric) const
+{
+    const WeightedEuclideanMetric* m = dynamic_cast<const WeightedEuclideanMetric*>(&metric);
+
+    if (!m)
+    {
+        E_ERROR << "incompatible metric";
+        return Metric::Own();
+    }
+
+    if (m_weights.rows != m->m_weights.rows)
+    {
+        E_ERROR << "inconsistent weightings";
+        return Metric::Own();
+    }
+
+    const cv::Mat& w0 = m_weights;
+    const cv::Mat& w1 = m->m_weights;
+
+    cv::Mat weights = bayesian ? w0.mul(w1) / (w0 + w1) : 0.5f * (w0 + w1);
+
+    return Metric::Own(new WeightedEuclideanMetric(weights, 0.5f * (scale + m->scale)));
+}
+
+boost::shared_ptr<MahalanobisMetric> WeightedEuclideanMetric::ToMahalanobis(bool& native)
+{
+    cv::Mat w = m_weights;
+    cv::Mat cov = 1 / w.mul(w);
+
+    for (int i = 0; i < w.rows; i++)
+    {
+        if (w.at<double>(i) <= 0) cov.at<double>(i) = 0;
+    }
+
+    native = false;
+    return boost::shared_ptr<MahalanobisMetric>(new MahalanobisMetric(MahalanobisMetric::ISOTROPIC, 3, cov));
+}
+
+boost::shared_ptr<const MahalanobisMetric> WeightedEuclideanMetric::ToMahalanobis() const
+{
+    bool native;
+    return Clone()->ToMahalanobis(native);
+}
+
+bool WeightedEuclideanMetric::FromMahalanobis(const MahalanobisMetric& metric)
+{
+    if (metric.type != MahalanobisMetric::ISOTROPIC)
+    {
+        return false;
+    }
+
+    cv::Mat w;
+    
+    cv::sqrt(metric.GetCovariance().mat, w);
+    m_weights = 1 / w;
+
+    return true;
 }
 
 //==[ MahalanobisMetric ]=====================================================//
@@ -356,6 +470,27 @@ Metric::Own MahalanobisMetric::operator[] (const Indices& indices) const
     return Metric::Own(metric);
 }
 
+Metric::Own MahalanobisMetric::operator+ (const Metric& metric) const
+{
+    const MahalanobisMetric* m = dynamic_cast<const MahalanobisMetric*>(&metric);
+
+    if (!m)
+    {
+        E_ERROR << "incompatible metric";
+        return Metric::Own();
+    }
+
+    if (!m->m_cov.IsConsistent(m_cov))
+    {
+        E_ERROR << "inconsistent covariance";
+        return Metric::Own();
+    }
+
+    cv::Mat cov = 0.5f * (m_cov.mat + m->m_cov.mat);
+
+    return Metric::Own(new MahalanobisMetric(type, dims, cov));
+}
+
 Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform) const
 {
     if (dims != 3)
@@ -369,12 +504,13 @@ Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform) const
     MahalanobisMetric* metric = new MahalanobisMetric(ANISOTROPIC_ROTATED, DIMS);
     cv::Mat cov = GetFullCovMat();
     cv::Mat R = tform.GetRotation().ToMatrix();
-    cv::Mat Rt = R.t();
 
     if (R.depth() != cov.depth())
     {
         R.convertTo(R, cov.depth());
     }
+
+    cv::Mat Rt = R.t();
 
     for (int i = 0; i < cov.rows; i++)
     {
@@ -382,7 +518,7 @@ Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform) const
 
         for (int d0 = 0; d0 < DIMS; d0++)
         {
-            for (int d1 = d0; d1 < DIMS; d1++)
+            for (int d1 = 0; d1 < DIMS; d1++)
             {
                 const int j = sub2symind(d0, d1, DIMS);
                 Ci.at<double>(d0, d1) = cov.at<double>(i, j);
@@ -404,6 +540,64 @@ Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform) const
     metric->SetCovarianceMat(cov);
 
     return Metric::Own(metric);
+}
+
+Metric::Own MahalanobisMetric::Reduce() const
+{
+    cv::Mat cov = cv::Mat::zeros(m_cov.mat.rows, 1, m_cov.mat.depth());
+    const int DIMS = static_cast<int>(dims);
+
+    switch (type)
+    {
+    case ISOTROPIC:
+
+        for (int j = 0; j <  m_cov.mat.cols; j++)
+        {
+            cv::Mat sqr;
+            cv::multiply(m_cov.mat, m_cov.mat, sqr);
+            cv::add(cov, sqr, cov);
+        }
+
+        break;
+
+    case ANISOTROPIC_ORTHOGONAL:
+
+        for (int j = 0; j < m_cov.mat.cols; j++)
+        {
+            cv::Mat sqr;
+            cv::multiply(m_cov.mat.col(j), m_cov.mat.col(j), sqr);
+            cv::add(cov, sqr, cov);
+        }
+        break;
+
+    case ANISOTROPIC_ROTATED:
+
+        for (int i = 0; i < cov.rows; i++)
+        {
+            cv::Mat Ci = cv::Mat(DIMS, DIMS, cov.type());
+
+            for (int d0 = 0; d0 < DIMS; d0++)
+            {
+                for (int d1 = 0; d1 < DIMS; d1++)
+                {
+                    const int j = sub2symind(d0, d1, DIMS);
+                    Ci.at<double>(d0, d1) = m_cov.mat.at<double>(i, j);
+                }
+            }
+
+            //cov.at<double>(i, 0) = cv::determinant(Ci);
+            cov.at<double>(i, 0) = std::sqrt(cv::trace(Ci)[0]);
+        }
+
+        break;
+    }
+
+    cv::Mat mu, sg;
+    cv::meanStdDev(cov, mu, sg);
+
+    cv::Mat icv = 0.1f * sg.at<double>(0, 0) / cov;
+
+    return Metric::Own(new WeightedEuclideanMetric(icv));
 }
 
 cv::Mat MahalanobisMetric::Update(const MahalanobisMetric& metric)
@@ -434,18 +628,29 @@ cv::Mat MahalanobisMetric::Update(const MahalanobisMetric& metric)
         {
             for (int j = 0; j < cov0.cols; j++)
             {
-                cv::Mat delta;
-                cv::multiply(cov0.col(j), K, delta);
-                cv::subtract(cov0, delta, cov0);
+                cv::Mat sub;
+                cv::multiply(cov0.col(j), K, sub);
+                cv::subtract(cov0.col(j), sub, cov0.col(j)); // C0 = C0 - K * C0
             }
         }
         else
         {
             for (int j = 0; j < cov0.cols; j++)
             {
-                cv::Mat delta;
-                cv::multiply(cov0.col(j), K.col(j), delta);
-                cv::subtract(cov0, delta, cov0);
+                cv::Mat sub;
+                cv::multiply(cov0.col(j), K.col(j), sub);
+                cv::subtract(cov0.col(j), sub, cov0.col(j)); // C0 = C0 - K * C0
+            }
+        }
+
+        for (int i = 0; i < K.rows; i++)
+        {
+            double& Ki = K.at<double>(i);
+
+            if (Ki <= 0 || !isfinite(Ki))
+            {
+                Ki = 1.0f;
+                cov1.row(i).copyTo(cov0.row(i));
             }
         }
 
@@ -456,18 +661,17 @@ cv::Mat MahalanobisMetric::Update(const MahalanobisMetric& metric)
     K = cv::Mat::zeros(cov0.rows, cov0.cols, cov0.depth());
 
     // initialise Kalman gain with the identity matrix
-    for (int d0 = 0; d0 < DIMS; d0++)
+    for (int d = 0; d < DIMS; d++)
     {
-        for (int d1 = 0; d1 < DIMS; d1++)
-        {
-            K.col(sub2symind(d0, d1, DIMS)).setTo(1.0f);
-        }
+        K.col(sub2symind(d, d, DIMS)).setTo(1.0f);
     }
 
     for (int i = 0; i < cov0.rows; i++)
     {
+        // check the validity using the first covariance coefficient C_{00}
         const bool valid = cov0.at<double>(i, 0) > 0;
 
+        // use the covariance from the given metric as the initial state
         if (!valid)
         {
             cov1.row(i).copyTo(cov0.row(i));
@@ -483,20 +687,22 @@ cv::Mat MahalanobisMetric::Update(const MahalanobisMetric& metric)
             for (int d1 = 0; d1 < DIMS; d1++)
             {
                 const int j = sub2symind(d0, d1, DIMS);
+                const double C0_ij = cov0.at<double>(i, j);
 
-                cov.at<double>(d0, d1) = cov0.at<double>(i, j);
-                sum.at<double>(d0, d1) = cov0.at<double>(i, j) + cov1.at<double>(i, j);
+                cov.at<double>(d0, d1) = C0_ij;
+                sum.at<double>(d0, d1) = C0_ij + cov1.at<double>(i, j);
             }
         }
 
         // find the inverse of sum of the i-th covariance matrices
-        cv::Mat inv, kal;
+        cv::Mat inv; // inverse of C0 + C1
+        cv::Mat kal; // Kalman gain, in full matrix
         cv::invert(sum, inv);
-        cv::multiply(cov, inv, kal); // Kalman gain, in full matrix
 
-        cov = cov - kal * cov; // updated covariance
+        kal = cov * inv;       // K = C0 * inv(C0 + C1)
+        cov = cov - kal * cov; // updated covariance: C0' = C0 - K * C0;
 
-        // fill back
+        // fill back the upper triangle parts
         for (int d0 = 0; d0 < DIMS; d0++)
         {
             for (int d1 = d0; d1 < DIMS; d1++)
@@ -528,7 +734,7 @@ bool MahalanobisMetric::SetCovarianceMat(const cv::Mat& cov)
 {
     if (cov.channels() != 1)
     {
-        E_WARNING << "covariance matrix has to be single-channel";
+        E_WARNING << "covariance matrix has to be single-channel (d=" << cov.channels() << ")";
         return false;
     }
 
@@ -573,7 +779,7 @@ cv::Mat MahalanobisMetric::GetInverseCovMat(const cv::Mat& cov) const
 
         // find the inverse of i-th covariance matrix
         cv::Mat S2_inv;
-        cv::invert(S2, S2_inv);
+        double cond = cv::invert(S2, S2_inv, cv::DECOMP_SVD);
 
         // fill back
         for (int d0 = 0; d0 < DIMS; d0++)
@@ -632,9 +838,27 @@ cv::Mat MahalanobisMetric::GetFullCovMat() const
     return cov;
 }
 
-Geometry MahalanobisMetric::operator() (const Geometry& x, const Geometry& y) const
+boost::shared_ptr<MahalanobisMetric> MahalanobisMetric::ToMahalanobis(bool& native)
 {
-    return (*this)(x - y);
+    native = true;
+    return boost::static_pointer_cast<MahalanobisMetric, Metric>(shared_from_this());
+}
+
+boost::shared_ptr<const MahalanobisMetric> MahalanobisMetric::ToMahalanobis() const
+{
+    return boost::static_pointer_cast<MahalanobisMetric, Metric>(Clone());
+}
+
+bool MahalanobisMetric::FromMahalanobis(const MahalanobisMetric& metric)
+{
+    if (metric.type != this->type || metric.dims != this->dims)
+    {
+        return false;
+    }
+
+    SetCovarianceMat(metric.GetCovariance().mat);
+
+    return true;
 }
 
 Geometry MahalanobisMetric::operator() (const Geometry& x) const
@@ -721,7 +945,7 @@ Geometry MahalanobisMetric::operator() (const Geometry& x) const
 bool GeometricMapping::IsConsistent() const
 {
     const size_t n = src.GetElements();
-    return (n == dst.GetElements()) && (indices.empty() || indices.size() == n);;
+    return (n > 0 && n == dst.GetElements()) && (indices.empty() || indices.size() == n);;
 }
 
 bool GeometricMapping::Check(size_t d0, size_t d1) const
@@ -752,7 +976,7 @@ GeometricMapping GeometricMapping::operator[] (const Indices& idx) const
     GeometricMapping mapping;
     mapping.src = src[idx];
     mapping.dst = dst[idx];
-    mapping.metric = metric;
+    mapping.metric = metric ? (*metric)[idx] : metric;
 
     if (!indices.empty())
     {

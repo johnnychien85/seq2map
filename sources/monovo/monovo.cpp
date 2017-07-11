@@ -15,10 +15,33 @@ protected:
     virtual bool Execute();
 
 private:
+    struct AlignmentOptions
+    {
+        AlignmentOptions()
+        : forwardProj (true ),
+          backwardProj(false),
+          epipolar    (false),
+          photometric (false),
+          rigid       (false)
+        {}
+
+        bool forwardProj;
+        bool backwardProj;
+        bool epipolar;
+        bool photometric;
+        bool rigid;
+    };
+
     String m_seqPath;
     String m_outPath;
     size_t m_kptsStoreId;
-    size_t m_dispStoreId;
+    int    m_dispStoreId;
+
+    Sequence m_seq;
+    FeatureStore::ConstOwn   m_featureStore;
+    DisparityStore::ConstOwn m_disparityStore;
+
+    AlignmentOptions m_alignment;
 };
 
 void MyApp::ShowHelp(const Options& o) const
@@ -34,8 +57,12 @@ void MyApp::SetOptions(Options& o, Options& h, Positional& p)
     namespace po = boost::program_options;
 
     o.add_options()
-        ("f", po::value<size_t>(&m_kptsStoreId)->default_value(0),  "source feature store")
-        ("d", po::value<size_t>(&m_kptsStoreId)->default_value(-1), "optional disparity store");
+        ("feature-store,f",   po::value<size_t>(&m_kptsStoreId)->default_value(0),  "source feature store")
+        ("disparity-store,d", po::value<int>   (&m_dispStoreId)->default_value(-1), "optional disparity store, set to -1 to disable use of disparity maps.")
+        ("back-projection",   po::bool_switch  (&m_alignment.backwardProj)->default_value(false), "enable backward-projection ego-motion estimation in addition to the forward-projection model.")
+        ("epipolar",          po::bool_switch  (&m_alignment.epipolar    )->default_value(false), "enable epipolar objective for ego-motion estimation.")
+        ("rigid",             po::bool_switch  (&m_alignment.rigid       )->default_value(false), "enable rigid alignment model for ego-motion estimation.")
+        ("photometric",       po::bool_switch  (&m_alignment.photometric )->default_value(false), "enable photometric alignment model for ego-motion estimation.");
 
     h.add_options()
         ("seq", po::value<String>(&m_seqPath)->default_value(""), "Path to the input sequence.")
@@ -52,21 +79,21 @@ bool MyApp::Init()
         return false;
     }
 
-    return true;
-}
+    if (m_outPath.empty())
+    {
+        E_ERROR << "missing output path";
+        return false;
+    }
 
-bool MyApp::Execute()
-{
-    Sequence seq;
-
-    if (!seq.Restore(m_seqPath))
+    if (!m_seq.Restore(m_seqPath))
     {
         E_ERROR << "error restoring sequence from " << m_seqPath;
         return false;
     }
 
-    FeatureStore::ConstOwn   F = seq.GetFeatureStore(m_kptsStoreId);
-    DisparityStore::ConstOwn D = seq.GetDisparityStore(m_dispStoreId);
+    FeatureStore::ConstOwn   F = m_seq.GetFeatureStore(m_kptsStoreId);
+    DisparityStore::ConstOwn D = m_dispStoreId > -1 ? m_seq.GetDisparityStore(static_cast<size_t>(m_dispStoreId)) : DisparityStore::ConstOwn();
+
     Camera::ConstOwn cam = F ? F->GetCamera() : Camera::ConstOwn();
     RectifiedStereo::ConstOwn stereo = D ? D->GetStereoPair() : RectifiedStereo::ConstOwn();
 
@@ -82,20 +109,37 @@ bool MyApp::Execute()
         return false;
     }
 
-    if (!D)
+    if (m_dispStoreId > -1 && !D)
     {
-        E_INFO << "no disparity store available, the estimated motion will have no absolute scale";
+        E_ERROR << "missing disparity store";
+        return false;
     }
     else if (!stereo)
     {
         E_ERROR << "missing stereo camera";
         return false;
-     }
+    }
     else if (stereo->GetPrimaryCamera() != cam)
     {
         E_ERROR << "the primary camera of " << stereo->ToString() << " has to be cam " << cam->GetIndex();
         return false;
     }
+
+    if (!D)
+    {
+        E_INFO << "no disparity store available, the estimated motion will have no absolute scale";
+    }
+
+    m_featureStore = F;
+    m_disparityStore = D;
+
+    return true;
+}
+
+bool MyApp::Execute()
+{
+    FeatureStore::ConstOwn   F = m_featureStore;
+    DisparityStore::ConstOwn D = m_disparityStore;
 
     Map map;
     FeatureTracker tracker(
@@ -103,198 +147,74 @@ bool MyApp::Execute()
         FeatureTracker::FramedStore(F, 1, D)  // to frame k+1
     );
 
-    for (size_t t = 0; t < seq.GetFrames(); t++)
+    if (m_alignment.forwardProj ) tracker.outlierRejection.scheme |= FeatureTracker::FORWARD_PROJ_ALIGN;
+    if (m_alignment.backwardProj) tracker.outlierRejection.scheme |= FeatureTracker::BACKWARD_PROJ_ALIGN;
+    if (m_alignment.rigid       ) tracker.outlierRejection.scheme |= FeatureTracker::RIGID_ALIGN;
+    if (m_alignment.photometric ) tracker.outlierRejection.scheme |= FeatureTracker::PHOTOMETRIC_ALIGN;
+    if (m_alignment.epipolar    ) tracker.outlierRejection.scheme |= FeatureTracker::EPIPOLAR_ALIGN;
+
+    tracker.outlierRejection.maxIterations = 50;
+    tracker.outlierRejection.minInlierRatio = 0.5f;
+    tracker.outlierRejection.confidence = 0.5f;
+    tracker.outlierRejection.epipolarEps = 999;
+
+    tracker.inlierInjection.scheme |= FeatureTracker::FORWARD_FLOW;
+    tracker.inlierInjection.scheme |= FeatureTracker::BACKWARD_FLOW;
+    tracker.inlierInjection.scheme |= FeatureTracker::EPIPOLAR_SEARCH;
+    tracker.inlierInjection.levels = 3;
+    tracker.inlierInjection.blockSize = 5;
+    tracker.inlierInjection.searchRange = 7;
+    tracker.inlierInjection.extractDescriptor = true;
+
+    Motion mot;
+    Speedometre metre;
+
+    mot.Update(EuclideanTransform::Identity);
+
+    for (size_t t = 0; t < m_seq.GetFrames() - 1; t++)
     {
-        if (!tracker(map, t))
+        metre.Start();
+        bool success = tracker(map, t);
+        metre.Stop(1);
+
+        E_INFO << "Frame " << t << " -> " << (t+1) << ": "
+            << tracker.stats.spawned << " spawned, "
+            << tracker.stats.tracked << " tracked, "
+            << tracker.stats.removed << " removed, "
+            << tracker.stats.joined  << " joined";
+        E_INFO << "Matcher: " << tracker.matcher.Report();
+
+        BOOST_FOREACH (FeatureTracker::Stats::ObjectiveStats::value_type pair, tracker.stats.objectives)
+        {
+            E_INFO << "Outlier model " << std::setw(2) << pair.first << ": "
+                << std::setw(5) << pair.second.inliers << " / " << std::setw(5) << pair.second.population
+                << " (" << pair.second.secs << " secs)";
+        }
+
+        //tracker.stats
+
+        if (!success)
         {
             E_ERROR << "error tracking frame " << t << " -> " << (t+1);
             return false;
         }
-    }
 
-    cv::Mat K;
-    intrinsics->GetCameraMatrix().convertTo(K, CV_32F);
-
-    float fu = K.at<float>(0, 0);
-    float fv = K.at<float>(1, 1);
-    float epsilon = 0.2f / ((fu + fv) * 0.5f);
-
-    FeatureMatcher matcher;
-    EssentialMatrixFilter ematFilter(epsilon, 0.995, true, true, K, K);
-    //FundamentalMatrixFilter fmatFilter(epsilon, 0.995, false);
-    SigmaFilter sigmaFilter(0.5f);
-
-    matcher.AddFilter(ematFilter).AddFilter(sigmaFilter);
-    //matcher.AddFilter(sigmaFilter).AddFilter(fmatFilter);
-
-    size_t t0 = 2;
-    size_t tn = cam.GetFrames() - 1;
-    size_t frames = tn - t0 + 1;
-
-    Motion motion;
-    motion.Update(EuclideanTransform::Identity); // initialise t0 as the referenced frame
-
-    Motion ground;
-    ground.Restore("ground.txt");
-
-    Points3F Gi, Gj;
-    std::vector<double> Wi, Wj;
-    std::vector<int>    Ui, Uj;
-    int uid = 0;
-
-    for (size_t t = t0; t < tn; t++)
-    {
-        size_t ti = t;
-        size_t tj = t + 1;
-        Frame Fi = cam[ti];
-        Frame Fj = cam[tj];
-        MotionEstimation egomo(K, 0.5f, true, false);
-        EuclideanTransform Mij;
-
-        //E_INFO << ti << " -> " << tj << " : " << matcher.Report();
-
-        if (Fi.features.IsEmpty() || Fj.features.IsEmpty())
-        {
-            E_ERROR << "error reading features for frames " << ti << " -> " << tj;
-        }
-
-        if (ti == t0)
-        {
-            Gi = Points3F(Fi.features.GetSize(), cv::Point3f(0, 0, 0));
-            Wi = std::vector<double>(Gi.size(), 0.0f);
-            Ui = std::vector<int>(Gi.size(), 0);
-        }
-
-        Gj = Points3F(Fj.features.GetSize(), cv::Point3f(0, 0, 0));
-        Wj = std::vector<double>(Gj.size(), 0.0f);
-        Uj = std::vector<int>(Gj.size(), 0);
-
-        ImageFeatureMap fmap = matcher.MatchFeatures(Fi.features, Fj.features);
-
-        if (!Fi.im.empty() && !Fj.im.empty())
-        {
-            cv::imshow("Feature Matching", fmap.Draw(Fi.im, Fj.im));
-            cv::waitKey(1);
-        }
-
-        BOOST_FOREACH (FeatureMatch& match, fmap.GetMatches())
-        {
-            if (!(match.state & FeatureMatch::INLIER)) continue;
-
-            Point3F x3di = Gi[match.srcIdx];
-            double  w3di = Wi[match.srcIdx];
-            Point2F x2di = Fi.features[match.srcIdx].keypoint.pt;
-            Point2F x2dj = Fj.features[match.dstIdx].keypoint.pt;
-            size_t  uidi = Ui[match.srcIdx];
-            size_t  uidj = uidi > 0 ? uidi : ++uid;
-
-            Uj[match.dstIdx] = uidj;
-
-            egomo.AddObservation(uidj, x2di, x2dj);
-
-            if (x3di.z > 0 /*&& x3di.z < 50*/)
-            {
-                egomo.AddObservation(uidj, x3di, x2dj, w3di);
-            }
-        }
-
-        if (t == t0)
-        {
-            if (ground.IsEmpty())
-            {
-                cv::Mat rmat, tvec;
-                ematFilter.GetPose(rmat, tvec);
-
-                Mij.SetRotationMatrix(rmat);
-                Mij.SetTranslation(tvec);
-            }
-            else
-            {
-                Mij = ground.GetLocalTransform(ti, tj);
-            }
-
-            ematFilter.SetPoseRecovery(false);
-        }
-        else
-        {
-            LevenbergMarquardtAlgorithm levmar(10.0f, 0.0f, false);
-
-            if (!levmar.Solve(egomo, egomo.Initialise()))
-            {
-                E_ERROR << "ego-motion estimation failed";
-                return false;
-            }
-
-            Mij = egomo.GetTransform();
-        }
-
-        E_INFO << ti << " -> " << tj << " : " << " #PnP=" << egomo.GetReprojectionConds().GetSize() << " #epi=" << egomo.GetEpipolarConds().GetSize();
-
-        //OptimalTriangulator
-        //MidPointTriangulator
-        MidPointTriangulator triangulator(
-            intrinsics->MakeProjectionMatrix(EuclideanTransform::Identity),
-            intrinsics->MakeProjectionMatrix(Mij));
-
-        Points3D x3dj;
-        std::vector<double> e3dj;
-        triangulator.Triangulate(egomo.GetEpipolarConds(), x3dj, e3dj);
+        E_INFO << mat2string(tracker.stats.motion.pose.GetRotation().ToVector(), "R");
+        E_INFO << mat2string(tracker.stats.motion.pose.GetTranslation(), "t");
 
         std::stringstream ss;
-        ss << "egomo_t" << ti << ".m";
-        Path saveto(ss.str());
-        egomo.Store(saveto);
+        ss << "M(:,:," << (t + 2) << ")";
+        //of << mat2string(map.GetFrame(t + 1).poseEstimate.pose.GetTransformMatrix(true), ss.str()) << std::endl;
+        //of.flush();
 
-        E_INFO << mat2string(Mij.GetTransformMatrix().t(), "M", 3);
+        mot.Update(tracker.stats.motion.pose);
+    }
 
-        if (!ground.IsEmpty())
-        {
-            EuclideanTransform M0ij = ground.GetLocalTransform(ti, tj);
-            EuclideanTransform diff = M0ij - Mij;
+    E_INFO << "runtime : " << metre.GetSpeed() << " fps";
 
-            double drift = (100.0f * cv::norm(diff.GetTranslation()) / cv::norm(M0ij.GetTranslation()));
-
-            E_INFO << mat2string(M0ij.GetTransformMatrix().t(), "G", 3);
-            E_INFO << "drift: " << drift << "% over " << cv::norm(M0ij.GetTranslation()) << "cm";
-
-            if (drift > 2.5f)
-            {
-                //E_FATAL << "GAME OVER";
-                //return -1;
-            }
-        }
-
-        //cv::triangulatePoints(Pi, Pj, x2di, x2dj, x3dj);
-        size_t i = 0;
-        BOOST_FOREACH (FeatureMatch& match, fmap.GetMatches())
-        {
-            if (!(match.state & FeatureMatch::INLIER)) continue;
-
-            Point3D gi = Gi[match.srcIdx];
-            double  wi = Wi[match.srcIdx];
-
-            Point3D gj = x3dj[i];
-            double  wj = 1 / (1 + e3dj[i]);
-
-            //double wj = wi == 0 ? 1 : (1 / (1 + cv::norm(cv::Mat(gi) - cv::Mat(gj))));
-
-            Wj[match.dstIdx] = wi + wj;
-
-            Mij.Apply(gi);
-            Mij.Apply(gj);
-
-            Gj[match.dstIdx] = Point3D(
-                (wi * gi.x + wj * gj.x) / Wj[match.dstIdx],
-                (wi * gi.y + wj * gj.y) / Wj[match.dstIdx],
-                (wi * gi.z + wj * gj.z) / Wj[match.dstIdx]);
-
-            i++;
-        }
-
-        motion.Update(Mij);
-        Gi = Gj;
-        Wi = Wj;
-        Ui = Uj;
+    if (!mot.Store(Path(m_outPath)))
+    {
+        E_ERROR << "error writing motion to \"" << m_outPath << "\"";
     }
 
     return true;

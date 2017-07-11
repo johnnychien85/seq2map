@@ -285,6 +285,7 @@ namespace seq2map
 
             return false;
         }
+
         return true;
     }
 
@@ -724,11 +725,13 @@ int App::Run()
     Options o("General options"), h("hidden");
     Positional p;
     String logfile;
+    String loglevel;
     Strings unknownArgs;
 
     o.add_options()
-        ("help,h",  po::bool_switch  (&m_help )->default_value(false),              "Show this help message and exit.")
-        ("logfile", po::value<String>(&logfile)->default_value(m_logfile.string()), "Path to the log file.");
+        ("help,h",    po::bool_switch  (&m_help  )->default_value(false),              "Show this help message and exit.")
+        ("log-file",  po::value<String>(&logfile )->default_value(m_logfile.string()), "Path to the log file.");
+        //("log-level", po::value<String>(&loglevel)->default_value(""),                 "Log level, can be");
 
     SetOptions(o, h, p);
 

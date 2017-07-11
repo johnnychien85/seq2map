@@ -497,7 +497,7 @@ ImageFeatureMap FeatureMatcher::operator() (const ImageFeatureSet& src, const Im
 
         if (!(*f)(map, inliers))
         {
-            E_WARNING << "filtering discontinued due to a failed failter";
+            E_ERROR << "filtering discontinued due to a failed filter";
             break;
         }
 

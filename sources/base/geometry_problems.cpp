@@ -13,7 +13,9 @@ bool AlignmentObjective::InlierSelector::operator() (const EuclideanTransform& x
 
     try
     {
+        metre.Start();
         cv::Mat error = (*objective)(x);
+        metre.Stop(error.rows);
 
         if (error.type() != CV_64F)
         {
@@ -90,6 +92,14 @@ bool EpipolarObjective::SetData(const GeometricMapping& data, ProjectionModel::C
     return true;
 }
 
+AlignmentObjective::Own EpipolarObjective::GetSubObjective(const Indices& indices) const
+{
+    EpipolarObjective* sub = new EpipolarObjective(m_src, m_dst, m_distType);
+    sub->m_data = m_data[indices]; // avoid calling SetData() as the normalised data should not be normalised again
+
+    return AlignmentObjective::Own(sub);
+}
+
 cv::Mat EpipolarObjective::operator() (const EuclideanTransform& tform) const
 {
     const Metric& d = *m_data.metric;
@@ -158,8 +168,18 @@ cv::Mat EpipolarObjective::operator() (const EuclideanTransform& tform) const
 
 //==[ ProjectionObjective ]===================================================//
 
+AlignmentObjective::Own ProjectionObjective::GetSubObjective(const Indices& indices) const
+{
+    ProjectionObjective* sub = new ProjectionObjective(m_proj, m_forward);
+    sub->m_data = m_data[indices];
+
+    return AlignmentObjective::Own(sub);
+}
+
 bool ProjectionObjective::SetData(const GeometricMapping& data)
 {
+    if (!data.IsConsistent()) return false;
+
     const size_t d0 = data.src.GetDimension();
     const size_t d1 = data.dst.GetDimension();
 
@@ -191,12 +211,13 @@ cv::Mat ProjectionObjective::operator() (const EuclideanTransform& f) const
         return cv::Mat();
     }
 
-    const Metric& d = *m_data.metric;
+    const EuclideanTransform tf = m_forward ? f : f.GetInverse();
+    const Metric::Own d = m_data.metric->Transform(tf);
 
     Geometry x = m_data.src;
-    Geometry y = m_proj->Project(m_forward ? f(x, true) : f.GetInverse()(x, true), ProjectionModel::EUCLIDEAN_2D);
+    Geometry y = m_proj->Project(tf(x, true), ProjectionModel::EUCLIDEAN_2D);
 
-    return d(y, m_data.dst).mat;
+    return (*d)(y, m_data.dst).mat;
 
     /*
     cv::Mat rpe = y.mat - m_data.dst.mat;
@@ -216,6 +237,14 @@ cv::Mat ProjectionObjective::operator() (const EuclideanTransform& f) const
 }
 
 //==[ PhotometricObjective ]==================================================//
+
+AlignmentObjective::Own PhotometricObjective::GetSubObjective(const Indices& indices) const
+{
+    PhotometricObjective* sub = new PhotometricObjective(m_proj, m_dst, m_type, m_interp);
+    sub->m_data = m_data[indices];
+
+    return AlignmentObjective::Own(sub);
+}
 
 bool PhotometricObjective::SetData(const GeometricMapping& data)
 {
@@ -250,7 +279,7 @@ bool PhotometricObjective::SetData(const GeometricMapping& data)
     return true;
 }
 
-bool PhotometricObjective::SetData(const Geometry& g, const cv::Mat& src)
+bool PhotometricObjective::SetData(const Geometry& g, const cv::Mat& src, const Metric::Own metric, const std::vector<size_t>& indices)
 {
     GeometricMapping data;
 
@@ -299,6 +328,8 @@ bool PhotometricObjective::SetData(const Geometry& g, const cv::Mat& src)
         data.dst = Geometry(Geometry::PACKED, interp(src32F, proj, m_interp));
     }
 
+    data.metric = metric;
+    data.indices = indices;
 
     return SetData(data);
 }
@@ -311,32 +342,31 @@ cv::Mat PhotometricObjective::operator() (const EuclideanTransform& f) const
         return cv::Mat();
     }
 
+    Metric::ConstOwn metric = m_data.metric->Transform(f);
     Geometry x = m_data.src;
-    cv::Mat y;
 
-    //Geometry x1 = m_data.src;
-    //cv::Mat p0 = m_proj->Project(Geometry::FromHomogeneous(x), ProjectionModel::EUCLIDEAN_2D).mat;
-    //cv::Mat p1 = m_proj->Project(tform(x1, true), ProjectionModel::EUCLIDEAN_2D).mat;
+    cv::Mat proj;
+    m_proj->Project(f(x, true), ProjectionModel::EUCLIDEAN_2D).Reshape(Geometry::PACKED).mat.convertTo(proj, CV_32F);
 
-    //PersistentMat(tform.GetTransformMatrix()).Store(Path("E.bin"));
-    //PersistentMat(p0).Store(Path("p0.bin"));
-    //PersistentMat(p1).Store(Path("p1.bin"));
+    Geometry y = Geometry(Geometry::PACKED, interp(m_dst, proj, m_interp));
 
-    //p0.convertTo(p0, CV_32F);
-    //p1.convertTo(p1, CV_32F);
+    //if (y.mat.depth() != m_data.dst.mat.depth())
+    //{
+    //    y.mat.convertTo(y.mat, m_data.dst.mat.depth());
+    //}
 
-    //int id = std::rand(); std::stringstream ss; ss << id;
-    //E_INFO << ss.str();
-    //PersistentMat(m_data.dst.mat.clone()).Store(Path("dst" + ss.str() + ".bin"));
-    //PersistentMat y0(interp(m_dst, p0.reshape(2), cv::INTER_LINEAR)); y0.Store(Path("y0" + ss.str() + ".bin"));
-    //PersistentMat y1(interp(m_dst, p1.reshape(2), cv::INTER_LINEAR)); y1.Store(Path("y1" + ss.str() + ".bin"));
-
-    m_proj->Project(f(x, true), ProjectionModel::EUCLIDEAN_2D).Reshape(Geometry::PACKED).mat.convertTo(y, CV_32F);
-
-    return (*m_data.metric)(m_data.dst, Geometry(Geometry::PACKED, interp(m_dst, y, m_interp))).mat;
+    return (*metric)(m_data.dst, y).mat;
 }
 
 //==[ RigidObjective ]========================================================//
+
+AlignmentObjective::Own RigidObjective::GetSubObjective(const Indices& indices) const
+{
+    RigidObjective* sub = new RigidObjective();
+    sub->m_data = m_data[indices];
+
+    return AlignmentObjective::Own(sub);
+}
 
 bool RigidObjective::SetData(const GeometricMapping& data)
 {
@@ -345,21 +375,21 @@ bool RigidObjective::SetData(const GeometricMapping& data)
     const size_t d0 = data.src.GetDimension();
     const size_t d1 = data.dst.GetDimension();
 
-    if (d0 != 3 || d0 != 4)
+    if (d0 != 3 && d0 != 4)
     {
-        E_ERROR << "source geometry has to be either 3D Euclidean or 4D homogeneous";
+        E_ERROR << "source geometry has to be either 3D Euclidean or 4D homogeneous (d=" << d0 << ")";
         return false;
     }
 
-    if (d1 != 3 || d1 != 4)
+    if (d1 != 3 && d1 != 4)
     {
-        E_ERROR << "target geometry has to be either 3D Euclidean or 4D homogeneous";
+        E_ERROR << "target geometry has to be either 3D Euclidean or 4D homogeneous (d=" << d1 << ")";
         return false;
     }
 
     m_data.indices = data.indices;
     m_data.src = (d0 == 3 ? Geometry::MakeHomogeneous(data.src) : data.src);
-    m_data.dst = (d1 == 3 ? Geometry::MakeHomogeneous(data.dst) : data.dst);
+    m_data.dst = (d1 == 4 ? Geometry::FromHomogeneous(data.dst) : data.dst);
     m_data.metric = data.metric;
 
     return true;
@@ -367,12 +397,12 @@ bool RigidObjective::SetData(const GeometricMapping& data)
 
 cv::Mat RigidObjective::operator() (const EuclideanTransform& f) const
 {
-    const Metric& d = *m_data.metric;
+    Metric::ConstOwn metric = m_data.metric->Transform(f);
 
     Geometry x = m_data.src;
-    Geometry y = f(x);
+    Geometry y = f(x, true);
 
-    return d(m_data.dst, y).mat;
+    return (*metric)(m_data.dst, y).mat;
 }
 
 //==[ PoseEstimator ]=========================================================//
@@ -440,11 +470,14 @@ bool PerspevtivePoseEstimator::operator() (const GeometricMapping& mapping, Esti
         return false;
     }
 
+    const cv::Mat opts = mapping.src.mat.reshape(3);
+    const cv::Mat ipts = Geometry::FromHomogeneous(m_proj->Backproject(mapping.dst)).mat.reshape(2);
+
     cv::Mat K = cv::Mat::eye(3, 3, CV_64F);
     cv::Mat D = cv::Mat();
     cv::Mat rvec, tvec;
 
-    bool success = cv::solvePnP(mapping.src.mat, m_proj->Backproject(mapping.dst).mat, K, D, rvec, tvec, false, cv::SOLVEPNP_EPNP);
+    bool success = cv::solvePnP(opts, ipts, K, D, rvec, tvec, false, cv::SOLVEPNP_EPNP);
 
     if (!success)
     {
@@ -599,10 +632,10 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
                    << std::setw(12) << std::right << hits       << " (" << std::setw(3) << std::right << (100*hits/population)       << "%)"
                    << std::setw(12) << std::right << numInliers << " (" << std::setw(3) << std::right << (100*numInliers/population) << "%)"
                    << std::setw(15) << std::right << (solveMetre.GetElapsedSeconds() * 1000) << " ms"
-                   << std::setw(15) << std::right << (evalMetre.GetElapsedSeconds() * 1000)  << " ms";
+                   << std::setw(15) << std::right << (evalMetre .GetElapsedSeconds() * 1000) << " ms";
         }
 
-        if (hits < minInliers || hits < numInliers) continue;
+        if (hits < numInliers) continue;
 
         // accept the trial
         numInliers = hits;
@@ -610,19 +643,41 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
         inliers  = result.inliers;
         outliers = result.outliers;
 
+        if (hits < minInliers) continue;
+
         // convergence control
         iter = std::min(iter, static_cast<size_t>(std::ceil(logOneMinusConfidence / std::log(1 - std::pow(hits / population, n)))));
     }
 
+    const bool success = numInliers >= minInliers;
+
+    if (!success)
+    {
+        const int inlierRate = std::round(100 * numInliers / population);
+        const int targetRate = std::round(100 * minInliers / population);
+
+        E_WARNING << "unable to find enough inliers in " << m_maxIter << " iteration(s)";
+        E_WARNING << "the best trial achieves " << inlierRate << "% inliers while " << targetRate << "% is required";
+    }
+
     // post-estimation non-linear optimisation
-    if (numInliers > 0 && m_optimisation)
+    if (success && m_optimisation)
     {
         MultiObjectivePoseEstimation refinement;
         refinement.SetPose(estimate.pose);
 
+        size_t i = 0;
         BOOST_FOREACH (const AlignmentObjective::InlierSelector& g, m_selectors)
         {
-            refinement.AddObjective(AlignmentObjective::ConstOwn(g.objective));
+            AlignmentObjective::Own sub = g.objective->GetSubObjective(inliers[i++]);
+
+            if (!sub)
+            {
+                E_WARNING << "error building sub-objective for model " << (i-1);
+                continue;
+            }
+
+            refinement.AddObjective(AlignmentObjective::ConstOwn(sub));
         }
 
         LevenbergMarquardtAlgorithm levmar;
@@ -630,13 +685,19 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
 
         if (!levmar.Solve(refinement))
         {
-            E_ERROR << "nonlinear optimisation failed";
+            E_ERROR << "non-linear optimisation failed";
             return false;
         }
+
+        //////////////////////////////////////////////////////////////
+        // VectorisableD::Vec x; refinement.GetPose().Store(x);
+        // PersistentMat(cv::Mat(refinement(x))).Store(Path("y.bin"));
+        //////////////////////////////////////////////////////////////
 
         estimate.pose = refinement.GetPose();
         inliers.clear();
         outliers.clear();
+        numInliers = 0;
 
         BOOST_FOREACH (const AlignmentObjective::InlierSelector& g, m_selectors)
         {
@@ -649,9 +710,14 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
 
             numInliers += accepted.size();
         }
+
+        if (numInliers < minInliers)
+        {
+            E_WARNING << "the optimised model results too few inliers (" << numInliers << " < " << minInliers << ")";
+        }
     }
 
-    return numInliers > 0;
+    return estimate.valid = numInliers >= minInliers;
 }
 
 size_t ConsensusPoseEstimator::GetPopulation() const
@@ -770,26 +836,34 @@ StructureEstimation::Estimate StructureEstimation::Estimate::operator+ (const Es
 
 StructureEstimation::Estimate& StructureEstimation::Estimate::operator+= (const Estimate& estimate)
 {
-    boost::shared_ptr</***/ MahalanobisMetric> m0 = boost::dynamic_pointer_cast</***/ MahalanobisMetric, Metric>(metric);
-    boost::shared_ptr<const MahalanobisMetric> m1 = boost::dynamic_pointer_cast<const MahalanobisMetric, Metric>(estimate.metric);
+    if (!metric || !estimate.metric)
+    {
+        E_ERROR << "fusion failed due to missing metric(es)";
+        return *this;
+    }
+
+    bool native;
+
+    boost::shared_ptr</***/ MahalanobisMetric> m0 = metric->ToMahalanobis(native);
+    boost::shared_ptr<const MahalanobisMetric> m1 = estimate.metric->ToMahalanobis();
 
     if (!m0 || !m1)
     {
-        E_ERROR << "update failed due to missing mahalanobis metric(s)";
+        E_ERROR << "fusion failed due to missing Mahalanobis metric(es)";
         return *this;
     }
 
     Geometry g0  = structure.Reshape(Geometry::ROW_MAJOR);
-    Geometry g01 = g0 - estimate.structure;
+    Geometry g10 = estimate.structure - g0;
 
-    if (g01.IsEmpty())
+    if (g10.IsEmpty())
     {
-        E_WARNING << "the subtraction of structure geometry returns a null entity";
+        E_WARNING << "the subtraction of structure geometry is empty";
         return *this;
     }
     
     cv::Mat K = m0->Update(*m1);
-
+    
     if (K.empty())
     {
         E_ERROR << "error updating metric, invalid Kalman gain returned";
@@ -802,7 +876,7 @@ StructureEstimation::Estimate& StructureEstimation::Estimate::operator+= (const 
 
         for (int j = 0; j < g0.mat.cols; j++)
         {
-            g0.mat.col(j) += K.mul(g01.mat.col(j));
+            g0.mat.col(j) += K.mul(g10.mat.col(j));
         }
 
         break;
@@ -811,7 +885,7 @@ StructureEstimation::Estimate& StructureEstimation::Estimate::operator+= (const 
 
         for (int j = 0; j < g0.mat.cols; j++)
         {
-            g0.mat.col(j) += K.col(j).mul(g01.mat.col(j));
+            g0.mat.col(j) += K.col(j).mul(g10.mat.col(j));
         }
 
         break;
@@ -820,10 +894,10 @@ StructureEstimation::Estimate& StructureEstimation::Estimate::operator+= (const 
 
         for (int j0 = 0; j0 < g0.mat.cols; j0++)
         {
-            for (int j1 = 0; j1 < g01.mat.cols; j1++)
+            for (int j1 = 0; j1 < g10.mat.cols; j1++)
             {
                 const int j = sub2symind(j0, j1, m0->dims);
-                g0.mat.col(j0) += K.col(j).mul(g01.mat.col(j1));
+                g0.mat.col(j0) += K.col(j).mul(g10.mat.col(j1));
             }
         }
 
@@ -832,6 +906,23 @@ StructureEstimation::Estimate& StructureEstimation::Estimate::operator+= (const 
 
     // just in case : structure.shape == Geometry::COL_MAJOR
     structure = g0;
+
+    if (!native)
+    {
+        boost::shared_ptr<WeightedEuclideanMetric> we =
+            boost::dynamic_pointer_cast<WeightedEuclideanMetric, Metric>(metric);
+
+        if (!we)
+        {
+            E_WARNING << "metric fusion impossible";
+            return *this;
+        }
+
+        if (!we->FromMahalanobis(*m0))
+        {
+            E_ERROR << "error converting Mahalanobis distance to weighted Euclidean";
+        }
+    }
 
     return *this;
 }

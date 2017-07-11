@@ -21,6 +21,16 @@ namespace seq2map
          */
         struct InlierSelector
         {
+            struct Stats
+            {
+                Stats() : population(0), inliers(0), secs(0) {}
+
+                size_t population;
+                size_t inliers;
+
+                double secs;
+            };
+
             InlierSelector() : threshold(-1) {}
 
             InlierSelector(AlignmentObjective::ConstOwn& objective, double threshold)
@@ -32,6 +42,7 @@ namespace seq2map
 
             AlignmentObjective::ConstOwn objective;
             double threshold;
+            mutable Speedometre metre;
         };
 
         /**
@@ -50,6 +61,11 @@ namespace seq2map
          * Make an InlierSelector using this objective.
          */
         InlierSelector GetSelector(double threshold) const { return InlierSelector(shared_from_this(), threshold); }
+
+        /**
+         * Make a new objective from a subset of data.
+         */
+        virtual AlignmentObjective::Own GetSubObjective(const Indices& indices) const = 0;
 
     protected:
         GeometricMapping m_data;
@@ -72,7 +88,8 @@ namespace seq2map
         // Constructor and destructor
         //
         EpipolarObjective(DistanceType distType = SAMPSON) : m_src(new PinholeModel()), m_dst(m_src), m_distType(distType) {}
-        EpipolarObjective(ProjectionModel::ConstOwn& src, ProjectionModel::ConstOwn& dst, DistanceType distance = SAMPSON) : m_src(src), m_dst(dst), m_distType(distance) {}
+        EpipolarObjective(const ProjectionModel::ConstOwn& src, const ProjectionModel::ConstOwn& dst, DistanceType distance = SAMPSON)
+        : m_src(src), m_dst(dst), m_distType(distance) {}
 
         //
         // Accessor
@@ -80,6 +97,8 @@ namespace seq2map
         void SetDistance(DistanceType distType) { m_distType = distType; }
         virtual bool SetData(const GeometricMapping& data) { return SetData(data, m_src, m_dst); }
         bool SetData(const GeometricMapping& data, ProjectionModel::ConstOwn& src, ProjectionModel::ConstOwn& dst);
+
+        virtual AlignmentObjective::Own GetSubObjective(const Indices& indices) const;
 
         //
         // Evaluation
@@ -101,13 +120,15 @@ namespace seq2map
         //
         // Constructor and destructor
         //
-        ProjectionObjective(ProjectionModel::ConstOwn& proj, bool forward = true) : m_proj(proj), m_forward(forward) {}
+        ProjectionObjective(const ProjectionModel::ConstOwn& proj, bool forward = true) : m_proj(proj), m_forward(forward) {}
 
         //
         // Accessor
         //
         virtual void SetProjectionModel(ProjectionModel::Own& proj) { m_proj = proj; }
         virtual bool SetData(const GeometricMapping& data);
+
+        virtual AlignmentObjective::Own GetSubObjective(const Indices& indices) const;
 
         //
         // Evaluation
@@ -128,7 +149,7 @@ namespace seq2map
         //
         // Constructor and destructor
         //
-        PhotometricObjective(ProjectionModel::ConstOwn& proj, const cv::Mat& dst, int type = CV_32F, int interp = cv::INTER_LINEAR)
+        PhotometricObjective(const ProjectionModel::ConstOwn& proj, const cv::Mat& dst, int type = CV_32F, int interp = cv::INTER_LINEAR)
         : m_type(type), m_interp(interp), ProjectionObjective(proj)
         { dst.convertTo(m_dst, m_type); }
 
@@ -140,7 +161,9 @@ namespace seq2map
         /**
          * Build objective data from 3D points and a base image
          */
-        virtual bool SetData(const Geometry& g, const cv::Mat& src);
+        virtual bool SetData(const Geometry& g, const cv::Mat& src, const Metric::Own metric = Metric::Own(), const std::vector<size_t>& indices = std::vector<size_t>());
+
+        virtual AlignmentObjective::Own GetSubObjective(const Indices& indices) const;
 
         //
         // Evaluation
@@ -163,6 +186,8 @@ namespace seq2map
         // Accessor
         //
         virtual bool SetData(const GeometricMapping& data);
+
+        virtual AlignmentObjective::Own GetSubObjective(const Indices& indices) const;
 
         //
         // Evaluation
@@ -210,7 +235,7 @@ namespace seq2map
     class EssentialMatrixDecomposer : public PoseEstimator
     {
     public:
-        EssentialMatrixDecomposer(ProjectionModel::ConstOwn& srcProj, ProjectionModel::ConstOwn& dstProj)
+        EssentialMatrixDecomposer(const ProjectionModel::ConstOwn& srcProj, const ProjectionModel::ConstOwn& dstProj)
         : m_srcProj(srcProj), m_dstProj(dstProj) {}
 
         virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate) const;
@@ -227,7 +252,7 @@ namespace seq2map
     class PerspevtivePoseEstimator : public PoseEstimator
     {
     public:
-        PerspevtivePoseEstimator(ProjectionModel::ConstOwn& proj) : m_proj(proj) {}
+        PerspevtivePoseEstimator(const ProjectionModel::ConstOwn& proj) : m_proj(proj) {}
 
         virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate) const;
         virtual size_t GetMinPoints() const { return 6; }
@@ -242,7 +267,7 @@ namespace seq2map
     class QuatAbsOrientationSolver : public PoseEstimator
     {
     public:
-        QuatAbsOrientationSolver(const RigidObjective& objective) {}
+        QuatAbsOrientationSolver() {}
 
         virtual bool operator() (const GeometricMapping& mapping, Estimate& estimate) const;
         virtual size_t GetMinPoints() const { return 3; }
@@ -299,7 +324,7 @@ namespace seq2map
         // Constructor
         //
         ConsensusPoseEstimator()
-        : m_maxIter(100), m_minInlierRatio(0.5f), m_confidence(0.95f), m_optimisation(false) {}
+        : m_maxIter(100), m_minInlierRatio(0.5f), m_confidence(0.95f), m_optimisation(false), m_verbose(false) {}
 
         //
         // Pose estimation

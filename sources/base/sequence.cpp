@@ -363,27 +363,6 @@ Geometry Camera::GetImagePoints() const
     return g;
 }
 
-/*
-void Camera::World2Image(const Points3D& worldPts, Points2D& imagePts) const
-{
-    Points3D cameraPts;
-
-    World2Camera(worldPts, cameraPts);
-    Camera2Image(cameraPts, imagePts);
-}
-
-void Camera::Camera2Image(const Points3D& cameraPts, Points2D& imagePts) const
-{
-    if (!m_intrinsics)
-    {
-        E_ERROR << "missing intrinsics";
-        return;
-    }
-
-    m_intrinsics->Project(cameraPts, imagePts);
-}
-*/
-
 bool Camera::Store(cv::FileStorage& fs) const
 {
     if (!Sensor::Store(fs))
@@ -593,13 +572,22 @@ StructureEstimation::Estimate RectifiedStereo::Backproject(const cv::Mat& dp, co
     cv::multiply(dp, dp, dp2);
 
     cv::Mat jac = Backproject(-dp2).Reshape(Geometry::ROW_MAJOR).mat;
+    cv::Mat cov = cv::Mat(jac.rows, 1, jac.depth());
+
+    cv::reduce(jac.mul(jac), cov, 1, cv::REDUCE_SUM);
+    cv::sqrt(cov, cov);
+
+    estimate.metric = Metric::Own(new WeightedEuclideanMetric(1 / cov));
+
+    /*
+    cv::Mat jac = Backproject(-dp2).Reshape(Geometry::ROW_MAJOR).mat;
     cv::Mat cov = cv::Mat(estimate.structure.GetElements(), 6, estimate.structure.mat.depth());
 
     for (int i = 0; i < 3; i++)
     {
         for (int j = i; j < 3; j++)
         {
-            const int dst = i * 3 + j;
+            const int dst = sub2symind(i, j, 3);
             cv::multiply(jac.col(i), jac.col(j), cov.col(dst));
         }
     }
@@ -630,6 +618,7 @@ StructureEstimation::Estimate RectifiedStereo::Backproject(const cv::Mat& dp, co
     {
         estimate.metric = Metric::Own(metric);
     }
+    */
 
     return estimate;
 }

@@ -240,7 +240,9 @@ bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& f)
 
                 if (ill)
                 {
+                    PersistentMat(J).Store(Path("J.bin"));
                     E_ERROR << "problem ill-posed";
+
                     return false;
                 }
             }

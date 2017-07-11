@@ -17,12 +17,12 @@
 #define __func__ __FUNCTION__
 #endif
 
-#define E_LOG(lvl)	BOOST_LOG_TRIVIAL(lvl) << __func__  << " : "
-#define E_TRACE     E_LOG(trace)
-#define E_INFO		E_LOG(info)
-#define E_WARNING	E_LOG(warning)
-#define E_ERROR		E_LOG(error)
-#define E_FATAL		E_LOG(fatal)
+#define E_LOG(lvl) BOOST_LOG_TRIVIAL(lvl) << __func__  << " : "
+#define E_TRACE    E_LOG(trace)
+#define E_INFO	   E_LOG(info)
+#define E_WARNING  E_LOG(warning)
+#define E_ERROR    E_LOG(error)
+#define E_FATAL    E_LOG(fatal)
 
 /**
  * Type definitions

@@ -71,10 +71,11 @@ namespace seq2map
 
         Point3D position;
         Covar3D cov;
+        double  icv;
 
     protected:
         friend class Map3<seq2map::Hit, Landmark, Frame, Source>;
-        Landmark(size_t index = INVALID_INDEX) : DimensionZero(index) {}
+        Landmark(size_t index = INVALID_INDEX) : DimensionZero(index), icv(0) {}
     };
 
     /**
@@ -88,7 +89,7 @@ namespace seq2map
 
     protected:
         friend class Map3<Hit, Landmark, Frame, Source>;
-        Frame(size_t index = INVALID_INDEX) : Dimension(index) { poseEstimate.valid = index == 0; }
+        Frame(size_t index = INVALID_INDEX) : Dimension(index) { poseEstimate.valid = (index == 0); }
     };
 
     /**
@@ -121,6 +122,9 @@ namespace seq2map
         bool IsJoinable(const Landmark& li, const Landmark& lj);
         Landmark& JoinLandmark(Landmark& li, Landmark& lj);
 
+        StructureEstimation::Estimate GetStructure(const Landmark::Ptrs& u) const;
+        void SetStructure(const Landmark::Ptrs& u, const StructureEstimation::Estimate& structure);
+
         /**
          * Update structure of a set of landmarks
          *
@@ -148,16 +152,27 @@ namespace seq2map
         class ObjectiveBuilder : public Referenced<ObjectiveBuilder>
         {
         public:
-            virtual void AddData(size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx) = 0;
-            virtual PoseEstimator::Own GetSolver() = 0;
+            ObjectiveBuilder(AlignmentObjective::InlierSelector::Stats& stats) : stats(stats) {}
+
+            virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx) = 0;
+            virtual PoseEstimator::Own GetSolver() const = 0;
             virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector) = 0;
             virtual String ToString() const = 0;
+
+            AlignmentObjective::InlierSelector::Stats& stats;
         };
 
-        MultiObjectiveOutlierFilter() {}
+        MultiObjectiveOutlierFilter(size_t maxIterations, double minInlierRatio, double confidence)
+        : maxIterations(maxIterations), minInlierRatio(minInlierRatio), confidence(confidence), optimisation(true) {}
+
         virtual bool operator() (ImageFeatureMap& map, Indices& inliers);
 
         std::vector<ObjectiveBuilder::Own> builders;
+        PoseEstimator::Estimate motion;
+        size_t maxIterations;
+        double minInlierRatio;
+        double confidence;
+        bool optimisation;
     };
 
     class FeatureTracker : public Map::Operator
@@ -187,84 +202,31 @@ namespace seq2map
          */
         enum OutlierRejectionScheme
         {
-            EPIPOLAR            = 1 << 0, ///< outlier detection using Epipolar constraints
-            FORWARD_PROJECTION  = 1 << 1, ///< outlier detection using projective constraints when 3D-to-2D correspondences are available
-            BACKWARD_PROJECTION = 1 << 2, ///< outlier detection using projective constraints when 2D-to-3D correspondences are available
-            RIGID               = 1 << 3, ///< outlier detection using rigid alignment when 3D-to-3D correspondences are available
-            PHOTOMETRIC         = 1 << 4  ///< outlier detection using photometric alignment when intensity data are available
+            EPIPOLAR_ALIGN      = 1 << 0, ///< outlier detection using Epipolar constraints
+            FORWARD_PROJ_ALIGN  = 1 << 1, ///< outlier detection using projective constraints when 3D-to-2D correspondences are available
+            BACKWARD_PROJ_ALIGN = 1 << 2, ///< outlier detection using projective constraints when 2D-to-3D correspondences are available
+            RIGID_ALIGN         = 1 << 3, ///< outlier detection using rigid alignment when 3D-to-3D correspondences are available
+            PHOTOMETRIC_ALIGN   = 1 << 4  ///< outlier detection using photometric alignment when intensity data are available
         };
 
         /**
-         * Objective builder for OutlierRejectionScheme::EPIPOLAR
+         * Post-motion correspondence recovery for lost features.
          */
-        class EpipolarObjectiveBuilder : public MultiObjectiveOutlierFilter::ObjectiveBuilder
+        enum InlierInjectionScheme
         {
-        public:
-            EpipolarObjectiveBuilder(ProjectionModel::ConstOwn& pi, ProjectionModel::ConstOwn& pj) : pi(pi), pj(pj) {}
-
-            virtual void AddData(size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
-            virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector);
-            virtual PoseEstimator::Own GetSolver() { return PoseEstimator::Own(new EssentialMatrixDecomposer(pi, pj)); }
-            virtual String ToString() const { return "EPIPOLAR"; }
-
-            ProjectionModel::ConstOwn pi;
-            ProjectionModel::ConstOwn pj;
-
-        private:
-            GeometricMapping::ImageToImageBuilder m_builder;
+            FORWARD_FLOW    = 1 << 0, ///< forward optical flow from the projections in the first frame
+            BACKWARD_FLOW   = 1 << 1, ///< backward optical flow from the projections in the second frame
+            EPIPOLAR_SEARCH = 1 << 2  ///< search along epipolar lines by block matching
         };
 
         /**
-         * Objective builder for OutlierRejectionScheme::FORWARD_PROJECTION and OutlierRejectionScheme::BACKWARD_PROJECTION
+         * Post-motion structure recovery
          */
-        class PerspectiveObjectiveBuilder : public MultiObjectiveOutlierFilter::ObjectiveBuilder
+        enum StructureRecoveryScheme
         {
-        public:
-            PerspectiveObjectiveBuilder(ProjectionModel::ConstOwn& p, const StructureEstimation::Estimate& g, bool forward)
-            : p(p), g(g), forward(forward) {}
-
-            virtual void AddData(size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
-            virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector);
-            virtual PoseEstimator::Own GetSolver();
-
-            virtual String ToString() const { return forward ? "FORWARD PROJECTION" : "BACKWARD PROJECTION"; }
-
-            ProjectionModel::ConstOwn p;
-            const StructureEstimation::Estimate& g;
-            const bool forward;
-
-        private:
-            GeometricMapping::WorldToImageBuilder m_builder;
-        };
-
-        /**
-         * Objective builder for OutlierRejectionScheme::RIGID
-         */
-        class RigidObjectiveBuilder : public MultiObjectiveOutlierFilter::ObjectiveBuilder
-        {
-        public:
-            RigidObjectiveBuilder(const StructureEstimation::Estimate& gi, const StructureEstimation::Estimate& gj)
-            : gi(gi), gj(gj) {}
-
-            virtual void AddData(size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
-            virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector);
-            virtual PoseEstimator::Own GetSolver();
-
-            virtual String ToString() const { return "RIGID"; }
-
-            const StructureEstimation::Estimate& gi;
-            const StructureEstimation::Estimate& gj;
-        };
-
-        /**
-         * Objective builder for OutlierRejectionScheme::PHOTOMETRIC
-         */
-        class PhotometricObjectiveBuilder : public MultiObjectiveOutlierFilter::ObjectiveBuilder
-        {
-        public:
-
-            virtual String ToString() const { return "PHOTOMETRIC"; }
-
+            NO_RECOVERY,
+            MIDPOINT_TRIANGULATION,
+            OPTIMAL_TRIANGULATION
         };
 
         /**
@@ -284,8 +246,154 @@ namespace seq2map
         /**
          *
          */
+        struct OutlierRejectionOptions
+        {
+            OutlierRejectionOptions(int scheme)
+            : scheme(scheme), maxIterations(30), minInlierRatio(0.5), confidence(0.5), epipolarEps(1e2) {}
+
+            int scheme;            ///< strategies to identify the outliers from noisy feature matches
+            size_t maxIterations;  ///< the upper bound of trials
+            double minInlierRatio; ///< the percentage of inliers minimally required to accept a motion hypothesis
+            double confidence;     ///< probability that a random sample contains only inliers
+            double epipolarEps;    ///< threshold of the epipolar objective, in the normalised image pixel
+        };
+
+        /**
+         *
+         */
+        struct InlierInjectionOptions
+        {
+            InlierInjectionOptions(int scheme)
+            : scheme(scheme), blockSize(7), levels(3), extractDescriptor(false) {}
+
+            int scheme;             ///< strategies to recover missing features
+            size_t blockSize;       ///< size of search window
+            size_t levels;          ///< level of pyramid for optical flow computation
+            double epipolarEps;     ///< threshold of the epipolar objective to decide if a flow is valid, in the normalised image pixel
+            double searchRange;     ///< maximum distance between a prediction and a match hypothesis, applicable to BACKWARD_FLOW and EPIPOLAR_SEARCH
+            bool extractDescriptor; ///< recompute descriptor for each recovered landmark, set to false to re-use a previously extracted descriptor
+        };
+
+        /**
+         *
+         */
+        struct Stats
+        {
+            typedef std::map<int, AlignmentObjective::InlierSelector::Stats> ObjectiveStats;
+
+            Stats() : spawned(0), tracked(0), joined(0), removed(0) { motion.valid = false; }
+
+            size_t spawned;  ///< number of newly discovered landmarks
+            size_t tracked;  ///< number of tracked landmarks
+            size_t joined;   ///< number of joined landmarks
+            size_t removed;  ///< number of removed landmarks
+            size_t injected; ///< number of recovered landmarks
+            ObjectiveStats objectives; ///< per outlier model stats
+            PoseEstimator::Estimate motion; ///< ego-motion
+        };
+
+
+        /**
+         * Objective builder for OutlierRejectionScheme::EPIPOLAR_ALIGN
+         */
+        class EpipolarObjectiveBuilder : public MultiObjectiveOutlierFilter::ObjectiveBuilder
+        {
+        public:
+            EpipolarObjectiveBuilder(const ProjectionModel::ConstOwn& pi, const ProjectionModel::ConstOwn& pj, double epsilon, AlignmentObjective::InlierSelector::Stats& stats)
+            : pi(pi), pj(pj), epsilon(epsilon), ObjectiveBuilder(stats) {}
+
+            virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
+            virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector);
+            virtual PoseEstimator::Own GetSolver() const { return PoseEstimator::Own(new EssentialMatrixDecomposer(pi, pj)); }
+            virtual String ToString() const { return "EPIPOLAR"; }
+
+            const ProjectionModel::ConstOwn pi;
+            const ProjectionModel::ConstOwn pj;
+
+            double epsilon;
+
+        private:
+            GeometricMapping::ImageToImageBuilder m_builder;
+        };
+
+        /**
+         * Objective builder for OutlierRejectionScheme::FORWARD_PROJ_ALIGN and OutlierRejectionScheme::BACKWARD_PROJ_ALIGN
+         */
+        class PerspectiveObjectiveBuilder : public MultiObjectiveOutlierFilter::ObjectiveBuilder
+        {
+        public:
+            PerspectiveObjectiveBuilder(const ProjectionModel::ConstOwn& p, const StructureEstimation::Estimate& g, bool forward, AlignmentObjective::InlierSelector::Stats& stats)
+            : p(p), g(g), forward(forward), ObjectiveBuilder(stats) {}
+
+            virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
+            virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector);
+            virtual PoseEstimator::Own GetSolver() const;
+
+            virtual String ToString() const { return forward ? "FORWARD PROJECTION" : "BACKWARD PROJECTION"; }
+
+            const ProjectionModel::ConstOwn p;
+            const StructureEstimation::Estimate& g;
+            const bool forward;
+
+        private:
+            GeometricMapping::WorldToImageBuilder m_builder;
+            Indices m_idx;
+        };
+
+        /**
+         * Objective builder for OutlierRejectionScheme::PHOTOMETRIC_ALIGN
+         */
+        class PhotometricObjectiveBuilder : public MultiObjectiveOutlierFilter::ObjectiveBuilder
+        {
+        public:
+            PhotometricObjectiveBuilder(const ProjectionModel::ConstOwn& pj, const StructureEstimation::Estimate& gi, const cv::Mat& Ii, const cv::Mat& Ij, AlignmentObjective::InlierSelector::Stats& stats)
+            : pj(pj), gi(gi), Ii(Ii), Ij(Ij), ObjectiveBuilder(stats) {}
+
+            virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
+            virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector);
+            virtual PoseEstimator::Own GetSolver() const { return PoseEstimator::Own(); } // photometric objective has no closed-form solver
+            
+            virtual String ToString() const { return "PHOTOMETRIC"; }
+
+            const ProjectionModel::ConstOwn pj;
+            const StructureEstimation::Estimate& gi;
+            const cv::Mat Ii;
+            const cv::Mat Ij;
+
+        private:
+            Indices m_idx;
+            std::vector<size_t> m_localIdx;
+        };
+
+        /**
+         * Objective builder for OutlierRejectionScheme::RIGID_ALIGN
+         */
+        class RigidObjectiveBuilder : public MultiObjectiveOutlierFilter::ObjectiveBuilder
+        {
+        public:
+            RigidObjectiveBuilder(const StructureEstimation::Estimate& gi, const StructureEstimation::Estimate& gj, AlignmentObjective::InlierSelector::Stats& stats)
+            : gi(gi), gj(gj), ObjectiveBuilder(stats) {}
+
+            virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
+            virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector);
+            virtual PoseEstimator::Own GetSolver() const { return PoseEstimator::Own(new QuatAbsOrientationSolver()); }
+
+            virtual String ToString() const { return "RIGID"; }
+
+            const StructureEstimation::Estimate& gi;
+            const StructureEstimation::Estimate& gj;
+
+        private:
+            GeometricMapping::WorldToWorldBuilder m_builder;
+            Indices m_idx0;
+            Indices m_idx1;
+        };
+
+        /**
+         *
+         */
         FeatureTracker(const FramedStore& src = FramedStore::Null, const FramedStore& dst = FramedStore::Null)
-        : src(src), dst(dst), policy(KEEP_BOTH), outlierRejection(EPIPOLAR) {}
+        : src(src), dst(dst), policy(KEEP_BOTH), outlierRejection(FORWARD_PROJ_ALIGN), inlierInjection(0) {}
 
         /**
          *
@@ -295,10 +403,10 @@ namespace seq2map
         /**
          * Get feature's 3D coordinates and error covariances from a dense structure.
          *
-         * \param f set of image features
-         * \param dense structure from, e.g. a depth map
+         * \param f Set of image features
+         * \param structure Dense structure from, for example, a depth map.
          *
-         * \return structure estimates of the given features
+         * \return Structure estimates of the given features
          */
         StructureEstimation::Estimate GetFeatureStructure(const ImageFeatureSet& f, const StructureEstimation::Estimate& structure);
 
@@ -331,47 +439,11 @@ namespace seq2map
         const FramedStore dst;
 
         FeatureMatcher matcher;
+        Stats stats;
         ConflictResolution policy;
-        int outlierRejection;
+
+        OutlierRejectionOptions outlierRejection;
+        InlierInjectionOptions  inlierInjection;
     };
-
-    class Mapper
-    {
-    public:
-        struct Capability
-        {
-            bool motion; // ego-motion estimation
-            bool metric; // metric reconstruction
-            bool dense;  // dense or semi-dense reconstruction
-        };
-
-        virtual Capability GetCapability() const = 0;
-        virtual bool SLAM(Map& map, size_t t0, size_t tn) = 0;
-    };
-
-    /**
-     * Implementation of a generalised multi-frame feature integration algorithm
-     * based on the paper "Visual Odometry by Multi-frame Feature Integration"
-     */
-    class MultiFrameFeatureIntegration : public Mapper
-    {
-    public:
-        virtual Capability GetCapability() const;
-        virtual bool SLAM(Map& map, size_t t0, size_t tn);
-
-        bool AddTracking(const FeatureTracker& tracking);
-
-    private:
-        std::vector<FeatureTracker> m_tracking;
-        std::vector<DisparityStore::ConstOwn> m_dispStores;
-    };
-
-    // class OrbSLAM : public Mapper {
-    // ...
-    // };
-    //
-    // class LargeScaleDenseSLAM : public Mapper {
-    // ...
-    // };
 }
 #endif // MAPPING_HPP

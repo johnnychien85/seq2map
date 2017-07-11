@@ -230,7 +230,7 @@ VectorisableD::Vec CalibGraphBundler::operator() (const VectorisableD::Vec& x) c
 
             params.intrinsics[proj.cam](tform(p));
 
-            assert(pts2d.size() == proj.imagePoints.size());
+            // assert(pts2d.size() == proj.imagePoints.size());
 
             for (size_t i = 0; i < p.size(); i++)
             {
