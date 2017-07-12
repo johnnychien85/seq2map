@@ -63,6 +63,11 @@ function [ER,Et,Tr,Ta,milestones,fig] = compareMotion(m0,m1,lbl,mks,tn,unit)
 	end
 
 	Ta = Ta / la * 100;
+
+	ER = cellfun(@mean,ER);
+	Et = cellfun(@mean,Et);
+
+	mean(Et,2)
 	
 	figure; subplot(2,1,1); grid on; hold on; xlabel 'Frame'; ylabel 'Inter-frame Drift (%)';
 	for k = 1 : m, plot(1:tn-1,Tr(k,:),mks{k},'color',C(k,:),'linewidth',1); end
@@ -73,12 +78,7 @@ function [ER,Et,Tr,Ta,milestones,fig] = compareMotion(m0,m1,lbl,mks,tn,unit)
 	for k = 1 : m, plot(1:tn-1,Ta(k,:),mks{k},'color',C(k,:),'linewidth',2); end
 	legend(lbl{2:end},'Location','EastOutside');
 	xlim([1 tn-1]);
-
-	ER = cellfun(@mean,ER);
-	Et = cellfun(@mean,Et);
-
-	mean(Et,2)
-    
+  
 	fig = figure;
 	subplot(1,2,1); hold on; grid on;
 	% title(sprintf('m0=%.02f%%', mean(Et)));

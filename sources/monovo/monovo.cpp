@@ -42,6 +42,8 @@ private:
     DisparityStore::ConstOwn m_disparityStore;
 
     AlignmentOptions m_alignment;
+    size_t m_ransacIter;
+    double m_ransacConf;
 };
 
 void MyApp::ShowHelp(const Options& o) const
@@ -62,7 +64,9 @@ void MyApp::SetOptions(Options& o, Options& h, Positional& p)
         ("back-projection",   po::bool_switch  (&m_alignment.backwardProj)->default_value(false), "enable backward-projection ego-motion estimation in addition to the forward-projection model.")
         ("epipolar",          po::bool_switch  (&m_alignment.epipolar    )->default_value(false), "enable epipolar objective for ego-motion estimation.")
         ("rigid",             po::bool_switch  (&m_alignment.rigid       )->default_value(false), "enable rigid alignment model for ego-motion estimation.")
-        ("photometric",       po::bool_switch  (&m_alignment.photometric )->default_value(false), "enable photometric alignment model for ego-motion estimation.");
+        ("photometric",       po::bool_switch  (&m_alignment.photometric )->default_value(false), "enable photometric alignment model for ego-motion estimation.")
+        ("ransac-iter",       po::value<size_t>(&m_ransacIter)->default_value(100),  "max number of iterations for the RANSAC outlier rejection process.")
+        ("ransac-conf",       po::value<double>(&m_ransacConf)->default_value(0.5f), "expected probability that all the drawn samples are inliers during the RANSAC process.");
 
     h.add_options()
         ("seq", po::value<String>(&m_seqPath)->default_value(""), "Path to the input sequence.")
@@ -133,6 +137,9 @@ bool MyApp::Init()
     m_featureStore = F;
     m_disparityStore = D;
 
+    // randomise the RANSAC process
+    std::srand(std::time(0));
+
     return true;
 }
 
@@ -153,9 +160,9 @@ bool MyApp::Execute()
     if (m_alignment.photometric ) tracker.outlierRejection.scheme |= FeatureTracker::PHOTOMETRIC_ALIGN;
     if (m_alignment.epipolar    ) tracker.outlierRejection.scheme |= FeatureTracker::EPIPOLAR_ALIGN;
 
-    tracker.outlierRejection.maxIterations = 50;
+    tracker.outlierRejection.maxIterations = m_ransacIter;
     tracker.outlierRejection.minInlierRatio = 0.5f;
-    tracker.outlierRejection.confidence = 0.5f;
+    tracker.outlierRejection.confidence = m_ransacConf;
     tracker.outlierRejection.epipolarEps = 999;
 
     tracker.inlierInjection.scheme |= FeatureTracker::FORWARD_FLOW;

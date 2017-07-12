@@ -241,6 +241,10 @@ bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& f)
                 if (ill)
                 {
                     PersistentMat(J).Store(Path("J.bin"));
+                    PersistentMat(x_delta).Store(Path("x_delta.bin"));
+                    PersistentMat(cv::Mat(x)).Store(Path("x.bin"));
+                    PersistentMat(cv::Mat(y)).Store(Path("y.bin"));
+
                     E_ERROR << "problem ill-posed";
 
                     return false;

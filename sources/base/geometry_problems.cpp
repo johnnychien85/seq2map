@@ -1,4 +1,5 @@
 #include <seq2map/geometry_problems.hpp>
+#include <random>
 
 using namespace seq2map;
 
