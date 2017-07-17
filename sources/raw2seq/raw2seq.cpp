@@ -1,3 +1,4 @@
+#include <seq2map/app.hpp>
 #include "builder.hpp"
 
 class MyApp : public App

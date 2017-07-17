@@ -68,7 +68,8 @@ endif()
 
 # Executables Configuration
 project(seq2map CXX)
-add_library   (base        includes/seq2map/common.hpp           # Shared components
+add_library   (base        includes/seq2map/app.hpp              # Shared components
+                           includes/seq2map/common.hpp           # 
                            includes/seq2map/common_impl.hpp      # 
                            includes/seq2map/disparity.hpp        # 
                            includes/seq2map/features.hpp         # 
@@ -80,6 +81,7 @@ add_library   (base        includes/seq2map/common.hpp           # Shared compon
                            includes/seq2map/sequence.hpp         # 
                            includes/seq2map/solve.hpp            # 
                            includes/seq2map/sparse_node.hpp      # 
+                           sources/base/app.cpp                  # 
                            sources/base/common.cpp               # 
                            sources/base/disparity.cpp            # 
                            sources/base/features.cpp             # 

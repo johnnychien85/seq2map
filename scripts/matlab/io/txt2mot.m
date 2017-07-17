@@ -7,4 +7,6 @@ function M = txt2mot(filename)
     for i = 1 : size(x,1)
         M(1:3,:,i) = reshape(x(i,:),[4,3])';
     end
+    
+    fclose(f);
 end

@@ -19,6 +19,7 @@
 
 #define E_LOG(lvl) BOOST_LOG_TRIVIAL(lvl) << __func__  << " : "
 #define E_TRACE    E_LOG(trace)
+#define E_DEBUG    E_LOG(debug)
 #define E_INFO	   E_LOG(info)
 #define E_WARNING  E_LOG(warning)
 #define E_ERROR    E_LOG(error)
@@ -448,32 +449,16 @@ namespace seq2map
     };
 
     /**
-     * Application class to provide an unified interface for seq2map utilities.
+     *
      */
-    class App
+    class ColourMap
     {
     public:
-        int Run();
+        ColourMap(size_t colours);
+        cv::Scalar GetColour(double val, double min, double max);
 
     protected:
-        typedef boost::program_options::options_description Options;
-        typedef boost::program_options::positional_options_description Positional;
-
-        /* ctor */ App(int argc, char* argv[]);
-        /* dtor */ virtual ~App() {}
-        virtual void SetOptions(Options& general, Options& hidden, Positional& positional) = 0;
-        virtual void ShowSynopsis() const;
-        virtual void ShowHelp(const Options& options) const = 0;
-        virtual bool ProcessUnknownArgs(const Strings& args);
-        virtual bool Init() = 0;
-        virtual bool Execute() = 0;
-
-        const Path m_exec;
-
-    private:
-        boost::program_options::command_line_parser m_parser;
-        bool m_help;
-        Path m_logfile;
+        cv::Mat m_cmap;
     };
 }
 

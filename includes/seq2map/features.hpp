@@ -51,17 +51,48 @@ namespace seq2map
         static String NormType2String(int type);
         static int    String2NormType(const String& type);
 
+        /**
+         * Construct am empty feature set.
+         */
+        ImageFeatureSet() : m_normType(cv::NORM_L2) {}
+
+        /**
+         * Construct a feature set from key points and descriptors.
+         */
         ImageFeatureSet(const KeyPoints& keypoints, const cv::Mat& descriptors, int normType = cv::NORM_L2)
         : m_keypoints(keypoints), m_descriptors(descriptors), m_normType(normType)
         {
-            assert(keypoints.size() == descriptors.rows);
+            if (keypoints.size() != descriptors.rows && !descriptors.empty())
+            {
+                E_ERROR << "inconsistent size of descriptor matrix";
+            }
         }
-        /* ctor */ ImageFeatureSet() : m_normType(cv::NORM_L2) {}
-        /* dtor */ virtual ~ImageFeatureSet() {}
+       
+        /**
+         * Desctructor.
+         */
+        virtual ~ImageFeatureSet() {}
 
+        /**
+         *
+         */
+        ImageFeatureSet& operator= (const ImageFeatureSet& set);
+
+        /**
+         * Get a feature from set. A constant shallow copy is returned.
+         */
         ImageFeature GetFeature(const size_t idx) const;
+
+        /**
+         * Same as GetFeature.
+         */
         inline const ImageFeature operator[](size_t idx) const { return GetFeature(idx); }
         
+        /**
+         * Expand the feature set by appending another one.
+         */
+        bool Append(const ImageFeatureSet& set);
+
         virtual bool Store(Path& path) const;
         virtual bool Restore(const Path& path);
         

@@ -1,3 +1,4 @@
+#include <seq2map/app.hpp>
 #include <seq2map/sequence.hpp>
 
 using namespace seq2map;

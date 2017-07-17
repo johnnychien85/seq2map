@@ -1,3 +1,4 @@
+#include <seq2map/app.hpp>
 #include <seq2map/mapping.hpp>
 
 using namespace seq2map;
@@ -101,7 +102,6 @@ bool MultiFrameFeatureIntegration::SLAM(Map& map, size_t t0, size_t tn)
 
     return true;
 }
-
 
 class MyApp : public App
 {

@@ -67,7 +67,7 @@ function [ER,Et,Tr,Ta,milestones,fig] = compareMotion(m0,m1,lbl,mks,tn,unit)
 	ER = cellfun(@mean,ER);
 	Et = cellfun(@mean,Et);
 
-	mean(Et,2)
+	%mean(Et,2);
 	
 	figure; subplot(2,1,1); grid on; hold on; xlabel 'Frame'; ylabel 'Inter-frame Drift (%)';
 	for k = 1 : m, plot(1:tn-1,Tr(k,:),mks{k},'color',C(k,:),'linewidth',1); end

@@ -654,8 +654,8 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
 
     if (!success)
     {
-        const int inlierRate = std::round(100 * numInliers / population);
-        const int targetRate = std::round(100 * minInliers / population);
+        const int inlierRate = (int) (std::round(100 * numInliers / population));
+        const int targetRate = (int) (std::round(100 * minInliers / population));
 
         E_WARNING << "unable to find enough inliers in " << m_maxIter << " iteration(s)";
         E_WARNING << "the best trial achieves " << inlierRate << "% inliers while " << targetRate << "% is required";
@@ -897,7 +897,7 @@ StructureEstimation::Estimate& StructureEstimation::Estimate::operator+= (const 
         {
             for (int j1 = 0; j1 < g10.mat.cols; j1++)
             {
-                const int j = sub2symind(j0, j1, m0->dims);
+                const int j = sub2symind(j0, j1, static_cast<int>(m0->dims));
                 g0.mat.col(j0) += K.col(j).mul(g10.mat.col(j1));
             }
         }
@@ -970,51 +970,29 @@ void MidPointTriangulation::DecomposeProjMatrix(const cv::Mat& P, cv::Mat& KRinv
 
 StructureEstimation::Estimate MidPointTriangulation::operator() (const GeometricMapping& m) const
 {
-    Estimate est(m.src.shape);
-    //MahalanobisMetric e;
-
-    if (m.src.IsConsistent(m.dst))
+    if (!m.src.IsConsistent(m.dst))
     {
         E_ERROR << "given mapping is inconsistent";
-        return est;
+        return Estimate(m.src.shape);
     }
-
-    Geometry p0 = P0.Backproject(m.src).Reshape(Geometry::ROW_MAJOR);
-    Geometry p1 = P1.Backproject(m.dst).Reshape(Geometry::ROW_MAJOR);
-
-    Geometry g(Geometry::ROW_MAJOR);
 
     cv::Mat c0 = P0.pose.GetInverse().GetTranslation();
     cv::Mat c1 = P1.pose.GetInverse().GetTranslation();
 
-    //std::ofstream of("tri.m");
-    //of << mat2string(cv::Mat(map.From()).reshape(1), "x0") << std::endl;
-    //of << mat2string(cv::Mat(map.To())  .reshape(1), "x1") << std::endl;
-
     cv::Mat s = c0 + c1;
     cv::Mat t = c1 - c0;
-    cv::Mat x0 = p0.mat;
-    cv::Mat x1 = p1.mat;
+    cv::Mat x0 = P0.Backproject(m.src).Reshape(Geometry::ROW_MAJOR).mat;
+    cv::Mat x1 = P1.Backproject(m.dst).Reshape(Geometry::ROW_MAJOR).mat;
 
     if (x1.type() != x0.type())
     {
         x1.convertTo(x1, x0.type());
     }
 
-    //x0.convertTo(x0, CV_64F);
-    //x1.convertTo(x1, CV_64F);
-    //t.convertTo(t, CV_64F);
-    //m.convertTo(m, CV_64F);
+    cv::Mat g = cv::Mat(x0.rows, 3, x0.type());
+    cv::Mat w = cv::Mat(x0.rows, 1, x0.type());
 
-    //of << mat2string(m_projMatrix0, "P0") << std::endl;
-    //of << mat2string(m_projMatrix1, "P1") << std::endl;
-    //of << mat2string(x0, "x0_h") << std::endl;
-    //of << mat2string(x1, "x1_h") << std::endl;
-
-    g.mat = cv::Mat(x0.rows, 3, x0.type());
-    //cv::Mat cov = cv::Mat(x0.rows, 1, x0.type());
-
-    for (int i = 0; i < g.mat.rows; i++)
+    for (int i = 0; i < g.rows; i++)
     {
         cv::Mat Bt = cv::Mat(2, 3, x0.type());
         x0.row(i).copyTo(Bt.row(0));
@@ -1029,20 +1007,15 @@ StructureEstimation::Estimate MidPointTriangulation::operator() (const Geometric
         cv::Mat x = (B * k + s) * 0.5f;
         cv::Mat d = (A * k - t);
 
-        //double n = cv::norm(d);
-        //double n2 = n * n;
-
-        g.mat.row(i) = x.t();
-        //e.icv.mat.row(i) = 1.0f / n2;
-
-        //if (i == 0)
-        //{
-        //    of << mat2string(A, "A0") << std::endl;
-        //    of << mat2string((At*A).inv(), "A0Ai") << std::endl;
-        //    of << mat2string(k, "k0") << std::endl;
-        //}
+        g.row(i) = x.t();
+        w.row(i) = 1.0f / cv::norm(d);
     }
-    //of << mat2string(x3d, "g") << std::endl;
-
-    return est;
+    
+    return Estimate(
+        Geometry(Geometry::ROW_MAJOR, g).Reshape(m.src),
+        Metric::Own(new WeightedEuclideanMetric(w)));
 }
+
+//==[ MultipleViewBlockMatcher ]==============================================//
+
+PinholeModel MultipleViewBlockMatcher::RefView::NullProjection;

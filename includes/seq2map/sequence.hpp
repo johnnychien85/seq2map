@@ -120,7 +120,7 @@ namespace seq2map
         inline void SetIntrinsics(ProjectionModel::Own& intrinsics) { m_intrinsics = intrinsics; }
         inline ProjectionModel::ConstOwn GetIntrinsics() const      { return m_intrinsics; }
         inline ProjectionModel::Own      GetIntrinsics()            { return m_intrinsics; }
-        inline ProjectionModel::ConstOwn GetPosedProjection() const { return m_intrinsics ? ProjectionModel::ConstOwn(new PosedProjection(GetExtrinsics(), *m_intrinsics)) : ProjectionModel::ConstOwn(); }
+        inline ProjectionModel::ConstOwn GetPosedProjection() const { return m_intrinsics ? ProjectionModel::ConstOwn(new PosedProjection(GetExtrinsics(), *m_intrinsics)) : PosedProjection::ConstOwn(); }
         ImageStore&       GetImageStore()                           { return m_imageStore; }
         const ImageStore& GetImageStore() const                     { return m_imageStore; }
         inline size_t GetFrames() const                             { return m_imageStore.GetItems(); }

@@ -863,7 +863,7 @@ bool Sequence::Restore(const Path& path)
                 return false;
             }
 
-            E_INFO << "camera " << idx << " restored";
+            E_TRACE << "camera " << idx << " restored";
         }
 
         // restore stereo pairs
@@ -906,7 +906,7 @@ bool Sequence::Restore(const Path& path)
     }
 
     size_t stores = ScanStores();
-    E_INFO << "sequence successfully restored from " << from << " with " << stores << " store(s) found";
+    E_TRACE << "sequence successfully restored from " << from << " with " << stores << " store(s) found";
 
     return true;
 }
@@ -918,11 +918,11 @@ size_t Sequence::ScanStores()
 
     // scan feature stores
     Paths featureDirs = enumerateDirs(featureStorePath);
-    E_INFO << "scanning " << featureDirs.size() << " feature store(s) in " << featureStorePath;
+    E_TRACE << "scanning " << featureDirs.size() << " feature store(s) in " << featureStorePath;
 
     BOOST_FOREACH (const Path& dir, featureDirs)
     {
-        E_INFO << "processing " << dir;
+        E_TRACE << "processing " << dir;
 
         FeatureStore::Own store = FeatureStore::New(m_kptsStores.size());
         const Path from = dir / s_storeIndexFileName;
@@ -932,7 +932,7 @@ size_t Sequence::ScanStores()
 
         if (!fs.isOpened() || !store->Restore(fn))
         {
-            E_INFO << "failed restoring from " << from;
+            E_WARNING << "failed restoring from " << from;
             continue;
         }
 
@@ -943,16 +943,16 @@ size_t Sequence::ScanStores()
 
         if (!cam)
         {
-            E_INFO << "feature store restored but abandoned";
-            E_INFO << "reason being the owning camera is missing (idx = " << camIdx << ")";
+            E_TRACE << "feature store restored but abandoned";
+            E_TRACE << "reason being the owning camera is missing (idx = " << camIdx << ")";
 
             continue;
         }
             
         if (store->GetItems() != cam->GetFrames())
         {
-            E_INFO << "feature store restored but abandoned";
-            E_INFO << "reason being mismatch of frame numbers (items=" << store->GetItems() << ", frames=" << cam->GetFrames() << ")";
+            E_TRACE << "feature store restored but abandoned";
+            E_TRACE << "reason being mismatch of frame numbers (items=" << store->GetItems() << ", frames=" << cam->GetFrames() << ")";
 
             continue;
         }
@@ -960,16 +960,16 @@ size_t Sequence::ScanStores()
         store->m_cam = cam;
         m_kptsStores[store->GetIndex()] = store;
 
-        E_INFO << "feature store " << store->GetIndex() << " loaded to camera " << cam->GetIndex();
+        E_TRACE << "feature store " << store->GetIndex() << " loaded to camera " << cam->GetIndex();
     }
 
     // scan disparity stores
     Paths disparityDirs = enumerateDirs(disparityStorePath);
-    E_INFO << "scanning " << disparityDirs.size() << " disparity store(s) in " << disparityStorePath;
+    E_TRACE << "scanning " << disparityDirs.size() << " disparity store(s) in " << disparityStorePath;
 
     BOOST_FOREACH (const Path& dir, disparityDirs)
     {
-        E_INFO << "processing " << dir;
+        E_TRACE << "processing " << dir;
 
         DisparityStore::Own store = DisparityStore::New(m_dispStores.size());
         const Path from = dir / s_storeIndexFileName;
@@ -979,7 +979,7 @@ size_t Sequence::ScanStores()
 
         if (!fs.isOpened() || !store->Restore(fn))
         {
-            E_INFO << "failed restoring from " << from;
+            E_WARNING << "failed restoring from " << from;
             continue;
         }
 
@@ -993,16 +993,16 @@ size_t Sequence::ScanStores()
 
         if (!pair)
         {
-            E_INFO << "disparity store restored but abandoned";
-            E_INFO << "reason being missing stereo pair (" << priCamIdx << "," << secCamIdx << ")";
+            E_TRACE << "disparity store restored but abandoned";
+            E_TRACE << "reason being missing stereo pair (" << priCamIdx << "," << secCamIdx << ")";
 
             continue;
         }
 
         if (store->GetItems() != GetFrames())
         {
-            E_INFO << "disparity store restored but abandoned";
-            E_INFO << "reason being mismatch of frame numbers (items=" << store->GetItems() << ", frames=" << GetFrames() << ")";
+            E_TRACE << "disparity store restored but abandoned";
+            E_TRACE << "reason being mismatch of frame numbers (items=" << store->GetItems() << ", frames=" << GetFrames() << ")";
 
             continue;
         }
@@ -1010,7 +1010,7 @@ size_t Sequence::ScanStores()
         store->m_stereo = pair;
         m_dispStores[store->GetIndex()] = store;
 
-        E_INFO << "disparity store " << store->GetIndex() << " loaded to stereo pair " << pair->ToString();
+        E_TRACE << "disparity store " << store->GetIndex() << " loaded to stereo pair " << pair->ToString();
     }
 
     return m_kptsStores.size() + m_dispStores.size();

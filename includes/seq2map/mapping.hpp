@@ -85,6 +85,8 @@ namespace seq2map
     {
     public:
         std::map<size_t, Landmark::Ptrs> featureLandmarkLookup;
+        std::map<size_t, ImageFeatureSet> augmentedFeaturs;
+
         PoseEstimator::Estimate poseEstimate;
 
     protected:
@@ -105,9 +107,15 @@ namespace seq2map
         Source(size_t index = INVALID_INDEX) : Dimension(index) {}
     };
 
+    /**
+     *
+     */
     class Map : protected Map3<Hit, Landmark, Frame, Source>
     {
     public:
+        /**
+         *
+         */
         class Operator
         {
         public:
@@ -135,6 +143,11 @@ namespace seq2map
          */
         StructureEstimation::Estimate UpdateStructure(const Landmark::Ptrs& u, const StructureEstimation::Estimate& g, const EuclideanTransform& ref);
 
+        /**
+         *
+         */
+        Landmark::Ptrs GetLandmarks(std::vector<size_t> indices);
+
         inline Landmark& GetLandmark(size_t index) { return Dim0(index); }
         inline Frame&    GetFrame   (size_t index) { return Dim1(index); }
         inline Source&   GetSource  (size_t index) { return Dim2(index); }
@@ -146,9 +159,15 @@ namespace seq2map
         size_t m_newLandmarkId;
     };
 
+    /**
+     *
+     */
     class MultiObjectiveOutlierFilter : public FeatureMatcher::Filter
     {
     public:
+        /**
+         *
+         */
         class ObjectiveBuilder : public Referenced<ObjectiveBuilder>
         {
         public:
@@ -175,6 +194,9 @@ namespace seq2map
         bool optimisation;
     };
 
+    /**
+     *
+     */
     class FeatureTracker : public Map::Operator
     {
     public:
@@ -264,14 +286,15 @@ namespace seq2map
         struct InlierInjectionOptions
         {
             InlierInjectionOptions(int scheme)
-            : scheme(scheme), blockSize(7), levels(3), extractDescriptor(false) {}
+            : scheme(scheme), blockSize(5), levels(3), bidirectionalEps(0), extractDescriptor(false) {}
 
-            int scheme;             ///< strategies to recover missing features
-            size_t blockSize;       ///< size of search window
-            size_t levels;          ///< level of pyramid for optical flow computation
-            double epipolarEps;     ///< threshold of the epipolar objective to decide if a flow is valid, in the normalised image pixel
-            double searchRange;     ///< maximum distance between a prediction and a match hypothesis, applicable to BACKWARD_FLOW and EPIPOLAR_SEARCH
-            bool extractDescriptor; ///< recompute descriptor for each recovered landmark, set to false to re-use a previously extracted descriptor
+            int scheme;              ///< Strategies to recover missing features.
+            size_t blockSize;        ///< Size of search window.
+            size_t levels;           ///< Level of pyramid for optical flow computation.
+            double bidirectionalEps; ///< Threshold of the forward-backward flow error, in image pixels. Set to a non-positive value to disable the test.
+            double epipolarEps;      ///< Threshold of the epipolar objective to decide if a flow is valid, in normalised image pixel.
+            double searchRange;      ///< Maximum distance between a prediction and a match hypothesis, applicable to BACKWARD_FLOW and EPIPOLAR_SEARCH.
+            bool extractDescriptor;  ///< Recompute descriptor for each recovered landmark, set to false to re-use a previously extracted descriptor.
         };
 
         /**
@@ -281,7 +304,7 @@ namespace seq2map
         {
             typedef std::map<int, AlignmentObjective::InlierSelector::Stats> ObjectiveStats;
 
-            Stats() : spawned(0), tracked(0), joined(0), removed(0) { motion.valid = false; }
+            Stats() : spawned(0), tracked(0), joined(0), removed(0), injected(0) { motion.valid = false; }
 
             size_t spawned;  ///< number of newly discovered landmarks
             size_t tracked;  ///< number of tracked landmarks
@@ -290,6 +313,7 @@ namespace seq2map
             size_t injected; ///< number of recovered landmarks
             ObjectiveStats objectives; ///< per outlier model stats
             PoseEstimator::Estimate motion; ///< ego-motion
+            GeometricMapping flow; ///< feature flow
         };
 
 
@@ -393,7 +417,7 @@ namespace seq2map
          *
          */
         FeatureTracker(const FramedStore& src = FramedStore::Null, const FramedStore& dst = FramedStore::Null)
-        : src(src), dst(dst), policy(KEEP_BOTH), outlierRejection(FORWARD_PROJ_ALIGN), inlierInjection(0) {}
+        : src(src), dst(dst), policy(KEEP_BOTH), outlierRejection(FORWARD_PROJ_ALIGN), inlierInjection(0), structureScheme(NO_RECOVERY) {}
 
         /**
          *
@@ -409,6 +433,32 @@ namespace seq2map
          * \return Structure estimates of the given features
          */
         StructureEstimation::Estimate GetFeatureStructure(const ImageFeatureSet& f, const StructureEstimation::Estimate& structure);
+
+        /**
+         * Find features in the next frame using optical flow.
+         *
+         * \param Ii Image of source frame.
+         * \param Ij Image of target frame.
+         * \param fi Feature set of source frame.
+         * \param eval Constructed epipolar objective.
+         * \param pose Pose of the target frame with respect to the source.
+         * \param tracked Input/output array of booleans to indicate the status of each feature's tracking.
+         * \return Mapping of tracked feature from source frame to the target.
+         */
+        GeometricMapping FindLostFeaturesFlow(const cv::Mat& Ii, const cv::Mat& Ij, const ImageFeatureSet& fi, AlignmentObjective::Own eval, const EuclideanTransform& pose, std::vector<bool>& tracked);
+
+        /**
+         * Augment a target feature set by means of a feature flow from the source set.
+         *
+         * \param flow
+         * \param fi
+         * \param fj
+         * \param ui
+         * \param uj
+         * \param aj
+         * \return True when success, otherwise false.
+         */
+        bool AugmentFeatures(const GeometricMapping flow, const ImageFeatureSet& fi, const ImageFeatureSet& fj, Map& map, Frame& ti, Frame& tj, Source& si, Source& sj, Landmark::Ptrs& ui, Landmark::Ptrs& uj, ImageFeatureSet& aj);
 
         /**
          *
@@ -444,6 +494,8 @@ namespace seq2map
 
         OutlierRejectionOptions outlierRejection;
         InlierInjectionOptions  inlierInjection;
+
+        StructureRecoveryScheme structureScheme;
     };
 }
 #endif // MAPPING_HPP

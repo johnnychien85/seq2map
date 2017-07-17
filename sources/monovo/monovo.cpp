@@ -1,3 +1,5 @@
+#include <boost/algorithm/string/join.hpp>
+#include <seq2map/app.hpp>
 #include <seq2map/mapping.hpp>
 
 using namespace seq2map;
@@ -32,6 +34,9 @@ private:
         bool rigid;
     };
 
+    bool ParseAlignOptions(const String& flag, AlignmentOptions& options);
+    bool ParseFlowOptions(const String& flow, bool& forward, bool& backward);
+
     String m_seqPath;
     String m_outPath;
     size_t m_kptsStoreId;
@@ -41,9 +46,17 @@ private:
     FeatureStore::ConstOwn   m_featureStore;
     DisparityStore::ConstOwn m_disparityStore;
 
+    String m_alignString;
+    String m_flowString;
     AlignmentOptions m_alignment;
     size_t m_ransacIter;
     double m_ransacConf;
+
+    bool m_forwardFlow;
+    bool m_backwardFlow;
+    bool m_blockMatching;
+    int m_flowLevels;
+    int m_blockSize;
 };
 
 void MyApp::ShowHelp(const Options& o) const
@@ -59,14 +72,14 @@ void MyApp::SetOptions(Options& o, Options& h, Positional& p)
     namespace po = boost::program_options;
 
     o.add_options()
-        ("feature-store,f",   po::value<size_t>(&m_kptsStoreId)->default_value(0),  "source feature store")
-        ("disparity-store,d", po::value<int>   (&m_dispStoreId)->default_value(-1), "optional disparity store, set to -1 to disable use of disparity maps.")
-        ("back-projection",   po::bool_switch  (&m_alignment.backwardProj)->default_value(false), "enable backward-projection ego-motion estimation in addition to the forward-projection model.")
-        ("epipolar",          po::bool_switch  (&m_alignment.epipolar    )->default_value(false), "enable epipolar objective for ego-motion estimation.")
-        ("rigid",             po::bool_switch  (&m_alignment.rigid       )->default_value(false), "enable rigid alignment model for ego-motion estimation.")
-        ("photometric",       po::bool_switch  (&m_alignment.photometric )->default_value(false), "enable photometric alignment model for ego-motion estimation.")
-        ("ransac-iter",       po::value<size_t>(&m_ransacIter)->default_value(100),  "max number of iterations for the RANSAC outlier rejection process.")
-        ("ransac-conf",       po::value<double>(&m_ransacConf)->default_value(0.5f), "expected probability that all the drawn samples are inliers during the RANSAC process.");
+        ("feature-store,f",   po::value<size_t>(&m_kptsStoreId)->default_value(0),   "Source feature store")
+        ("disparity-store,d", po::value<int>   (&m_dispStoreId)->default_value(-1),  "Optional disparity store, set to -1 to disable use of disparity maps.")
+        ("align-model,a",     po::value<String>(&m_alignString)->default_value(""),  "A string containning flags of alignment models to be enabled. \"B\" for backward projection, \"P\" for photometric, \"R\" for rigid, and \"E\" for epipolar alignment.")
+        ("flow",              po::value<String>(&m_flowString)->default_value(""),   "Optical flow computation option for missed features. Valid strings are \"FORWARD\", \"BACKWARD\" and \"BIDIRECTION\"")
+        ("ransac-iter",       po::value<size_t>(&m_ransacIter)->default_value(100),  "Max number of iterations for the RANSAC outlier rejection process.")
+        ("ransac-conf",       po::value<double>(&m_ransacConf)->default_value(0.5f), "Expected probability that all the drawn samples are inliers during the RANSAC process.")
+        ("block-matching",    po::bool_switch  (&m_blockMatching)->default_value(false),  "Enable block matching along epipolar lines to recover missing features.")
+    ;
 
     h.add_options()
         ("seq", po::value<String>(&m_seqPath)->default_value(""), "Path to the input sequence.")
@@ -92,6 +105,18 @@ bool MyApp::Init()
     if (!m_seq.Restore(m_seqPath))
     {
         E_ERROR << "error restoring sequence from " << m_seqPath;
+        return false;
+    }
+
+    if (!ParseAlignOptions(m_alignString, m_alignment))
+    {
+        E_ERROR << "error parsing alignment flag \"" << m_alignString << "\"";
+        return false;
+    }
+
+    if (!ParseFlowOptions(m_flowString, m_forwardFlow, m_backwardFlow))
+    {
+        E_ERROR << "error parsing optical flow option \"" << m_flowString << "\"";
         return false;
     }
 
@@ -138,7 +163,7 @@ bool MyApp::Init()
     m_disparityStore = D;
 
     // randomise the RANSAC process
-    std::srand(std::time(0));
+    std::srand(static_cast<unsigned int>(std::time(0)));
 
     return true;
 }
@@ -154,6 +179,17 @@ bool MyApp::Execute()
         FeatureTracker::FramedStore(F, 1, D)  // to frame k+1
     );
 
+    Strings models;
+    if (m_alignment.forwardProj)  models.push_back("FORWARD-PROJECTION");
+    if (m_alignment.backwardProj) models.push_back("BACKWARD-PROJECTION");
+    if (m_alignment.rigid)        models.push_back("RIGID");
+    if (m_alignment.photometric)  models.push_back("PHOTOMETRIC");
+    if (m_alignment.epipolar)     models.push_back("EPIPOLAR");
+
+    E_INFO << "starting monocular visual odometry from sequence " << m_seqPath;
+    E_INFO << "enabled alignment model: " << boost::algorithm::join(models, ", ");
+    E_INFO << "optical flow direction:  " << m_flowString;
+
     if (m_alignment.forwardProj ) tracker.outlierRejection.scheme |= FeatureTracker::FORWARD_PROJ_ALIGN;
     if (m_alignment.backwardProj) tracker.outlierRejection.scheme |= FeatureTracker::BACKWARD_PROJ_ALIGN;
     if (m_alignment.rigid       ) tracker.outlierRejection.scheme |= FeatureTracker::RIGID_ALIGN;
@@ -161,17 +197,20 @@ bool MyApp::Execute()
     if (m_alignment.epipolar    ) tracker.outlierRejection.scheme |= FeatureTracker::EPIPOLAR_ALIGN;
 
     tracker.outlierRejection.maxIterations = m_ransacIter;
-    tracker.outlierRejection.minInlierRatio = 0.5f;
+    tracker.outlierRejection.minInlierRatio = 0.4f;
     tracker.outlierRejection.confidence = m_ransacConf;
     tracker.outlierRejection.epipolarEps = 999;
 
-    tracker.inlierInjection.scheme |= FeatureTracker::FORWARD_FLOW;
-    tracker.inlierInjection.scheme |= FeatureTracker::BACKWARD_FLOW;
-    tracker.inlierInjection.scheme |= FeatureTracker::EPIPOLAR_SEARCH;
-    tracker.inlierInjection.levels = 3;
+    if (m_forwardFlow)   tracker.inlierInjection.scheme |= FeatureTracker::FORWARD_FLOW;
+    if (m_backwardFlow)  tracker.inlierInjection.scheme |= FeatureTracker::BACKWARD_FLOW;
+    if (m_blockMatching) tracker.inlierInjection.scheme |= FeatureTracker::EPIPOLAR_SEARCH;
     tracker.inlierInjection.blockSize = 5;
-    tracker.inlierInjection.searchRange = 7;
-    tracker.inlierInjection.extractDescriptor = true;
+    tracker.inlierInjection.levels = 3;
+    tracker.inlierInjection.bidirectionalEps = 1;
+    tracker.inlierInjection.epipolarEps = 1800;
+    tracker.inlierInjection.extractDescriptor = false;
+
+    tracker.structureScheme = FeatureTracker::MIDPOINT_TRIANGULATION;
 
     Motion mot;
     Speedometre metre;
@@ -185,10 +224,11 @@ bool MyApp::Execute()
         metre.Stop(1);
 
         E_INFO << "Frame " << t << " -> " << (t+1) << ": "
-            << tracker.stats.spawned << " spawned, "
-            << tracker.stats.tracked << " tracked, "
-            << tracker.stats.removed << " removed, "
-            << tracker.stats.joined  << " joined";
+            << tracker.stats.spawned  << " spawned, "
+            << tracker.stats.tracked  << " tracked, "
+            << tracker.stats.injected << " injected, "
+            << tracker.stats.removed  << " removed, "
+            << tracker.stats.joined   << " joined";
         E_INFO << "Matcher: " << tracker.matcher.Report();
 
         BOOST_FOREACH (FeatureTracker::Stats::ObjectiveStats::value_type pair, tracker.stats.objectives)
@@ -225,6 +265,59 @@ bool MyApp::Execute()
     }
 
     return true;
+}
+
+bool MyApp::ParseAlignOptions(const String& flag, AlignmentOptions& options)
+{
+    for (size_t i = 0; i < flag.length(); i++)
+    {
+        switch (flag[i])
+        {
+        case 'B': options.backwardProj = true; break;
+        case 'P': options.photometric  = true; break;
+        case 'R': options.rigid        = true; break;
+        case 'E': options.epipolar     = true; break;
+        default:
+            E_ERROR << "unknown model \"" << flag[i] << "\"";
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool MyApp::ParseFlowOptions(const String& flow, bool& forward, bool& backward)
+{
+    if (flow.empty())
+    {
+        forward = backward = false;
+        return true;
+    }
+
+    if (flow.compare("FORWARD") == 0)
+    {
+        forward = true;
+        backward = false;
+
+        return true;
+    }
+
+    if (flow.compare("BACKWARD") == 0)
+    {
+        forward = false;
+        backward = true;
+
+        return true;
+    }
+
+    if (flow.compare("BIDIRECTION") == 0)
+    {
+        forward = backward = true;
+        return true;
+    }
+
+    E_ERROR << "unknown flow option \"" << flow << "\"";
+    return false;
 }
 
 int main(int argc, char* argv[])

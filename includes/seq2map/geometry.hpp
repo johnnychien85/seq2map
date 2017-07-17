@@ -811,7 +811,8 @@ namespace seq2map
     /**
      * A delegation class modelling a projection process associated with a reference frame.
      */
-    class PosedProjection : public ProjectionModel
+    class PosedProjection
+    : public ProjectionModel
     { 
     public:
         PosedProjection(const EuclideanTransform& pose, ProjectionModel& proj) : pose(pose), proj(proj) {}

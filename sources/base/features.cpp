@@ -105,6 +105,15 @@ int seq2map::ImageFeatureSet::String2NormType(const seq2map::String& type)
     return -1;
 }
 
+ImageFeatureSet& ImageFeatureSet::operator= (const ImageFeatureSet& set)
+{
+    m_normType    = set.m_normType;
+    m_keypoints   = set.m_keypoints;
+    m_descriptors = set.m_descriptors.clone();
+
+    return *this;
+}
+
 bool seq2map::ImageFeatureSet::Store(Path& path) const
 {
     std::ofstream os(path.string().c_str(), std::ios::out | std::ios::binary);
@@ -212,6 +221,47 @@ bool ImageFeatureSet::Restore(const Path& path)
     // TODO: add file corruption check (e.g. reaching EoF pre-maturely)
     // ..
     // ..
+
+    return true;
+}
+
+bool ImageFeatureSet::Append(const ImageFeatureSet& set)
+{
+    if (set.IsEmpty())
+    {
+        return true;
+    }
+
+    if (this->IsEmpty())
+    {
+        *this = set;
+        return true;
+    }
+
+    if (m_normType != set.GetNormType())
+    {
+        E_ERROR << "inconsistent norm type, the local set uses " << NormType2String(m_normType) <<
+                   " while the foriegn type uses " << NormType2String(set.GetNormType());
+        return false;
+    }
+
+    if (m_descriptors.type() != set.m_descriptors.type())
+    {
+        E_ERROR << "inconsistent descriptor type";
+        return false;
+    }
+
+    if (m_descriptors.cols != set.m_descriptors.cols)
+    {
+        E_ERROR << "inconsistent descriptor size";
+        return false;
+    }
+
+    // append key points
+    std::copy(set.m_keypoints.cbegin(), set.m_keypoints.cend(), std::back_inserter(m_keypoints));
+
+    // concatenate descriptor matrices
+    cv::vconcat(m_descriptors, set.m_descriptors, m_descriptors);
 
     return true;
 }

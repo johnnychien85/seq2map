@@ -225,6 +225,19 @@ StructureEstimation::Estimate Map::UpdateStructure(const Landmark::Ptrs& u, cons
     return g0.Transform(ref);
 }
 
+Landmark::Ptrs Map::GetLandmarks(std::vector<size_t> indices)
+{
+    Landmark::Ptrs u;
+    u.reserve(indices.size());
+
+    BOOST_FOREACH (size_t idx, indices)
+    {
+        u.push_back(&GetLandmark(idx));
+    }
+
+    return u;
+}
+
 //==[ Landmark ]==============================================================//
 
 Hit& Landmark::Hit(Frame& frame, Source& src, size_t index)
@@ -359,7 +372,7 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, Indices& in
     Indices::iterator itr = inliers.begin();
     for (std::vector<size_t>::const_iterator h = hits.begin(); h != hits.end(); h++)
     {
-        if (*h == 0 /*< estimator.GetSelectors().size()*/)
+        if (*h < estimator.GetSelectors().size())
         {
             fmap[*itr].Reject(FeatureMatch::GEOMETRIC_TEST_FAILED);
             inliers.erase(itr++);
@@ -383,8 +396,6 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, Indices& in
 
 bool FeatureTracker::operator() (Map& map, size_t t)
 {
-    stats = Stats();
-
     Source& si = map.GetSource(src.store->GetIndex());
     Source& sj = map.GetSource(dst.store->GetIndex());
 
@@ -403,12 +414,25 @@ bool FeatureTracker::operator() (Map& map, size_t t)
     Landmark::Ptrs& uj = tj.featureLandmarkLookup[Fj.GetIndex()];
     Camera::ConstOwn ci = Fi.GetCamera();
     Camera::ConstOwn cj = Fj.GetCamera();
+    ProjectionModel::ConstOwn pi = ci ? ci->GetPosedProjection() : ProjectionModel::ConstOwn();
+    ProjectionModel::ConstOwn pj = cj ? cj->GetPosedProjection() : ProjectionModel::ConstOwn();
+    cv::Mat Ii = ci ? ci->GetImageStore()[ti.GetIndex()].im : cv::Mat();
+    cv::Mat Ij = cj ? cj->GetImageStore()[tj.GetIndex()].im : cv::Mat();
     PoseEstimator::Estimate& mi = ti.poseEstimate;
     PoseEstimator::Estimate& mj = tj.poseEstimate;
     StructureEstimation::Estimate gi(Geometry::ROW_MAJOR);
     StructureEstimation::Estimate gj(Geometry::ROW_MAJOR);
 
     boost::shared_ptr<MultiObjectiveOutlierFilter> filter;
+
+    GeometricMapping::ImageToImageBuilder flow;
+
+    // initialise statistics
+    stats = Stats();
+
+    // append augmented feature sets
+    fi.Append(ti.augmentedFeaturs[Fi.GetIndex()]);
+    fj.Append(tj.augmentedFeaturs[Fj.GetIndex()]);
 
     // initialise frame's feature-landmark lookup table for first time access
     if (ui.empty()) ui.resize(fi.GetSize(), NULL);
@@ -425,12 +449,6 @@ bool FeatureTracker::operator() (Map& map, size_t t)
     // build the outlier filter and models
     if (outlierRejection.scheme)
     {
-        ProjectionModel::ConstOwn pi = ci ? ci->GetPosedProjection() : ProjectionModel::ConstOwn();
-        ProjectionModel::ConstOwn pj = cj ? cj->GetPosedProjection() : ProjectionModel::ConstOwn();
-
-        cv::Mat Ii = ci ? ci->GetImageStore()[ti.GetIndex()].im : cv::Mat();
-        cv::Mat Ij = cj ? cj->GetImageStore()[tj.GetIndex()].im : cv::Mat();
-
         filter = boost::shared_ptr<MultiObjectiveOutlierFilter>(
             new MultiObjectiveOutlierFilter(outlierRejection.maxIterations, outlierRejection.minInlierRatio, outlierRejection.confidence)
         );
@@ -555,21 +573,10 @@ bool FeatureTracker::operator() (Map& map, size_t t)
         }
     }
 
-    // cv::Mat Ii = ci ? ci->GetImageStore()[ti.GetIndex()].im : cv::Mat();
-    // cv::Mat Ij = cj ? cj->GetImageStore()[tj.GetIndex()].im : cv::Mat();
-    // cv::imshow(ToString(), fmap.Draw(Ii, Ij));
-    // cv::waitKey(0);
-
     // insert the observations into the map
+    std::vector<bool> qi(fi.GetSize());
+    std::vector<bool> qj(fj.GetSize());
     const FeatureMatches& matches = fmap.GetMatches();
-
-    //struct SpawnTrace
-    //{
-    //    Landmark::Ptrs u;
-    //    Indices f;
-    //};
-
-    //SpawnTrace ai, aj;
 
     for (size_t k = 0; k < matches.size(); k++)
     {
@@ -579,6 +586,8 @@ bool FeatureTracker::operator() (Map& map, size_t t)
         {
             continue;
         }
+
+        qi[m.srcIdx] = qj[m.dstIdx] = true;
 
         Landmark*& ui_k = ui[m.srcIdx];
         Landmark*& uj_k = uj[m.dstIdx];
@@ -607,19 +616,15 @@ bool FeatureTracker::operator() (Map& map, size_t t)
                 stats.tracked++;
             }
 
+            flow.Add(fi[m.srcIdx].keypoint.pt, fj[m.dstIdx].keypoint.pt, lk.GetIndex());
+
             continue;
         }
-
-        //E_INFO << "(" << ti.GetIndex() << "," << si.GetIndex() << "," << m.srcIdx << ") -> (" << tj.GetIndex() << "," << sj.GetIndex() << "," << m.dstIdx << ")";
-        //E_INFO << "multipath detected (" << ui_k << "," << uj_k << ")";
 
         if (policy == ConflictResolution::NO_MERGE)
         {
             continue;
         }
-
-        //E_INFO << map.joinChkMetre.ToString();
-        //E_INFO << map.joinMetre.ToString();
 
         Landmark& li = *ui_k;
         Landmark& lj = *uj_k;
@@ -665,10 +670,117 @@ bool FeatureTracker::operator() (Map& map, size_t t)
     // if (mj.valid && !gj.structure.IsEmpty()) map.UpdateStructure(aj.u, gj[aj.f], mj.pose);
 
     // post-motion correspondence recovery
-    //if (mj.valid && inlierRecovery)
-    //{
-    //
-    //}
+    if (inlierInjection.scheme && stats.motion.valid)
+    {
+        GeometricMapping forward, backward, epipolar;
+
+        if (inlierInjection.scheme & InlierInjectionScheme::FORWARD_FLOW)
+        {
+            if (pi && pj)
+            {
+                AlignmentObjective::Own eval(new EpipolarObjective(pi, pj));
+                forward = FindLostFeaturesFlow(Ii, Ij, fi, eval, stats.motion.pose, qi);
+            }
+            else
+            {
+                E_WARNING << "projection(s) missing for optical flow feature recovery";
+                E_WARNING << "forward flow-based inlier injection now deactivated.";
+
+                inlierInjection.scheme &= ~InlierInjectionScheme::FORWARD_FLOW;
+            }
+        }
+
+        if (inlierInjection.scheme & InlierInjectionScheme::BACKWARD_FLOW)
+        {
+            if (pi && pj)
+            {
+                AlignmentObjective::Own eval(new EpipolarObjective(pj, pi));
+                backward = FindLostFeaturesFlow(Ij, Ii, fj, eval, stats.motion.pose.GetInverse(), qj);
+            }
+            else
+            {
+                E_WARNING << "projection(s) missing for optical flow feature recovery";
+                E_WARNING << "backward flow-based inlier injection now deactivated.";
+
+                inlierInjection.scheme &= ~InlierInjectionScheme::BACKWARD_FLOW;
+            }
+        }
+
+        if (inlierInjection.scheme & InlierInjectionScheme::EPIPOLAR_SEARCH)
+        {
+            // do something..
+        }
+
+        if (!AugmentFeatures(forward, fi, fj, map, ti, tj, si, sj, ui, uj, tj.augmentedFeaturs[Fj.GetIndex()]))
+        {
+            E_ERROR << "error augmenting feature set from forward flow";
+            return false;
+        }
+
+        if (!AugmentFeatures(backward, fj, fi, map, tj, ti, sj, si, uj, ui, ti.augmentedFeaturs[Fi.GetIndex()]))
+        {
+            E_ERROR << "error augmenting feature set from backward flow";
+            return false;
+        }
+
+        for (size_t i = 0; i < forward.GetSize(); i++)
+        {
+            flow.Add(
+                forward.src.mat.reshape(2).at<Point2D>(static_cast<int>(i)),
+                forward.dst.mat.reshape(2).at<Point2D>(static_cast<int>(i)),
+                ui[forward.indices[i]]->GetIndex()
+            );
+        }
+
+        for (size_t j = 0; j < backward.GetSize(); j++)
+        {
+            flow.Add(
+                backward.dst.mat.reshape(2).at<Point2D>(static_cast<int>(j)),
+                backward.dst.mat.reshape(2).at<Point2D>(static_cast<int>(j)),
+                uj[backward.indices[j]]->GetIndex()
+            );
+        }
+
+        stats.injected += forward.GetSize() + backward.GetSize();
+    }
+
+    stats.flow = flow.Build();
+
+    if (structureScheme != NO_RECOVERY && mi.valid && stats.motion.valid)
+    {
+        boost::shared_ptr<const PosedProjection> ppi = boost::dynamic_pointer_cast<const PosedProjection, const ProjectionModel>(pi);
+        boost::shared_ptr<const PosedProjection> ppj = boost::dynamic_pointer_cast<const PosedProjection, const ProjectionModel>(pj);
+
+        assert(ppi && ppj);
+
+        MidPointTriangulation tau(*ppi, *ppj, stats.motion.pose);
+        map.UpdateStructure(map.GetLandmarks(stats.flow.indices), tau(stats.flow), mi.pose);
+    }
+
+    cv::Mat im = imfuse(Ii, Ij);
+    ColourMap cmap(255);
+
+    for (size_t i = 0; i < stats.flow.GetSize(); i++)
+    {
+        static const double zmin = 0;
+        static const double zmax = 100;
+        const size_t k = stats.flow.indices[i];
+
+        Point3D gk = map.GetLandmark(k).position;
+
+        double zk = mi.pose(gk).z;
+        Point2D xk = stats.flow.src.mat.reshape(2).at<Point2D>(i);
+        Point2D yk = stats.flow.dst.mat.reshape(2).at<Point2D>(i);
+
+        cv::line(im, xk, yk, cmap.GetColour(zk, zmin, zmax), 2);
+    }
+
+    std::stringstream ss;
+    ss << "frame-" << ti.GetIndex() << ".png";
+    //cv::hconcat(im, fmap.Draw(Ii, Ij), im);
+    cv::imwrite(ss.str(), im);
+    cv::imshow(ToString(), im);
+    cv::waitKey(1);
 
     return true;
 }
@@ -688,6 +800,205 @@ StructureEstimation::Estimate FeatureTracker::GetFeatureStructure(const ImageFea
     }
 
     return structure[indices];
+}
+
+GeometricMapping FeatureTracker::FindLostFeaturesFlow(const cv::Mat& Ii, const cv::Mat& Ij, const ImageFeatureSet& fi, AlignmentObjective::Own eval, const EuclideanTransform& pose, std::vector<bool>& tracked)
+{
+    assert(fi.GetSize() == tracked.size());
+    assert(eval);
+
+    // cv::Mat im = imfuse(Ii, Ij);
+
+    struct Flow
+    {
+        Points2F xi;
+        Points2F xj;
+        std::vector<size_t> idx;
+        std::vector<uchar> found;
+        cv::Mat err;
+    };
+
+    Flow forward;
+
+    for (size_t k = 0; k < tracked.size(); k++)
+    {
+        if (tracked[k]) continue;
+
+        // cv::circle(im, fi[k].keypoint.pt, 2, cv::Scalar(0, 0, 255), -1);
+
+        forward.xi.push_back(fi[k].keypoint.pt);
+        forward.idx.push_back(k);
+    }
+
+    const int bs = static_cast<int>(inlierInjection.blockSize);
+    cv::Size win(bs, bs);
+    cv::calcOpticalFlowPyrLK(Ii, Ij, forward.xi, forward.xj, forward.found, forward.err, win, static_cast<int>(inlierInjection.levels));
+
+    for (size_t i = 0; i < forward.found.size(); i++)
+    {
+        const double x = round(forward.xj[i].x);
+        const double y = round(forward.xj[i].y);
+
+        if (x < 0 || x >= Ij.cols || y < 0 || y >= Ij.rows)
+        {
+            forward.found[i] = false;
+        }
+    }
+
+    if (inlierInjection.bidirectionalEps > 0)
+    {
+        Flow backward;
+
+        for (size_t i = 0; i < forward.found.size(); i++)
+        {
+            if (!forward.found[i]) continue;
+
+            backward.xj.push_back(forward.xj[i]);
+            backward.idx.push_back(i);
+
+            // cv::line(im, forward.xi[i], forward.xj[i], cv::Scalar(127, 127, 127));
+            // cv::circle(im, forward.xj[i], 2, cv::Scalar(255, 0, 0), -1);
+        }
+
+        cv::calcOpticalFlowPyrLK(Ij, Ii, backward.xj, backward.xi, backward.found, backward.err, win, static_cast<int>(inlierInjection.levels));
+        const double eps2 = inlierInjection.bidirectionalEps * inlierInjection.bidirectionalEps;
+
+        for (size_t j = 0; j < backward.found.size(); j++)
+        {
+            const size_t i = backward.idx[j];
+
+            if (!backward.found[j])
+            {
+                forward.found[i] = false;
+                continue;
+            }
+
+            // cv::circle(im, backward.xi[j], 2, cv::Scalar(0, 127, 255), -1);
+
+            const double dx = forward.xi[i].x - backward.xi[j].x;
+            const double dy = forward.xi[i].y - backward.xi[j].y;
+            
+            forward.found[i] = (dx * dx + dy * dy) < eps2;
+
+            // cv::line(im, forward.xj[i], backward.xi[j], forward.found[i] ? cv::Scalar(192, 64, 64) : cv::Scalar(64, 64, 192));
+        }
+    }
+
+    GeometricMapping::ImageToImageBuilder builder;
+    GeometricMapping mapping;
+    Indices inliers;
+    // std::vector<size_t> trace;
+
+    for (size_t i = 0; i < forward.found.size(); i++)
+    {
+        if (!forward.found[i]) continue;
+
+        builder.Add(forward.xi[i], forward.xj[i], forward.idx[i]);
+
+        // trace.push_back(i);
+        // cv::line(im, forward.xi[i], forward.xj[i], cv::Scalar(255, 255, 255));
+    }
+
+    mapping = builder.Build();
+    
+    if (!eval->SetData(mapping))
+    {
+        E_ERROR << "error setting geometric mapping for epipolar alignment verification";
+        return GeometricMapping();
+    }
+   
+    if (!eval->GetSelector(1.0f / inlierInjection.epipolarEps)(pose, inliers))
+    {
+        E_ERROR << "error evaluating epipolar error of the computed flow";
+        return GeometricMapping();
+    }
+
+    BOOST_FOREACH (size_t idx, inliers)
+    {
+        tracked[mapping.indices[idx]] = true;
+        // cv::line(im, forward.xi[trace[idx]], forward.xj[trace[idx]], cv::Scalar(0, 255, 0));
+    }
+
+    // cv::imshow("Lost Feature Flow", im);
+    // cv::waitKey(0);
+
+    return mapping[inliers];
+}
+
+bool FeatureTracker::AugmentFeatures(
+    const GeometricMapping flow, const ImageFeatureSet& fi, const ImageFeatureSet& fj,
+    Map& map, Frame& ti, Frame& tj, Source& si, Source& sj,
+    Landmark::Ptrs& ui, Landmark::Ptrs& uj, ImageFeatureSet& aj)
+{
+    if (flow.GetSize() == 0)
+    {
+        return true;
+    }
+
+    const size_t n = uj.size();
+    KeyPoints keypoints;
+    cv::Mat descriptors;
+
+    const cv::Mat xj = flow.dst.mat.reshape(2);
+
+    uj.resize(n + flow.GetSize(), NULL);
+
+    for (size_t k = 0; k < flow.GetSize(); k++)
+    {
+        const size_t i = flow.indices[k];
+        const size_t j = n + k;
+
+        Landmark*& ui_k = ui[i];
+        Landmark*& uj_k = uj[j];
+        cv::KeyPoint kp = fi[i].keypoint;
+
+        if (ui_k == NULL)
+        {
+            (ui_k = &map.AddLandmark())->Hit(ti, si, i).proj = kp.pt;
+        }
+
+        kp.pt = xj.at<Point2D>(static_cast<int>(k));
+        (uj_k = ui_k)->Hit(tj, sj, j).proj = kp.pt;
+
+        keypoints.push_back(kp);
+    }
+
+    FeatureExtractor::ConstOwn xtor = boost::dynamic_pointer_cast<const FeatureExtractor, const FeatureDetextractor>(si.store->GetFeatureDetextractor());
+    bool copyDesc = true;
+
+    if (inlierInjection.extractDescriptor && xtor)
+    {
+        // ImageFeatureSet aj = xtor->ExtractFeatures(Ij, keypoints);
+        //
+        // if (aj.GetSize() == forward.GetSize())
+        // {
+        //    descriptors = aj.GetDescriptors().clone();
+        //    copyDesc = false;
+        // }
+        // else
+        // {
+        //   E_ERROR << "descriptor extraction returns " << aj.GetSize() << " element(s), while given " << keypoints.size();
+        // }
+    }
+
+    if (copyDesc)
+    {
+        const cv::Mat src = fi.GetDescriptors();
+        descriptors = cv::Mat(static_cast<int>(flow.GetSize()), src.cols, src.type());
+
+        for (size_t k = 0; k < flow.GetSize(); k++)
+        {
+            src.row(static_cast<int>(flow.indices[k])).copyTo(descriptors.row(static_cast<int>(k)));
+        }
+    }
+
+    if (!aj.Append(ImageFeatureSet(keypoints, descriptors, fj.GetNormType())))
+    {
+        E_FATAL << "error augmenting feature set for frame " << tj.GetIndex() << " store " << sj.store->GetIndex();
+        return false;
+    }
+
+    return true;
 }
 
 bool FeatureTracker::IsOkay() const

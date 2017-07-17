@@ -444,7 +444,7 @@ namespace seq2map
             }
             else
             {
-                const int n = sub.total();
+                const int n = static_cast<int>(sub.total());
                 const int k = src.channels();
                 const int stride = SHRT_MAX - 1;
 
@@ -707,100 +707,33 @@ String Speedometre::ToString() const
     return ss.str();
 }
 
-//==[ App ]===================================================================//
-
-App::App(int argc, char* argv[])
-: m_parser(boost::program_options::command_line_parser(argc, argv)),
-    m_exec(argc > 0 ? String(argv[0]) : "")
+ColourMap::ColourMap(size_t colours)
 {
-    // make the default path to the log file
-    m_logfile = m_exec;
-    m_logfile.replace_extension("log");
+    m_cmap = cv::Mat(colours, 1, CV_64FC4);
+
+    const int q0 = static_cast<int>((double)colours * 0.00f);
+    const int q1 = static_cast<int>((double)colours * 0.25f);
+    const int q2 = static_cast<int>((double)colours * 0.50f);
+    const int q3 = static_cast<int>((double)colours * 0.75f);
+    const int q4 = static_cast<int>((double)colours * 1.00f);
+
+    m_cmap.at<cv::Scalar>(0) = cv::Scalar(0, 0, 0);
+
+    for (int i = 1; i < static_cast<int>(colours); i++)
+    {
+        const double v = static_cast<double>(i);
+
+        m_cmap.at<cv::Scalar>(i) = cv::Scalar(
+            i < q2 ? 0 : (i < q3 ? 255 * (v - q2) / (q3 - q2) : 255), 
+            i < q1 ? 255 * (v - q0) / (q1 - q0) : (i < q3 ? 255 : 255 * (q4 - v) / (q4 - q3)),
+            i < q1 ? 255 : (i < q2 ? 255 * (q2 - v) / (q2 - q1) : 0),
+            0
+        );
+    }
 }
 
-int App::Run()
+cv::Scalar ColourMap::GetColour(double val, double min, double max)
 {
-    namespace po = boost::program_options;
-
-    Options o("General options"), h("hidden");
-    Positional p;
-    String logfile;
-    String loglevel;
-    Strings unknownArgs;
-
-    o.add_options()
-        ("help,h",    po::bool_switch  (&m_help  )->default_value(false),              "Show this help message and exit.")
-        ("log-file",  po::value<String>(&logfile )->default_value(m_logfile.string()), "Path to the log file.");
-        //("log-level", po::value<String>(&loglevel)->default_value(""),                 "Log level, can be");
-
-    SetOptions(o, h, p);
-
-    try
-    {
-        Options a; // all options
-        po::parsed_options parsed = m_parser.options(a.add(o).add(h)).positional(p).allow_unregistered().run();
-        po::variables_map vm;
-
-        po::store(parsed, vm);
-        po::notify(vm);
-
-        unknownArgs = po::collect_unrecognized(parsed.options, po::exclude_positional);
-    }
-    catch (po::error& pe)
-    {
-        E_FATAL << "error parsing general arguments: " << pe.what();
-        return EXIT_FAILURE;
-    }
-    catch (std::exception& ex)
-    {
-        E_FATAL << "exception caugth: " << ex.what();
-        return EXIT_FAILURE;
-    }
-
-    if (m_help)
-    {
-        ShowHelp(o);
-        return EXIT_SUCCESS;
-    }
-
-    if (!initLogFile(m_logfile = logfile))
-    {
-        E_WARNING << "error writing to log file " << m_logfile;
-    }
-
-    //try
-    //{
-        if (!ProcessUnknownArgs(unknownArgs) || !Init())
-        {
-            ShowSynopsis();
-            return EXIT_FAILURE;
-        }
-
-        return Execute() ? EXIT_SUCCESS : EXIT_FAILURE;
-    //}
-    //catch (std::exception& ex)
-    //{
-    //    E_FATAL << "unhandled exception caught";
-    //    E_FATAL << ex.what();
-
-    //    return EXIT_FAILURE;
-    //}
-}
-
-bool App::ProcessUnknownArgs(const Strings& args)
-{
-    if (!args.empty())
-    {
-        E_ERROR << "unknown argument(s) detected: " << makeNameList(args);
-        return false;
-    }
-
-    return true;
-}
-
-void App::ShowSynopsis() const
-{
-    std::cout << std::endl;
-    std::cout << "Try \"" << m_exec.string() << " -h\" for usage listing." << std::endl;
-}
-
+    const int cidx = static_cast<int>((double)m_cmap.rows * (val - min) / (max - min));
+    return m_cmap.at<cv::Scalar>(cidx < 0 ? 0 : (cidx < m_cmap.rows ? cidx : m_cmap.rows - 1));
+};

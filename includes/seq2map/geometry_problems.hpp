@@ -484,25 +484,61 @@ namespace seq2map
     class TwoViewTriangulation : public StructureEstimation
     {
     public:
-        TwoViewTriangulation(const PosedProjection& P0, const PosedProjection& P1) : P0(P0), P1(P1) {}
+        TwoViewTriangulation(const PosedProjection& P0, const PosedProjection& P1, const EuclideanTransform& tform = EuclideanTransform::Identity)
+        : M01(tform >> P1.pose), P0(P0), P1((PosedProjection(M01, P1.proj))) {}
 
+        const EuclideanTransform M01;
         const PosedProjection P0;
         const PosedProjection P1;
     };
 
     class OptimalTriangulation : public TwoViewTriangulation
     {
-        OptimalTriangulation(const PosedProjection& P0, const PosedProjection& P1) : TwoViewTriangulation(P0, P1) {}
+        OptimalTriangulation(const PosedProjection& P0, const PosedProjection& P1, const EuclideanTransform tform)
+        : TwoViewTriangulation(P0, P1, tform) {}
+        
         virtual Estimate operator() (const GeometricMapping& m) const;
     };
 
     class MidPointTriangulation : public TwoViewTriangulation
     {
     public:
-        MidPointTriangulation(const PosedProjection& P0, const PosedProjection& P1) : TwoViewTriangulation(P0, P1) {}
+        MidPointTriangulation(const PosedProjection& P0, const PosedProjection& P1, const EuclideanTransform tform)
+        : TwoViewTriangulation(P0, P1, tform) {}
+
         virtual Estimate operator() (const GeometricMapping& m) const;
+
     protected:
         static void DecomposeProjMatrix(const cv::Mat& P, cv::Mat& KRinv, cv::Mat& c);
+    };
+
+    class MultipleViewBlockMatcher
+    {
+    public:
+        struct RefView
+        {
+            RefView() : p(EuclideanTransform::Identity, NullProjection) {}
+            RefView(cv::Mat im, PosedProjection& p) : im(im), p(p) {}
+
+            static PinholeModel NullProjection;
+
+            const cv::Mat im;
+            const PosedProjection p;
+        };
+
+        typedef std::vector<RefView> RefViews;
+
+        MultipleViewBlockMatcher(const cv::Mat baseImage, const ProjectionModel::ConstOwn& baseProj, const RefViews refs, int blockSize, bool perspectiveWarping = false)
+        : m_baseImage(baseImage), m_baseProj(baseProj), m_blockSize(blockSize), m_perspectiveWarping(perspectiveWarping) {}
+
+        StructureEstimation::Estimate operator() (const StructureEstimation::Estimate& g0, const std::vector<Points2F>& proj) const;
+
+    private:
+        const cv::Mat m_baseImage;
+        const ProjectionModel::ConstOwn m_baseProj;
+
+        int   m_blockSize;
+        bool  m_perspectiveWarping;
     };
 }
 #endif // GEOMETRY_HPP

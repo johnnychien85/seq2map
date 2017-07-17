@@ -104,9 +104,9 @@ BOOST_AUTO_TEST_CASE(mahalanobis)
     BOOST_CHECK( m2.SetCovarianceMat(cvar2));
 
     // test distance measuring
-    Geometry d0 = m0(g0, g1);
-    Geometry d1 = m1(g0, g1);
-    Geometry d2 = m2(g0, g1);
+    Geometry d0 = ((Metric&)m0)(g0, g1);
+    Geometry d1 = ((Metric&)m1)(g0, g1);
+    Geometry d2 = ((Metric&)m2)(g0, g1);
 
     BOOST_REQUIRE_SMALL(cv::norm(d0.mat, d1.mat), EPSILON);
     BOOST_REQUIRE_SMALL(cv::norm(d1.mat, d2.mat), EPSILON);

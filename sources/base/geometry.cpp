@@ -381,12 +381,12 @@ Geometry WeightedEuclideanMetric::operator() (const Geometry& x) const
 
 Metric::Own WeightedEuclideanMetric::operator[] (const Indices& indices) const
 {
-    cv::Mat w = cv::Mat(indices.size(), 1, m_weights.depth());
+    cv::Mat w = cv::Mat(static_cast<int>(indices.size()), 1, m_weights.depth());
 
-    size_t dst = 0;
+    int dst = 0;
     BOOST_FOREACH (size_t src, indices)
     {
-        m_weights.row(src).copyTo(w.row(dst++));
+        m_weights.row(static_cast<int>(src)).copyTo(w.row(dst++));
     }
 
     return Metric::Own(new WeightedEuclideanMetric(w, scale));
@@ -1349,9 +1349,9 @@ Point3F& EuclideanTransform::operator() (Point3F& pt) const
     const double* m = m_matrix.ptr<double>();
 
     pt = Point3F(
-        (float)(m[0] * pt.x + m[3] * pt.y + m[6] * pt.z + m[9]),
-        (float)(m[1] * pt.x + m[4] * pt.y + m[7] * pt.z + m[10]),
-        (float)(m[2] * pt.x + m[5] * pt.y + m[8] * pt.z + m[11])
+        (float)(m[0] * pt.x + m[1] * pt.y + m[2]  * pt.z + m[3]),
+        (float)(m[4] * pt.x + m[5] * pt.y + m[6]  * pt.z + m[7]),
+        (float)(m[8] * pt.x + m[9] * pt.y + m[10] * pt.z + m[11])
     );
 
     return pt;
@@ -1362,9 +1362,9 @@ Point3D& EuclideanTransform::operator() (Point3D& pt) const
     const double* m = m_matrix.ptr<double>();
 
     pt = Point3D(
-        m[0] * pt.x + m[3] * pt.y + m[6] * pt.z + m[9],
-        m[1] * pt.x + m[4] * pt.y + m[7] * pt.z + m[10],
-        m[2] * pt.x + m[5] * pt.y + m[8] * pt.z + m[11]
+        m[0] * pt.x + m[1] * pt.y + m[2]  * pt.z + m[3],
+        m[4] * pt.x + m[5] * pt.y + m[6]  * pt.z + m[7],
+        m[8] * pt.x + m[9] * pt.y + m[10] * pt.z + m[11]
     );
 
     return pt;
