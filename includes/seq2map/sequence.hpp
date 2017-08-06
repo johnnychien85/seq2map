@@ -215,13 +215,24 @@ namespace seq2map
         
         /**
          * Back-project a disparity map to obtain 3D points.
+         *
+         * \param dp disparity map, as a CV_32FC1 or CV_64FC1 matrix.
+         * \param idx optional sub-element selector.
+         *
+         * \return 3D geometry converted from the disparity map.
          */
-        Geometry Backproject(const cv::Mat& dp) const;
+        Geometry Backproject(const cv::Mat& dp, const Indices& idx = Indices()) const;
 
         /**
          * Back-project a disparity map with error variance map to obtain 3D points and the propagated error covariances.
+         *
+         * \param dp disparity map, as a CV_32FC1 or CV_64FC1 matrix.
+         * \param var variance map of the estiamted disparity map.
+         * \param idx optional sub-element selector.
+         *
+         * \return Structure estimate with 3D error covariance.
          */
-        StructureEstimation::Estimate Backproject(const cv::Mat& dp, const cv::Mat& var) const;
+        StructureEstimation::Estimate Backproject(const cv::Mat& dp, const cv::Mat& var, const Indices& idx = Indices()) const;
 
     private:
         friend class Sequence; // for restoring camera references

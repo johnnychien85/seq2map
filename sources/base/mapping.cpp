@@ -94,7 +94,6 @@ Landmark& Map::JoinLandmark(Landmark& li, Landmark& lj)
 
 StructureEstimation::Estimate Map::GetStructure(const Landmark::Ptrs& u) const
 {
-    /*
     typedef cv::Vec6d Covar6D; // 6 coefficients of full 3D covariance matrix
 
     cv::Mat mat = cv::Mat(static_cast<int>(u.size()), 3, CV_64F).reshape(3);
@@ -110,7 +109,7 @@ StructureEstimation::Estimate Map::GetStructure(const Landmark::Ptrs& u) const
         else
         {
             const Landmark& lk = *u[k];
-            const Landmark::Covar3D ck = lk.cov;
+            const Landmark::Covar3D& ck = lk.cov;
 
             mat.at<Point3D>(static_cast<int>(k)) = lk.position;
             cov.at<Covar6D>(static_cast<int>(k)) = Covar6D(ck.xx, ck.xy, ck.xz, ck.yy, ck.yz, ck.zz);
@@ -121,8 +120,8 @@ StructureEstimation::Estimate Map::GetStructure(const Landmark::Ptrs& u) const
         Geometry(Geometry::ROW_MAJOR, mat.reshape(1)),
         Metric::Own(new MahalanobisMetric(MahalanobisMetric::ANISOTROPIC_ROTATED, 3, cov.reshape(1)))
     );
-    */
 
+    /*
     cv::Mat mat = cv::Mat(static_cast<int>(u.size()), 3, CV_64F).reshape(3);
     cv::Mat icv = cv::Mat(static_cast<int>(u.size()), 1, CV_64F);
 
@@ -147,11 +146,11 @@ StructureEstimation::Estimate Map::GetStructure(const Landmark::Ptrs& u) const
         Geometry(Geometry::ROW_MAJOR, mat.reshape(1)),
         Metric::Own(new WeightedEuclideanMetric(icv))
     );
+    */
 }
 
 void Map::SetStructure(const Landmark::Ptrs& u, const StructureEstimation::Estimate& structure)
 {
-    /*
     typedef cv::Vec6d Covar6D; // 6 coefficients of full 3D covariance matrix
 
     boost::shared_ptr<MahalanobisMetric> metric
@@ -176,8 +175,8 @@ void Map::SetStructure(const Landmark::Ptrs& u, const StructureEstimation::Estim
         lk.position = mat.at<Point3D>(static_cast<int>(k));
         lk.cov      = cov.at<Covar6D>(static_cast<int>(k));
     }
-    */
 
+    /*
     const WeightedEuclideanMetric* metric =
         dynamic_cast<const WeightedEuclideanMetric*>(structure.metric.get());
 
@@ -200,6 +199,7 @@ void Map::SetStructure(const Landmark::Ptrs& u, const StructureEstimation::Estim
         lk.position = mat.at<Point3D>(static_cast<int>(k));
         lk.icv      = icv.at<double> (static_cast<int>(k));
     }
+    */
 }
 
 StructureEstimation::Estimate Map::UpdateStructure(const Landmark::Ptrs& u, const StructureEstimation::Estimate& g, const EuclideanTransform& ref)
@@ -300,7 +300,7 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, Indices& in
         GeometricMapping data;
         AlignmentObjective::InlierSelector selector;
         
-        if (!builder->Build(data, selector))
+        if (!builder->Build(data, selector, sigma))
         {
             E_WARNING << "objective \"" << builder->ToString() << "\" building failed";
             continue;
@@ -331,6 +331,7 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, Indices& in
     estimator.SetMinInlierRatio(minInlierRatio);
     estimator.SetConfidence(confidence);
     estimator.SetSolver(solver);
+    estimator.SetVerbose(true);
 
     if (optimisation && !motion.valid)
     {
@@ -412,19 +413,22 @@ bool FeatureTracker::operator() (Map& map, size_t t)
     ImageFeatureSet fj = Fj[tj.GetIndex()];
     Landmark::Ptrs& ui = ti.featureLandmarkLookup[Fi.GetIndex()];
     Landmark::Ptrs& uj = tj.featureLandmarkLookup[Fj.GetIndex()];
+
     Camera::ConstOwn ci = Fi.GetCamera();
     Camera::ConstOwn cj = Fj.GetCamera();
     ProjectionModel::ConstOwn pi = ci ? ci->GetPosedProjection() : ProjectionModel::ConstOwn();
     ProjectionModel::ConstOwn pj = cj ? cj->GetPosedProjection() : ProjectionModel::ConstOwn();
     cv::Mat Ii = ci ? ci->GetImageStore()[ti.GetIndex()].im : cv::Mat();
     cv::Mat Ij = cj ? cj->GetImageStore()[tj.GetIndex()].im : cv::Mat();
+    cv::Mat Di = src.disp ? (*src.disp)[ti.GetIndex()].im : cv::Mat();
+    cv::Mat Dj = dst.disp ? (*dst.disp)[tj.GetIndex()].im : cv::Mat();
+
     PoseEstimator::Estimate& mi = ti.poseEstimate;
     PoseEstimator::Estimate& mj = tj.poseEstimate;
     StructureEstimation::Estimate gi(Geometry::ROW_MAJOR);
     StructureEstimation::Estimate gj(Geometry::ROW_MAJOR);
 
     boost::shared_ptr<MultiObjectiveOutlierFilter> filter;
-
     GeometricMapping::ImageToImageBuilder flow;
 
     // initialise statistics
@@ -439,8 +443,11 @@ bool FeatureTracker::operator() (Map& map, size_t t)
     if (uj.empty()) uj.resize(fj.GetSize(), NULL);
 
     // get feature structure from depthmap and transform it to the reference camera's coordinates system
-    if (src.disp && src.disp->GetStereoPair()) gi = GetFeatureStructure(fi, src.disp->GetStereoPair()->Backproject((*src.disp)[ti.GetIndex()].im, cv::Mat())).Transform(ci->GetExtrinsics().GetInverse());
-    if (dst.disp && dst.disp->GetStereoPair()) gj = GetFeatureStructure(fj, dst.disp->GetStereoPair()->Backproject((*dst.disp)[tj.GetIndex()].im, cv::Mat())).Transform(cj->GetExtrinsics().GetInverse());
+    //if (ti.GetIndex() == 0)
+    //{
+    if (!Di.empty() && src.disp->GetStereoPair()) gi = src.disp->GetStereoPair()->Backproject(Di, cv::Mat(), GetFeatureImageIndices(fi, Di.size())).Transform(ci->GetExtrinsics().GetInverse());
+    if (!Dj.empty() && dst.disp->GetStereoPair()) gj = dst.disp->GetStereoPair()->Backproject(Dj, cv::Mat(), GetFeatureImageIndices(fj, Dj.size())).Transform(cj->GetExtrinsics().GetInverse());
+    //}
 
     // perform pre-motion structure update
     if (mi.valid) gi = map.UpdateStructure(ui, gi, mi.pose);
@@ -450,7 +457,7 @@ bool FeatureTracker::operator() (Map& map, size_t t)
     if (outlierRejection.scheme)
     {
         filter = boost::shared_ptr<MultiObjectiveOutlierFilter>(
-            new MultiObjectiveOutlierFilter(outlierRejection.maxIterations, outlierRejection.minInlierRatio, outlierRejection.confidence)
+            new MultiObjectiveOutlierFilter(outlierRejection.maxIterations, outlierRejection.minInlierRatio, outlierRejection.confidence, outlierRejection.sigma)
         );
 
         if (ti == tj)
@@ -577,6 +584,8 @@ bool FeatureTracker::operator() (Map& map, size_t t)
     std::vector<bool> qi(fi.GetSize());
     std::vector<bool> qj(fj.GetSize());
     const FeatureMatches& matches = fmap.GetMatches();
+
+    E_INFO << matches.size() << " matches..";
 
     for (size_t k = 0; k < matches.size(); k++)
     {
@@ -711,13 +720,13 @@ bool FeatureTracker::operator() (Map& map, size_t t)
             // do something..
         }
 
-        if (!AugmentFeatures(forward, fi, fj, map, ti, tj, si, sj, ui, uj, tj.augmentedFeaturs[Fj.GetIndex()]))
+        if (!AugmentFeatures(forward, fi, fj, map, ti, tj, si, sj, ui, uj, tj.augmentedFeaturs[Fj.GetIndex()], stats.spawned, stats.tracked))
         {
             E_ERROR << "error augmenting feature set from forward flow";
             return false;
         }
 
-        if (!AugmentFeatures(backward, fj, fi, map, tj, ti, sj, si, uj, ui, ti.augmentedFeaturs[Fi.GetIndex()]))
+        if (!AugmentFeatures(backward, fj, fi, map, tj, ti, sj, si, uj, ui, ti.augmentedFeaturs[Fi.GetIndex()], stats.spawned, stats.tracked))
         {
             E_ERROR << "error augmenting feature set from backward flow";
             return false;
@@ -736,7 +745,7 @@ bool FeatureTracker::operator() (Map& map, size_t t)
         {
             flow.Add(
                 backward.dst.mat.reshape(2).at<Point2D>(static_cast<int>(j)),
-                backward.dst.mat.reshape(2).at<Point2D>(static_cast<int>(j)),
+                backward.src.mat.reshape(2).at<Point2D>(static_cast<int>(j)),
                 uj[backward.indices[j]]->GetIndex()
             );
         }
@@ -769,37 +778,53 @@ bool FeatureTracker::operator() (Map& map, size_t t)
         Point3D gk = map.GetLandmark(k).position;
 
         double zk = mi.pose(gk).z;
-        Point2D xk = stats.flow.src.mat.reshape(2).at<Point2D>(i);
-        Point2D yk = stats.flow.dst.mat.reshape(2).at<Point2D>(i);
+        Point2D xk = stats.flow.src.mat.reshape(2).at<Point2D>(static_cast<int>(i));
+        Point2D yk = stats.flow.dst.mat.reshape(2).at<Point2D>(static_cast<int>(i));
 
         cv::line(im, xk, yk, cmap.GetColour(zk, zmin, zmax), 2);
     }
 
-    std::stringstream ss;
-    ss << "frame-" << ti.GetIndex() << ".png";
+    //std::stringstream ss;
+    //ss << "frame-" << ti.GetIndex() << ".png";
     //cv::hconcat(im, fmap.Draw(Ii, Ij), im);
-    cv::imwrite(ss.str(), im);
+    //cv::imwrite(ss.str(), im);
     cv::imshow(ToString(), im);
     cv::waitKey(1);
+
+    std::stringstream ss; ss << "frame" << ti.GetIndex() << ".jpg";
+    cv::imwrite(ss.str(), im);
 
     return true;
 }
 
 StructureEstimation::Estimate FeatureTracker::GetFeatureStructure(const ImageFeatureSet& f, const StructureEstimation::Estimate& structure)
 {
+    return structure[GetFeatureImageIndices(f, structure.structure.mat.size())];
+}
+
+Indices FeatureTracker::GetFeatureImageIndices(const ImageFeatureSet& f, const cv::Size& imageSize) const
+{
     Indices indices;
-    const cv::Size size = structure.structure.mat.size();
 
     // convert subscripts to rounded integer indices
     for (size_t k = 0; k < f.GetSize(); k++)
     {
         const Point2F& sub = f[k].keypoint.pt;
-        const size_t ind = static_cast<size_t>(std::round(sub.y) * size.width + std::round(sub.x));
+        const int i = static_cast<int>(std::round(sub.y));
+        const int j = static_cast<int>(std::round(sub.x));
 
-        indices.push_back(ind);
+        if (i < 0 || i >= imageSize.height || j < 0 || j >= imageSize.width)
+        {
+            indices.push_back(INVALID_INDEX);
+            E_ERROR << "subscript (" << i << "," << j << ") out of bound";
+
+            continue;
+        }
+
+        indices.push_back(static_cast<size_t>(i * imageSize.width + j));
     }
 
-    return structure[indices];
+    return indices;
 }
 
 GeometricMapping FeatureTracker::FindLostFeaturesFlow(const cv::Mat& Ii, const cv::Mat& Ij, const ImageFeatureSet& fi, AlignmentObjective::Own eval, const EuclideanTransform& pose, std::vector<bool>& tracked)
@@ -928,7 +953,7 @@ GeometricMapping FeatureTracker::FindLostFeaturesFlow(const cv::Mat& Ii, const c
 bool FeatureTracker::AugmentFeatures(
     const GeometricMapping flow, const ImageFeatureSet& fi, const ImageFeatureSet& fj,
     Map& map, Frame& ti, Frame& tj, Source& si, Source& sj,
-    Landmark::Ptrs& ui, Landmark::Ptrs& uj, ImageFeatureSet& aj)
+    Landmark::Ptrs& ui, Landmark::Ptrs& uj, ImageFeatureSet& aj, size_t& spawned, size_t& tracked)
 {
     if (flow.GetSize() == 0)
     {
@@ -955,6 +980,11 @@ bool FeatureTracker::AugmentFeatures(
         if (ui_k == NULL)
         {
             (ui_k = &map.AddLandmark())->Hit(ti, si, i).proj = kp.pt;
+            spawned++;
+        }
+        else
+        {
+            tracked++;
         }
 
         kp.pt = xj.at<Point2D>(static_cast<int>(k));
@@ -1047,7 +1077,7 @@ void FeatureTracker::EpipolarObjectiveBuilder::AddData(size_t i, size_t j, size_
     m_builder.Add(fi.keypoint.pt, fj.keypoint.pt, localIdx);
 }
 
-bool FeatureTracker::EpipolarObjectiveBuilder::Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector)
+bool FeatureTracker::EpipolarObjectiveBuilder::Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma)
 {
     AlignmentObjective::Own objective = AlignmentObjective::Own(new EpipolarObjective(pi, pj));
     
@@ -1060,7 +1090,7 @@ bool FeatureTracker::EpipolarObjectiveBuilder::Build(GeometricMapping& data, Ali
         return false;
     }
 
-    selector = objective->GetSelector(0.75f);
+    selector = objective->GetSelector(1.0f);
     return true;
 }
 
@@ -1068,6 +1098,8 @@ bool FeatureTracker::EpipolarObjectiveBuilder::Build(GeometricMapping& data, Ali
 
 void FeatureTracker::PerspectiveObjectiveBuilder::AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx)
 {
+    if (g.structure.IsEmpty()) return;
+
     const Point3D& gk = g.structure.mat.reshape(3).at<Point3D>(static_cast<int>(forward ? i : j));
     const Point2F& pk = forward ? fj.keypoint.pt : fi.keypoint.pt;
 
@@ -1078,7 +1110,7 @@ void FeatureTracker::PerspectiveObjectiveBuilder::AddData(size_t i, size_t j, si
     }
 }
 
-bool FeatureTracker::PerspectiveObjectiveBuilder::Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector)
+bool FeatureTracker::PerspectiveObjectiveBuilder::Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma)
 {
     AlignmentObjective::Own objective = AlignmentObjective::Own(new ProjectionObjective(p, forward));
     //boost::shared_ptr<const MahalanobisMetric> metric =
@@ -1097,9 +1129,8 @@ bool FeatureTracker::PerspectiveObjectiveBuilder::Build(GeometricMapping& data, 
 
     data.metric = g.metric ? (*g.metric)[m_idx] : Metric::Own();
 
-    WeightedEuclideanMetric* me = dynamic_cast<WeightedEuclideanMetric*>(data.metric.get());
-
-    if (me) me->scale = 0.05f;
+    // WeightedEuclideanMetric* me = dynamic_cast<WeightedEuclideanMetric*>(data.metric.get());
+    // if (me) me->scale = 0.05f;
 
     if (!objective->SetData(data))
     {
@@ -1107,7 +1138,7 @@ bool FeatureTracker::PerspectiveObjectiveBuilder::Build(GeometricMapping& data, 
         return false;
     }
 
-    selector = objective->GetSelector(0.75f);
+    selector = objective->GetSelector(sigma);
     return true;
 }
 
@@ -1130,23 +1161,21 @@ void FeatureTracker::PhotometricObjectiveBuilder::AddData(size_t i, size_t j, si
     }
 }
 
-bool FeatureTracker::PhotometricObjectiveBuilder::Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector)
+bool FeatureTracker::PhotometricObjectiveBuilder::Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma)
 {
     boost::shared_ptr<PhotometricObjective> objective =
         boost::shared_ptr<PhotometricObjective>(new PhotometricObjective(pj, Ij));
 
     StructureEstimation::Estimate g = gi[m_idx];
 
-    Metric::Own metric = Metric::Own(new EuclideanMetric(0.01f));
-
-    if (!objective->SetData(g.structure, Ii, /*g.metric*/ metric, m_localIdx))
+    if (!objective->SetData(g.structure, Ii, g.metric, m_localIdx))
     {
         E_WARNING << "error setting photometric constraints for \"" << ToString() << "\"";
         return false;
     }
 
     data = objective->GetData();
-    selector = objective->GetSelector(0.75f);
+    selector = objective->GetSelector(sigma);
 
     return true;
 }
@@ -1155,6 +1184,8 @@ bool FeatureTracker::PhotometricObjectiveBuilder::Build(GeometricMapping& data, 
 
 void FeatureTracker::RigidObjectiveBuilder::AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx)
 {
+    if (gi.structure.IsEmpty() || gj.structure.IsEmpty()) return;
+
     const Point3D& gi_k = gi.structure.mat.reshape(3).at<Point3D>(static_cast<int>(i));
     const Point3D& gj_k = gj.structure.mat.reshape(3).at<Point3D>(static_cast<int>(j));
 
@@ -1166,7 +1197,7 @@ void FeatureTracker::RigidObjectiveBuilder::AddData(size_t i, size_t j, size_t k
     }
 }
 
-bool FeatureTracker::RigidObjectiveBuilder::Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector)
+bool FeatureTracker::RigidObjectiveBuilder::Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma)
 {
     AlignmentObjective::Own objective = AlignmentObjective::Own(new RigidObjective());
 

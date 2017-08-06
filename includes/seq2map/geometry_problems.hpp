@@ -138,6 +138,22 @@ namespace seq2map
     protected:
         ProjectionModel::ConstOwn m_proj;
         bool m_forward;
+
+        struct Metres
+        {
+            Metres()
+            : proj("Projection"           ),
+              jaco("Jacobian computation" ),
+              tfrm("Metric transformation"),
+              eval("Metric evaluation"    ) {}
+
+            Speedometre proj;
+            Speedometre jaco;
+            Speedometre tfrm;
+            Speedometre eval;
+        };
+
+        mutable Metres m_metres;
     };
 
     /**
@@ -474,8 +490,6 @@ namespace seq2map
         //
         StructureEstimation() {}
         virtual ~StructureEstimation() {}
-
-        virtual Estimate operator() (const GeometricMapping& m) const = 0;
     };
 
     /**
@@ -487,29 +501,57 @@ namespace seq2map
         TwoViewTriangulation(const PosedProjection& P0, const PosedProjection& P1, const EuclideanTransform& tform = EuclideanTransform::Identity)
         : M01(tform >> P1.pose), P0(P0), P1((PosedProjection(M01, P1.proj))) {}
 
+        Estimate operator() (const GeometricMapping& m) const;
+
         const EuclideanTransform M01;
         const PosedProjection P0;
         const PosedProjection P1;
+
+    protected:
+        virtual Geometry operator() (const Geometry& x0, const Geometry& x1) const = 0;
+        virtual Geometry GetJacobian(const Geometry& x0, const Geometry& x1, const Geometry& g) const;
     };
 
-    class OptimalTriangulation : public TwoViewTriangulation
-    {
-        OptimalTriangulation(const PosedProjection& P0, const PosedProjection& P1, const EuclideanTransform tform)
-        : TwoViewTriangulation(P0, P1, tform) {}
-        
-        virtual Estimate operator() (const GeometricMapping& m) const;
-    };
+    /**
+     * Linear triangulation is based on a Direct Linear Transformation (DLT) to find the algebraic
+     * solution to the homogeneous 3D-to-2D projection equations.
+     */
+    // class LinearTriangulation : public TwoViewTriangulation
+    // {
+    //
+    // };
 
+    /**
+     * Mid-point triangulation finds the middle point of the shortest line between two
+     * rays back-projected from image points.
+     */
     class MidPointTriangulation : public TwoViewTriangulation
     {
     public:
         MidPointTriangulation(const PosedProjection& P0, const PosedProjection& P1, const EuclideanTransform tform)
-        : TwoViewTriangulation(P0, P1, tform) {}
+            : TwoViewTriangulation(P0, P1, tform) {}
 
-        virtual Estimate operator() (const GeometricMapping& m) const;
+        using TwoViewTriangulation::operator();
 
     protected:
+        virtual Geometry operator() (const Geometry& x0, const Geometry& x1) const;
         static void DecomposeProjMatrix(const cv::Mat& P, cv::Mat& KRinv, cv::Mat& c);
+    };
+
+    /**
+     * Optimal triangulation finds the 3D point that onced projected minimises the geodesic distances to the
+     * image point following Hartley's work.
+     */
+    class OptimalTriangulation : public TwoViewTriangulation
+    {
+    public:
+        OptimalTriangulation(const PosedProjection& P0, const PosedProjection& P1, const EuclideanTransform tform)
+        : TwoViewTriangulation(P0, P1, tform) {}
+        
+        using TwoViewTriangulation::operator();
+
+    protected:
+        virtual Geometry operator() (const Geometry& x0, const Geometry& x1) const;
     };
 
     class MultipleViewBlockMatcher

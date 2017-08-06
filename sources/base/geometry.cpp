@@ -65,11 +65,29 @@ Geometry Geometry::operator- (const Geometry& g) const
     return d;
 }
 
+Geometry Geometry::Step(size_t dim, double eps) const
+{
+    int d = static_cast<int>(dim);
+    cv::Mat g = mat.clone();
+
+    switch (shape)
+    {
+    case ROW_MAJOR: g.col(d) += eps; break;
+    case COL_MAJOR: g.row(d) += eps; break;
+    case PACKED:    g.reshape(1, mat.rows * mat.cols).col(d) += eps; break;
+    }
+
+    return Geometry(shape, g);
+}
+
 bool Geometry::IsConsistent(const Geometry& g) const
 {
     if (GetDimension() != g.GetDimension() || GetElements() != g.GetElements())
     {
         E_WARNING << "inconsistent dimensionality";
+
+        throw std::exception("shit!");
+
         return false;
     }
 
@@ -453,6 +471,24 @@ bool WeightedEuclideanMetric::FromMahalanobis(const MahalanobisMetric& metric)
 
 //==[ MahalanobisMetric ]=====================================================//
 
+double MahalanobisMetric::s_rcondThreshold = 1e-10;
+
+boost::shared_ptr<MahalanobisMetric> MahalanobisMetric::Identity(size_t numel, size_t dims, int depth)
+{
+    const int ELEM = static_cast<int>(numel);
+    const int DIMS = static_cast<int>(dims);
+
+    MahalanobisMetric* metric = new MahalanobisMetric(ANISOTROPIC_ROTATED, dims);
+    metric->m_cov.mat = cv::Mat::zeros(ELEM, static_cast<int>(metric->GetCovMatCols()), depth);
+
+    for (int d = 0; d < DIMS; d++)
+    {
+        metric->m_cov.mat.col(sub2symind(d, d, DIMS)).setTo(1.0f);
+    }
+
+    return boost::shared_ptr<MahalanobisMetric>(metric);
+}
+
 MahalanobisMetric::MahalanobisMetric(CovarianceType type, size_t dims, const cv::Mat& cov)
 : MahalanobisMetric(type, dims)
 {
@@ -491,53 +527,125 @@ Metric::Own MahalanobisMetric::operator+ (const Metric& metric) const
     return Metric::Own(new MahalanobisMetric(type, dims, cov));
 }
 
-Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform) const
+Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform, const Geometry& jac) const
 {
     if (dims != 3)
     {
-        E_ERROR << "Euclidean transformation can only apply to a 3D Mahalanobis metric (d=" << dims << ")";
+        E_ERROR << "An Euclidean transformation can only apply to a 3D Mahalanobis metric (d=" << dims << ")";
         return Metric::Own();
     }
 
+    const size_t d0 = dims;
+    const size_t d1 = jac.IsEmpty() ? d0 : jac.GetDimension() / dims;
+
+    if (!jac.IsEmpty())
+    {
+        if (jac.shape != Geometry::ROW_MAJOR)
+        {
+            return Transform(tform, jac.Reshape(Geometry::ROW_MAJOR));
+        }
+
+        if (jac.GetElements() != m_cov.GetElements() /*&& jac.GetElements() > 1*/)
+        {
+            E_ERROR << "given Jacobian is for " << jac.GetElements() << " element(s) while the metric has " << m_cov.GetElements();
+            return Metric::Own();
+        }
+
+        if (jac.GetDimension() != d0 * d1)
+        {
+            E_ERROR << "given Jacobian has invalid dimension of " << jac.GetDimension();
+            return Metric::Own();
+        }
+    }
+
+    const int D0 = static_cast<int>(d0);
+    const int D1 = static_cast<int>(d1);
+    // m_metres.cov.Start();
+    MahalanobisMetric* metric = new MahalanobisMetric(ANISOTROPIC_ROTATED, D1);
+    const cv::Mat cov0 = GetFullCovMat();
+    /***/ cv::Mat cov1 = cv::Mat(cov0.rows, metric->GetCovMatCols(), cov0.depth());
+    // m_metres.cov.Stop(cov0.rows);
     const int DIMS = static_cast<int>(dims);
 
-    MahalanobisMetric* metric = new MahalanobisMetric(ANISOTROPIC_ROTATED, DIMS);
-    cv::Mat cov = GetFullCovMat();
     cv::Mat R = tform.GetRotation().ToMatrix();
 
-    if (R.depth() != cov.depth())
+    if (R.depth() != cov1.depth())
     {
-        R.convertTo(R, cov.depth());
+        R.convertTo(R, cov1.depth());
     }
 
-    cv::Mat Rt = R.t();
-
-    for (int i = 0; i < cov.rows; i++)
+    // m_metres.tfm.Start();
+    if (jac.IsEmpty())
     {
-        cv::Mat Ci = cv::Mat(DIMS, DIMS, cov.type());
+        cv::Mat Rt = R.t();
 
-        for (int d0 = 0; d0 < DIMS; d0++)
+        for (int i = 0; i < cov0.rows; i++)
         {
-            for (int d1 = 0; d1 < DIMS; d1++)
+            cv::Mat Ci = cv::Mat(DIMS, DIMS, cov0.type());
+
+            for (int d0 = 0; d0 < DIMS; d0++)
             {
-                const int j = sub2symind(d0, d1, DIMS);
-                Ci.at<double>(d0, d1) = cov.at<double>(i, j);
+                for (int d1 = 0; d1 < DIMS; d1++)
+                {
+                    const int j = sub2symind(d0, d1, DIMS);
+                    Ci.at<double>(d0, d1) = cov0.at<double>(i, j);
+                }
             }
-        }
 
-        Ci = R * Ci * Rt;
+            Ci = R * Ci * Rt;
 
-        for (int d0 = 0; d0 < DIMS; d0++)
-        {
-            for (int d1 = d0; d1 < DIMS; d1++)
+            for (int d0 = 0; d0 < DIMS; d0++)
             {
-                const int j = sub2symind(d0, d1, DIMS);
-                cov.at<double>(i, j) = Ci.at<double>(d0, d1);
+                for (int d1 = d0; d1 < DIMS; d1++)
+                {
+                    const int j = sub2symind(d0, d1, DIMS);
+                    cov1.at<double>(i, j) = Ci.at<double>(d0, d1);
+                }
             }
         }
     }
+    else
+    {
+        for (int i = 0; i < cov0.rows; i++)
+        {
+            cv::Mat Ai = cv::Mat(D1, D0, cov0.type());
+            cv::Mat Ci = cv::Mat(D0, D0, cov0.type());
 
-    metric->SetCovarianceMat(cov);
+            for (int d0 = 0; d0 < D0; d0++)
+            {
+                for (int d1 = 0; d1 < D0; d1++)
+                {
+                    const int j = sub2symind(d0, d1, D0);
+                    Ci.at<double>(d0, d1) = cov0.at<double>(i, j);
+                }
+
+                for (int d1 = 0; d1 < D1; d1++)
+                {
+                    Ai.at<double>(d1, d0) = jac.mat.at<double>(i, d0 * D1 + d1);
+                }
+            }
+
+            Ai = Ai * R;
+            Ci = Ai * Ci * Ai.t(); // Ci becomes D1 x D1, was D0 x D0
+
+            for (int d0 = 0; d0 < D1; d0++)
+            {
+                for (int d1 = d0; d1 < D1; d1++)
+                {
+                    const int j = sub2symind(d0, d1, D1);
+                    cov1.at<double>(i, j) = Ci.at<double>(d0, d1);
+                }
+            }
+        }
+    }
+    // m_metres.tfm.Stop(cov0.rows);
+
+    // m_metres.cov.Start();
+    metric->SetCovarianceMat(cov1);
+    // m_metres.cov.Stop(cov1.rows);
+
+    // E_INFO << "TFM : " << m_metres.tfm.GetElapsedSeconds();
+    // E_INFO << "COV : " << m_metres.cov.GetElapsedSeconds();
 
     return Metric::Own(metric);
 }
@@ -658,23 +766,31 @@ cv::Mat MahalanobisMetric::Update(const MahalanobisMetric& metric)
     }
 
     const int DIMS = static_cast<int>(dims);
-    K = cv::Mat::zeros(cov0.rows, cov0.cols, cov0.depth());
 
     // initialise Kalman gain with the identity matrix
+    K = cv::Mat::zeros(cov0.rows, DIMS * DIMS, cov0.depth());
     for (int d = 0; d < DIMS; d++)
     {
-        K.col(sub2symind(d, d, DIMS)).setTo(1.0f);
+        K.col(d * DIMS + d).setTo(1.0f);
     }
 
     for (int i = 0; i < cov0.rows; i++)
     {
         // check the validity using the first covariance coefficient C_{00}
-        const bool valid = cov0.at<double>(i, 0) > 0;
+        const bool valid0 = cov0.at<double>(i, 0) > 0;
+        const bool valid1 = cov1.at<double>(i, 0) > 0;
 
         // use the covariance from the given metric as the initial state
-        if (!valid)
+        if (!valid0 && valid1)
         {
             cov1.row(i).copyTo(cov0.row(i));
+            continue;
+        }
+
+        // deny to update using second measure if it is not valid
+        if (!valid1)
+        {
+            K.row(i).setTo(0.0f); // nullify the Kalman gain
             continue;
         }
 
@@ -697,19 +813,42 @@ cv::Mat MahalanobisMetric::Update(const MahalanobisMetric& metric)
         // find the inverse of sum of the i-th covariance matrices
         cv::Mat inv; // inverse of C0 + C1
         cv::Mat kal; // Kalman gain, in full matrix
-        cv::invert(sum, inv);
+        double rcond = cv::invert(sum, inv, cv::DECOMP_SVD);
+
+        if (rcond < s_rcondThreshold)
+        {
+            E_TRACE << "entry " << i << " will not be updated as it is possibly singular (RCOND = " << rcond << ")";
+            K.row(i).setTo(0.0f); // deny the update and nullify the Kalman gain
+
+            continue;
+        }
 
         kal = cov * inv;       // K = C0 * inv(C0 + C1)
         cov = cov - kal * cov; // updated covariance: C0' = C0 - K * C0;
 
-        // fill back the upper triangle parts
+        // check positive definiteness
+#ifndef NDEBUG
+        if (!checkPositiveDefinite(cov))
+        {
+            E_ERROR << "entry " << i << " has non-positive-definite covariance";
+            E_ERROR << "C0 = "  << mat2string(cov0.row(i));
+            E_ERROR << "C1 = "  << mat2string(cov1.row(i));
+            E_ERROR << "inv = " << mat2string(inv);
+            E_ERROR << "sum = " << mat2string(sum);
+            E_ERROR << "kal = " << mat2string(kal);
+            E_ERROR << "cov = " << mat2string(cov);
+            E_ERROR << "rcond = " << rcond;
+        }
+#endif
+
+        kal.reshape(1, 1).copyTo(K.row(i));
+
+        // fill the upper triangle parts back to the output matrices
         for (int d0 = 0; d0 < DIMS; d0++)
         {
             for (int d1 = d0; d1 < DIMS; d1++)
             {
                 const int j = sub2symind(d0, d1, DIMS);
-
-                K.   at<double>(i, j) = kal.at<double>(d0, d1);
                 cov0.at<double>(i, j) = cov.at<double>(d0, d1);
             }
         }
@@ -750,6 +889,28 @@ bool MahalanobisMetric::SetCovarianceMat(const cv::Mat& cov)
     m_icv.mat = cv::Mat(); // do lazy evaluation
     // m_icv.mat = GetInverseCovMat(cov);
 
+    const int DIMS = static_cast<int>(dims);
+
+    for (int i = 0; i < cov.rows; i++)
+    {
+        cv::Mat Ci = cv::Mat(DIMS, DIMS, cov.depth());
+        
+        for (int d0 = 0; d0 < DIMS; d0++)
+        {
+            for (int d1 = 0; d1 < DIMS; d1++)
+            {
+                const int j = sub2symind(d0, d1, DIMS);
+                Ci.at<double>(d0, d1) = cov.at<double>(i, j);
+            }
+        }
+
+        if (!checkPositiveDefinite(Ci))
+        {
+            E_TRACE << "entry " << i << " is not positive definite, " << mat2string(Ci, "C");
+            m_cov.mat.row(i).setTo(0.0f); // nullify the entry
+        }
+    }
+
     return true;
 }
 
@@ -779,7 +940,15 @@ cv::Mat MahalanobisMetric::GetInverseCovMat(const cv::Mat& cov) const
 
         // find the inverse of i-th covariance matrix
         cv::Mat S2_inv;
-        double cond = cv::invert(S2, S2_inv, cv::DECOMP_SVD);
+        double rcond = cv::invert(S2, S2_inv, cv::DECOMP_SVD);
+
+        if (rcond < s_rcondThreshold)
+        {
+            E_TRACE << "the inverse of entry " << i << " is badly scaled hence discarded (RCOND = " << rcond << ")";
+            icv.row(i).setTo(0.0f);
+
+            continue;
+        }
 
         // fill back
         for (int d0 = 0; d0 < DIMS; d0++)
@@ -836,6 +1005,51 @@ cv::Mat MahalanobisMetric::GetFullCovMat() const
     }
 
     return cov;
+}
+
+cv::Mat MahalanobisMetric::GetFullCovMat(size_t index) const
+{
+    const int ROW = static_cast<int>(index);
+    const int DIMS = static_cast<int>(dims);
+    cv::Mat C = cv::Mat::zeros(DIMS, DIMS, m_cov.mat.depth());
+
+    switch (type)
+    {
+    case ISOTROPIC:
+
+        for (int d = 0; d < DIMS; d++)
+        {
+            const int j = sub2symind(d, d, DIMS);
+            C.at<double>(d, d) = m_cov.mat.at<double>(ROW, 0);
+        }
+
+        break;
+
+    case ANISOTROPIC_ORTHOGONAL:
+
+        for (int d = 0; d < DIMS; d++)
+        {
+            const int j = sub2symind(d, d, DIMS);
+            C.at<double>(d, d) = m_cov.mat.at<double>(ROW, d);
+        }
+
+        break;
+
+    case ANISOTROPIC_ROTATED:
+
+        for (int d0 = 0; d0 < DIMS; d0++)
+        {
+            for (int d1 = 0; d1 < DIMS; d1++)
+            {
+                const int j = sub2symind(d0, d1, DIMS);
+                C.at<double>(d0, d1) = m_cov.mat.at<double>(ROW, j);
+            }
+        }
+
+        break;
+    }
+
+    return C;
 }
 
 boost::shared_ptr<MahalanobisMetric> MahalanobisMetric::ToMahalanobis(bool& native)
@@ -929,6 +1143,21 @@ Geometry MahalanobisMetric::operator() (const Geometry& x) const
                 cv::multiply(x.mat.col(j0), x.mat.col(j1), dj); // dj = x_j0 .* x_j1
                 cv::multiply(m_icv.mat.col(j), dj, dj);         // dj = wj .* dj
                 cv::add(d, dj, d);
+            }
+        }
+
+        // check..
+        for (int i = 0; i < x.mat.rows; i++)
+        {
+            const double di = d.at<double>(i);
+            if (di < 0 || !std::isfinite(di))
+            {
+                E_ERROR << "entry " << i << " has invalid squared distance " << di;
+                E_ERROR << "dist: " << mat2string(x.mat.row(i));
+                E_ERROR << "cov: "  << mat2string(m_cov.mat.row(i));
+                E_ERROR << "icv: "  << mat2string(m_icv.mat.row(i));
+
+                return Geometry(x.shape);
             }
         }
 
@@ -1532,9 +1761,40 @@ bool Motion::Restore(const Path& path)
 
 cv::Mat ProjectionModel::Project(const Geometry& g, const cv::Mat& im) const
 {
+    throw std::exception("not implemented");
+}
 
+Geometry ProjectionModel::GetJacobian(const Geometry& g) const
+{
+    return GetJacobian(
+        g,
+        Project(g, ProjectionModel::EUCLIDEAN_2D).Reshape(Geometry::ROW_MAJOR)
+    );
+}
 
-    return cv::Mat();
+Geometry ProjectionModel::GetJacobian(const Geometry& g, const Geometry& proj) const
+{
+    if (proj.shape != Geometry::ROW_MAJOR)
+    {
+        return GetJacobian(g, proj.Reshape(Geometry::ROW_MAJOR));
+    }
+
+    const double dx = 1e-1;
+
+    Geometry jac(Geometry::ROW_MAJOR);
+    jac.mat = cv::Mat(static_cast<int>(g.GetElements()), 6, g.mat.type());
+
+    for (int i = 0; i < 3; i++)
+    {
+        const cv::Mat yi = Project(g.Step(i, dx).Reshape(Geometry::ROW_MAJOR), ProjectionModel::EUCLIDEAN_2D).mat;
+        const int j = i * yi.cols;
+
+        jac.mat.colRange(j, j + yi.cols) = (yi - proj.mat) / dx;
+    }
+
+    return g.shape == Geometry::PACKED ?
+        Geometry(Geometry::PACKED, jac.mat.reshape(6, g.mat.rows)) :
+        jac.Reshape(g.shape);
 }
 
 //==[ PinholeModel ]==========================================================//
@@ -1647,6 +1907,54 @@ Geometry PinholeModel::Backproject(const Geometry& g) const
         d == 2 ? Geometry::MakeHomogeneous(g) : g,
         EUCLIDEAN_3D
     );
+}
+
+Geometry PinholeModel::GetJacobian(const Geometry& g) const
+{
+    if (g.shape != Geometry::ROW_MAJOR)
+    {
+        return GetJacobian(g.Reshape(Geometry::ROW_MAJOR));
+    }
+
+    Geometry jac(Geometry::ROW_MAJOR);
+    jac.mat = cv::Mat(static_cast<int>(g.GetElements()), 6, g.mat.type());
+
+    const double fx = m_matrix.at<double>(0, 0);
+    const double fy = m_matrix.at<double>(1, 1);
+#if 1
+    const cv::Mat w = 1 / g.mat.col(2);
+    const cv::Mat u = g.mat.col(0).mul(w);
+    const cv::Mat v = g.mat.col(1).mul(w);
+
+    jac.mat.col(0) = fx * w;    // dx/dX
+    jac.mat.col(1).setTo(0.0f); // dy/dX
+
+    jac.mat.col(2).setTo(0.0f); // dx/dY
+    jac.mat.col(3) = fy * w;    // dy/dY
+
+    jac.mat.col(4) = -u.mul(w); // dx/dZ
+    jac.mat.col(5) = -v.mul(w); // dy/dZ
+#else
+    cv::cuda::GpuMat gmat, w, u, v, dxx, dyy, dxz, dyz;
+
+    gmat.upload(g.mat);
+
+    cv::cuda::divide(1, gmat.col(2), w);
+    cv::cuda::multiply(g.mat.col(0), w, u);
+    cv::cuda::multiply(g.mat.col(1), w, v);
+    cv::cuda::multiply(fx, w, dxx);
+    cv::cuda::multiply(fy, w, dyy);
+    cv::cuda::multiply(u, w, dxz, -1);
+    cv::cuda::multiply(v, w, dyz, -1);
+
+    dxx.download(jac.mat.col(0));
+    jac.mat.col(1).setTo(0.0f);
+    jac.mat.col(2).setTo(0.0f);
+    dyy.download(jac.mat.col(3));
+    dxz.download(jac.mat.col(4));
+    dyz.download(jac.mat.col(5));
+#endif
+    return jac;
 }
 
 cv::Mat PinholeModel::ToProjectionMatrix(const EuclideanTransform& tform) const

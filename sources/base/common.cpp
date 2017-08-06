@@ -43,6 +43,21 @@ namespace seq2map
         else       return j * n - (j - 1) * j / 2 + i - j;
     }
 
+    bool checkPositiveDefinite(const cv::Mat& A)
+    {
+        if (A.rows != A.cols || A.channels() != 1) return false;
+
+        for (int i = 0; i < A.rows; i++)
+        {
+            if (cv::determinant(A.rowRange(0, i + 1).colRange(0, i + 1)) < 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     double rms(const cv::Mat& e)
     {
         size_t n = e.total();

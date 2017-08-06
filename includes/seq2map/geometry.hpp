@@ -74,6 +74,11 @@ namespace seq2map
         Geometry operator- (const Geometry& g) const;
 
         /**
+         * Add an offset in a specific dimension; commonly used in numerical differentiation.
+         */
+        Geometry Step(size_t dim, double eps) const;
+
+        /**
          * Rescale the geometry in-place to make the last dimension equal to one.
          * Note this method does not reduce the dimensionality by one.
          */
@@ -165,12 +170,14 @@ namespace seq2map
         virtual Metric::Own operator+ (const Metric& metric) const = 0;
 
         /**
-         * Apply an Euclidean transform to the metric.
+         * Apply an Euclidean transform to the metric, optionally with the Jacobian of a second-level transform.
+         * The Jacobian achieves generic transformation of the metric to another space by first-order linearisation.
          *
          * \param tform The transform to be applied.
+         * \param jac Jacobian of a transformation function.
          * \return The transformed metric.
          */
-        virtual Metric::Own Transform(const EuclideanTransform& tform) const = 0;
+        virtual Metric::Own Transform(const EuclideanTransform& tform, const Geometry& jac = Geometry(Geometry::ROW_MAJOR)) const = 0;
 
         /**
          *
@@ -200,7 +207,7 @@ namespace seq2map
         virtual Metric::Own Clone() const { return Metric::Own(new EuclideanMetric(scale)); }
         virtual Metric::Own operator[] (const Indices& indices) const { return Clone(); }
         virtual Metric::Own operator+ (const Metric& metric) const;
-        virtual Metric::Own Transform(const EuclideanTransform& tform) const { return Clone(); }
+        virtual Metric::Own Transform(const EuclideanTransform& tform, const Geometry& jac = Geometry(Geometry::ROW_MAJOR)) const { return Clone(); }
         virtual boost::shared_ptr<MahalanobisMetric> ToMahalanobis(bool& native) { return 0; }
         virtual boost::shared_ptr<const MahalanobisMetric> ToMahalanobis() const { return 0; }
         virtual bool FromMahalanobis(const MahalanobisMetric& metric) { return false; }
@@ -259,13 +266,17 @@ namespace seq2map
 
         virtual Metric::Own operator+ (const Metric& metric) const;
 
-        virtual Metric::Own Transform(const EuclideanTransform& tform) const;
+        virtual Metric::Own Transform(const EuclideanTransform& tform, const Geometry& jac = Geometry(Geometry::ROW_MAJOR)) const;
 
         virtual Metric::Own Reduce() const;
 
         virtual boost::shared_ptr<MahalanobisMetric> ToMahalanobis(bool& native);
+
         virtual boost::shared_ptr<const MahalanobisMetric> ToMahalanobis() const;
+
         virtual bool FromMahalanobis(const MahalanobisMetric& metric);
+
+        static boost::shared_ptr<MahalanobisMetric> Identity(size_t numel, size_t dims, int depth = CV_64F);
 
         /**
          * Update the current covariance by a new observation by summing up
@@ -278,6 +289,7 @@ namespace seq2map
         inline  size_t GetCovMatCols() const { return GetCovMatCols(type, dims); }
         cv::Mat GetInverseCovMat(const cv::Mat& cov) const;
         cv::Mat GetFullCovMat() const;
+        cv::Mat GetFullCovMat(size_t index) const;
         bool SetCovarianceMat(const cv::Mat& cov);
         inline const Geometry& GetCovariance() const { return m_cov; };
 
@@ -287,10 +299,20 @@ namespace seq2map
         const size_t dims;         ///< dimensionality
 
     private:
+        struct Metres
+        {
+            Speedometre tfm;
+            Speedometre cov;
+        };
+
+        static double s_rcondThreshold;
+
         Geometry m_cov;         ///< error covariance coefficients
         mutable Geometry m_icv; ///< inverse covariance coefficients, automatically calculated from cov
+        mutable Metres m_metres;
     };
 
+    /*
     class DualMetric : public Metric
     {
     public:
@@ -301,6 +323,7 @@ namespace seq2map
         virtual Metric::Own operator[] (const Indices& indices) const { return Metric::Own(new DualMetric((*m0)[indices], (*m1)[indices])); }
         virtual Metric::Own operator+  (const Metric& metric)   const { return Metric::Own(new DualMetric((*m0) + metric, (*m1) + metric)); }
 
+        virtual Metric::Own Transform(const Geometry& jac) const { return Clone(); }
         virtual Metric::Own Transform(const EuclideanTransform& tform) const { return Metric::Own(new DualMetric(m0->Transform(tform), m1)); }
 
         virtual boost::shared_ptr<MahalanobisMetric> ToMahalanobis(bool& native) { return 0; }
@@ -310,6 +333,7 @@ namespace seq2map
         const Metric::ConstOwn m0;
         const Metric::ConstOwn m1;
     };
+    */
 
     /**
      * Mapping of geometry data in two different spaces.
@@ -748,7 +772,7 @@ namespace seq2map
         {
             EUCLIDEAN_2D,  // a 3D point (X,Y,Z) is mapped to an image point (x,y)
             EUCLIDEAN_3D,  // a 3D point (X,Y,Z) is rescaled to Z * (x,y,1)
-            HOMOGENEOUS_3D // a 3D point (X,Y,Z) is mapped to an image point (x,y,1) with
+            HOMOGENEOUS_3D // a 3D point (X,Y,Z) is mapped to an image point (x,y,1)
         };
 
         //
@@ -771,6 +795,22 @@ namespace seq2map
          * \return geometry transformed either into image plane or to a re-scaled Euclidean space.
          */
         virtual Geometry Project(const Geometry& g, ProjectiveSpace space = EUCLIDEAN_2D) const = 0;
+
+        /**
+         * Compute the Jacobians of 3D points and return them as a geometry in 6D space representing
+         * dx/dX, dy/dX, dx/dY, dy/dY, dx/dZ and dy/dZ.
+         *
+         * \param g Point geometry in 3D space.
+         *
+         * \return Jacobian geometry in 6D space; the first, second, and third two dimensions represent
+         *         partial derivatives with respect to X, Y and Z coordinates, respectively.
+         */
+        virtual Geometry GetJacobian(const Geometry& g) const;
+
+        /**
+         * Compute the Jacobians of 3D points given pre-calculated 2D projections.
+         */
+        virtual Geometry GetJacobian(const Geometry& g, const Geometry& proj) const;
 
         /**
          * Perform back-projection.
@@ -823,8 +863,7 @@ namespace seq2map
         virtual Geometry Project(const Geometry& g, ProjectiveSpace space = EUCLIDEAN_2D) const { return proj.Project(pose(Geometry(g), true), space); }
         virtual Geometry Backproject(const Geometry& g) const { return pose.GetInverse().GetRotation()(proj.Backproject(g)); }
 
-        const EuclideanTransform& pose;
-        ProjectionModel& proj;
+        virtual Geometry GetJacobian(const Geometry& g, const Geometry& proj) const { return this->proj.GetJacobian(pose(Geometry(g), true), proj); }
 
         virtual String GetModelName() const { return proj.GetModelName(); }
 
@@ -837,6 +876,9 @@ namespace seq2map
         virtual bool Store(Vec& v) const    { return proj.Store(v);   }
         virtual bool Restore(const Vec& v)  { return proj.Restore(v); }
         virtual size_t GetDimension() const { return proj.GetDimension(); }
+
+        const EuclideanTransform& pose;
+        ProjectionModel& proj;
     };
 
     /**
@@ -887,6 +929,13 @@ namespace seq2map
         // Backward projection
         //
         virtual Geometry Backproject(const Geometry& g) const;
+
+
+        //
+        // Differentiation
+        //
+        virtual Geometry GetJacobian(const Geometry& g) const;
+        virtual Geometry GetJacobian(const Geometry& g, const Geometry& proj) const { return GetJacobian(g); }
 
         //
         // Persistence

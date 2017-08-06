@@ -51,6 +51,9 @@ private:
     AlignmentOptions m_alignment;
     size_t m_ransacIter;
     double m_ransacConf;
+    double m_ransacRatio;
+    double m_sigma;
+    bool m_noRandSeeding;
 
     bool m_forwardFlow;
     bool m_backwardFlow;
@@ -63,7 +66,7 @@ void MyApp::ShowHelp(const Options& o) const
 {
     std::cout << "Ego-motion estimation using monocular vision." << std::endl;
     std::cout << std::endl;
-    std::cout << "Usage: " << m_exec.string() << " [options] <sequence_database>" << std::endl;
+    std::cout << "Usage: " << m_exec.string() << " [options] <sequence_database> <output_pose_txt>" << std::endl;
     std::cout << o << std::endl;
 }
 
@@ -72,13 +75,16 @@ void MyApp::SetOptions(Options& o, Options& h, Positional& p)
     namespace po = boost::program_options;
 
     o.add_options()
-        ("feature-store,f",   po::value<size_t>(&m_kptsStoreId)->default_value(0),   "Source feature store")
-        ("disparity-store,d", po::value<int>   (&m_dispStoreId)->default_value(-1),  "Optional disparity store, set to -1 to disable use of disparity maps.")
-        ("align-model,a",     po::value<String>(&m_alignString)->default_value(""),  "A string containning flags of alignment models to be enabled. \"B\" for backward projection, \"P\" for photometric, \"R\" for rigid, and \"E\" for epipolar alignment.")
-        ("flow",              po::value<String>(&m_flowString)->default_value(""),   "Optical flow computation option for missed features. Valid strings are \"FORWARD\", \"BACKWARD\" and \"BIDIRECTION\"")
-        ("ransac-iter",       po::value<size_t>(&m_ransacIter)->default_value(100),  "Max number of iterations for the RANSAC outlier rejection process.")
-        ("ransac-conf",       po::value<double>(&m_ransacConf)->default_value(0.5f), "Expected probability that all the drawn samples are inliers during the RANSAC process.")
-        ("block-matching",    po::bool_switch  (&m_blockMatching)->default_value(false),  "Enable block matching along epipolar lines to recover missing features.")
+        ("feature-store,f",   po::value<size_t>(&m_kptsStoreId  )->default_value(    0), "Source feature store")
+        ("disparity-store,d", po::value<int>   (&m_dispStoreId  )->default_value(   -1), "Optional disparity store, set to -1 to disable using disparity maps.")
+        ("align-model,a",     po::value<String>(&m_alignString  )->default_value(   ""), "A string containning flags of alignment models to be enabled. \"B\" for backward projection, \"P\" for photometric, \"R\" for rigid, and \"E\" for epipolar alignment.")
+        ("flow",              po::value<String>(&m_flowString   )->default_value(   ""), "Optical flow computation option for missed features. Valid strings are \"FORWARD\", \"BACKWARD\" and \"BIDIRECTION\"")
+        ("sigma",             po::value<double>(&m_sigma        )->default_value(1.00f), "Threshold for inlier selection. The value must be positive.")
+        ("ransac-iter",       po::value<size_t>(&m_ransacIter   )->default_value(  100), "Max number of iterations for the RANSAC outlier rejection process.")
+        ("ransac-conf",       po::value<double>(&m_ransacConf   )->default_value(0.50f), "Expected probability that all the drawn samples are inliers during the RANSAC process.")
+        ("ransac-ratio",      po::value<double>(&m_ransacRatio  )->default_value(0.70f), "Minimum ratio of inliers required to consider a hypothesis valid.")
+        ("block-matching",    po::bool_switch  (&m_blockMatching)->default_value(false), "Enable block matching along epipolar lines to recover missing features.")
+        ("no-rand-seeding",   po::bool_switch  (&m_noRandSeeding)->default_value(false), "Enable block matching along epipolar lines to recover missing features.")
     ;
 
     h.add_options()
@@ -163,7 +169,10 @@ bool MyApp::Init()
     m_disparityStore = D;
 
     // randomise the RANSAC process
-    std::srand(static_cast<unsigned int>(std::time(0)));
+    if (!m_noRandSeeding)
+    {
+        std::srand(static_cast<unsigned int>(std::time(0)));
+    }
 
     return true;
 }
@@ -178,6 +187,10 @@ bool MyApp::Execute()
         FeatureTracker::FramedStore(F, 0, D), // tracking from frame k
         FeatureTracker::FramedStore(F, 1, D)  // to frame k+1
     );
+
+    tracker.matcher.SetMaxRatio(0.8f);
+    tracker.matcher.SetUniqueness(true);
+    tracker.matcher.SetSymmetric(false);
 
     Strings models;
     if (m_alignment.forwardProj)  models.push_back("FORWARD-PROJECTION");
@@ -196,14 +209,16 @@ bool MyApp::Execute()
     if (m_alignment.photometric ) tracker.outlierRejection.scheme |= FeatureTracker::PHOTOMETRIC_ALIGN;
     if (m_alignment.epipolar    ) tracker.outlierRejection.scheme |= FeatureTracker::EPIPOLAR_ALIGN;
 
-    tracker.outlierRejection.maxIterations = m_ransacIter;
-    tracker.outlierRejection.minInlierRatio = 0.4f;
-    tracker.outlierRejection.confidence = m_ransacConf;
-    tracker.outlierRejection.epipolarEps = 999;
+    tracker.outlierRejection.maxIterations  = m_ransacIter;
+    tracker.outlierRejection.minInlierRatio = m_ransacRatio;
+    tracker.outlierRejection.confidence     = m_ransacConf;
+    tracker.outlierRejection.sigma          = m_sigma;
+    tracker.outlierRejection.epipolarEps    = 999;
 
     if (m_forwardFlow)   tracker.inlierInjection.scheme |= FeatureTracker::FORWARD_FLOW;
     if (m_backwardFlow)  tracker.inlierInjection.scheme |= FeatureTracker::BACKWARD_FLOW;
     if (m_blockMatching) tracker.inlierInjection.scheme |= FeatureTracker::EPIPOLAR_SEARCH;
+
     tracker.inlierInjection.blockSize = 5;
     tracker.inlierInjection.levels = 3;
     tracker.inlierInjection.bidirectionalEps = 1;
@@ -217,7 +232,7 @@ bool MyApp::Execute()
 
     mot.Update(EuclideanTransform::Identity);
 
-    for (size_t t = 0; t < m_seq.GetFrames() - 1; t++)
+    for (size_t t = 0; t < /*2*/ m_seq.GetFrames() - 1; t++)
     {
         metre.Start();
         bool success = tracker(map, t);
@@ -238,11 +253,10 @@ bool MyApp::Execute()
                 << " (" << pair.second.secs << " secs)";
         }
 
-        //tracker.stats
-
         if (!success)
         {
             E_ERROR << "error tracking frame " << t << " -> " << (t+1);
+            mot.Store(Path("failed.txt"));
             return false;
         }
 

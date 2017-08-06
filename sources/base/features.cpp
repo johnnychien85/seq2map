@@ -520,20 +520,40 @@ ImageFeatureMap FeatureMatcher::operator() (const ImageFeatureSet& src, const Im
     cv::Mat srcDescriptors = normalisation ? NormaliseDescriptors(src.GetDescriptors()) : src.GetDescriptors();
     cv::Mat dstDescriptors = normalisation ? NormaliseDescriptors(dst.GetDescriptors()) : dst.GetDescriptors();
 
-    // Perform descriptor matching in feature space
-    map.m_matches = MatchDescriptors(srcDescriptors, dstDescriptors, metric);
+    // perform descriptor matching in feature space
+    bool ratioTest = m_maxRatio > 0.0f && m_maxRatio < 1.0f;
+    map.m_matches = MatchDescriptors(srcDescriptors, dstDescriptors, metric, ratioTest);
 
     // no match found?
     if (map.m_matches.empty()) return map;
 
-    // Perform symmetry test
+    // perform uniqueness test
+    if (m_uniqueness)
+    {
+        RunUniquenessTest(map.m_matches);
+    }
+
+    // perform symmetry test
     if (m_symmetric)
     {
+        Indices mapped = map.Select(FeatureMatch::INLIER);
+        cv::Mat subDescriptors = cv::Mat(mapped.size(), srcDescriptors.cols, srcDescriptors.type());
+
+        std::vector<size_t> idmap;
+        int i = 0;
+        BOOST_FOREACH (size_t idx, mapped)
+        {
+            const size_t src = map[idx].srcIdx;
+
+            idmap.push_back(src);
+            srcDescriptors.row(src).copyTo(subDescriptors.row(i++));
+        }
+        
         FeatureMatches& forward = map.m_matches;
-        FeatureMatches backward = MatchDescriptors(dstDescriptors, srcDescriptors, metric);
+        FeatureMatches backward = MatchDescriptors(dstDescriptors, /*srcDescriptors*/ subDescriptors, metric, false);
 
         AutoSpeedometreMeasure measure(m_symmetryTestMetre, map.m_matches.size());
-        RunSymmetryTest(forward, backward, static_cast<size_t>(srcDescriptors.rows));
+        RunSymmetryTest(forward, backward, idmap, static_cast<size_t>(srcDescriptors.rows));
     }
 
     Indices inliers = map.Select(FeatureMatch::INLIER);
@@ -581,14 +601,13 @@ cv::Mat FeatureMatcher::NormaliseDescriptors(const cv::Mat& desc)
     return normalised;
 }
 
-FeatureMatches FeatureMatcher::MatchDescriptors(const Mat& src, const Mat& dst, int metric)
+FeatureMatches FeatureMatcher::MatchDescriptors(const Mat& src, const Mat& dst, int metric, bool ratioTest)
 {
     FeatureMatches matches;
     matches.reserve(src.rows);
 
-    const bool ratioTest = m_maxRatio > 0.0f && m_maxRatio < 1.0f;
     const int k = ratioTest ? 2 : 1;
-    std::vector<std::vector<DMatch> > knn;
+    std::vector<std::vector<DMatch>> knn;
 
     if (m_useGpu && cv::cuda::getCudaEnabledDeviceCount() > 0)
     {
@@ -621,7 +640,7 @@ FeatureMatches FeatureMatcher::MatchDescriptors(const Mat& src, const Mat& dst, 
         BOOST_FOREACH(const std::vector<DMatch>& match, knn)
         {
             float ratio = match[0].distance / match[1].distance;
-            int flag = ratio < m_maxRatio ? FeatureMatch::INLIER : FeatureMatch::RATIO_TEST_FAILED;
+            int flag = ratio <= m_maxRatio ? FeatureMatch::INLIER : FeatureMatch::RATIO_TEST_FAILED;
 
             matches.push_back(FeatureMatch(match[0].queryIdx, match[0].trainIdx, match[0].distance, flag));
         }
@@ -637,7 +656,42 @@ FeatureMatches FeatureMatcher::MatchDescriptors(const Mat& src, const Mat& dst, 
     return matches;
 }
 
-void FeatureMatcher::RunSymmetryTest(FeatureMatches& forward, const FeatureMatches& backward, size_t maxSrcIdx)
+void FeatureMatcher::RunUniquenessTest(FeatureMatches& forward)
+{
+    struct Hit
+    {
+        Hit() : bestMatch(INVALID_INDEX), dist(0) {}
+
+        size_t bestMatch;
+        float dist;
+    };
+
+    std::map<size_t, Hit> check;
+
+    for (size_t i = 0; i < forward.size(); i++)
+    {
+        FeatureMatch& match = forward[i];
+        Hit& hit = check[match.dstIdx];
+
+        if (hit.bestMatch != INVALID_INDEX)
+        {
+            if (hit.dist < match.distance)
+            {
+                match.Reject(FeatureMatch::UNIQUENESS_FAILED);
+                continue;
+            }
+            else
+            {
+                forward[hit.bestMatch].Reject(FeatureMatch::UNIQUENESS_FAILED);
+            }
+        }
+
+        hit.bestMatch = i;
+        hit.dist = forward[i].distance;
+    }
+}
+
+void FeatureMatcher::RunSymmetryTest(FeatureMatches& forward, const FeatureMatches& backward, const std::vector<size_t>& idmap, size_t maxSrcIdx)
 {
     struct Check
     {
@@ -660,7 +714,7 @@ void FeatureMatcher::RunSymmetryTest(FeatureMatches& forward, const FeatureMatch
 
     BOOST_FOREACH(const FeatureMatch& m, backward)
     {
-        const size_t srcIdx = m.dstIdx;
+        const size_t srcIdx = /*m.dstIdx;*/ idmap[m.dstIdx];
         const size_t dstIdx = m.srcIdx;
 
         const Check& chk = checks[srcIdx];
@@ -675,7 +729,7 @@ void FeatureMatcher::RunSymmetryTest(FeatureMatches& forward, const FeatureMatch
     {
         if (!symmetric[k])
         {
-            forward[k].Reject(FeatureMatch::UNIQUENESS_FAILED);
+            forward[k].Reject(FeatureMatch::SYMMETRIC_FAILED);
         }
     }
 }

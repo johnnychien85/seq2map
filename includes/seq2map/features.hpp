@@ -221,8 +221,9 @@ namespace seq2map
             INLIER                 = 1 << 0,
             RATIO_TEST_FAILED      = 1 << 1,
             UNIQUENESS_FAILED      = 1 << 2,
-            SIGMA_TEST_FAILED      = 1 << 3,
-            GEOMETRIC_TEST_FAILED  = 1 << 4,
+            SYMMETRIC_FAILED       = 1 << 3,
+            SIGMA_TEST_FAILED      = 1 << 4,
+            GEOMETRIC_TEST_FAILED  = 1 << 5,
             INLIER_RECOVERED       = 1 << 8 | INLIER
         };
 
@@ -286,8 +287,8 @@ namespace seq2map
         /**
          *
          */
-        FeatureMatcher(bool exhaustive = true, bool symmetric = true, float maxRatio = 0.6f, bool useGpu = true)
-        : m_exhaustive(exhaustive), m_symmetric(symmetric), m_maxRatio(maxRatio), m_useGpu(useGpu),
+        FeatureMatcher(bool exhaustive = true, bool uniqueness = true, bool symmetric = false, float maxRatio = 0.6f, bool useGpu = true)
+        : m_exhaustive(exhaustive), m_uniqueness(uniqueness), m_symmetric(symmetric), m_maxRatio(maxRatio), m_useGpu(useGpu),
           m_descMatchingMetre("DMatching",     "features/s"),
           m_ratioTestMetre   ("Ratio Test",    "matches/s"),
           m_symmetryTestMetre("Symmetry Test", "matches/s"),
@@ -302,6 +303,19 @@ namespace seq2map
          *
          */
         ImageFeatureMap operator() (const ImageFeatureSet& src, const ImageFeatureSet& dst);
+
+        //
+        // Accessors
+        //
+
+        inline void SetUniqueness(bool enable) { m_uniqueness = enable; }
+        inline bool GetUniqueness() const      { return m_uniqueness;   }
+
+        inline void SetSymmetric(bool enable)  { m_symmetric = enable; }
+        inline bool GetSymmetric() const       { return m_symmetric;   }
+
+        inline void SetMaxRatio(float ratio)   { m_maxRatio = ratio; }
+        inline double GetMaxRatio() const      { return m_maxRatio;  }
 
         /**
          *
@@ -320,10 +334,11 @@ namespace seq2map
 
     protected:
         static cv::Mat NormaliseDescriptors(const cv::Mat& desc);
-        FeatureMatches MatchDescriptors(const cv::Mat& src, const cv::Mat& dst, int metric);
+        FeatureMatches MatchDescriptors(const cv::Mat& src, const cv::Mat& dst, int metric, bool ratioTest = true);
 
         Filters m_filters;
         bool  m_exhaustive;
+        bool  m_uniqueness;
         bool  m_symmetric;
         bool  m_useGpu;
         float m_maxRatio;
@@ -333,7 +348,8 @@ namespace seq2map
         Speedometre m_filteringMetre;
 
     private:
-        static void RunSymmetryTest(FeatureMatches& forward, const FeatureMatches& backward, size_t maxSrcIdx);
+        static void RunUniquenessTest(FeatureMatches& forward);
+        static void RunSymmetryTest(FeatureMatches& forward, const FeatureMatches& backward, const std::vector<size_t>& idmap, size_t maxSrcIdx);
     };
 
     class FundamentalMatrixFilter : public FeatureMatcher::Filter

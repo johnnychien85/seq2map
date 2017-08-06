@@ -525,7 +525,7 @@ RectifiedStereo::Configuration RectifiedStereo::GetConfiguration(const Euclidean
     return UNKNOWN;
 }
 
-Geometry RectifiedStereo::Backproject(const cv::Mat& dp) const
+Geometry RectifiedStereo::Backproject(const cv::Mat& dp, const Indices& idx) const
 {
     if (dp.rows != m_rays.mat.rows || dp.cols != m_rays.mat.cols || dp.channels() != 1)
     {
@@ -535,11 +535,23 @@ Geometry RectifiedStereo::Backproject(const cv::Mat& dp) const
         return Geometry(m_rays.shape);
     }
 
-    const int m = static_cast<int>(m_rays.GetElements());
+    const int m = static_cast<int>(idx.empty() ? m_rays.GetElements() : idx.size());
 
-    const cv::Mat src = m_rays.mat.reshape(1, m);
+    const cv::Mat src = (idx.empty() ? m_rays : m_rays[idx]).mat.reshape(1, m);
     /***/ cv::Mat dst = cv::Mat(src.rows, src.cols, src.type());
-    /***/ cv::Mat dpm = dp.reshape(1, m);
+    /***/ cv::Mat dpm = idx.empty() ? dp.reshape(1, m) : cv::Mat();
+
+    if (!idx.empty())
+    {
+        const cv::Mat dpv = dp.reshape(1, dp.total());
+        dpm = cv::Mat(m, 1, dp.depth());
+
+        int j = 0;
+        BOOST_FOREACH (size_t i, idx)
+        {
+            dpv.row(static_cast<int>(i)).copyTo(dpm.row(j++));
+        }
+    }
 
     if (dpm.depth() != dst.depth())
     {
@@ -550,12 +562,14 @@ Geometry RectifiedStereo::Backproject(const cv::Mat& dp) const
     cv::multiply(src.col(0), dst.col(2), dst.col(0)); // x = z*x
     cv::multiply(src.col(1), dst.col(2), dst.col(1)); // y = z*y
 
-    return Geometry(Geometry::ROW_MAJOR, dst).Reshape(m_rays);
+    return idx.empty() ?
+        Geometry(Geometry::ROW_MAJOR, dst).Reshape(m_rays) :
+        Geometry(Geometry::ROW_MAJOR, dst);
 }
 
-StructureEstimation::Estimate RectifiedStereo::Backproject(const cv::Mat& dp, const cv::Mat& var) const
+StructureEstimation::Estimate RectifiedStereo::Backproject(const cv::Mat& dp, const cv::Mat& var, const Indices& idx) const
 {
-    StructureEstimation::Estimate estimate(Backproject(dp));
+    StructureEstimation::Estimate estimate(Backproject(dp, idx));
 
     if (!var.empty())
     {
@@ -568,47 +582,44 @@ StructureEstimation::Estimate RectifiedStereo::Backproject(const cv::Mat& dp, co
         }
     }
 
-    cv::Mat dp2;
-    cv::multiply(dp, dp, dp2);
+    // the Jacobian matrix:
+    //
+    //          / 1/f  0  -x/d \
+    // J = Z(d) |  0  1/f -y/d |
+    //          \  0   0  -1/d /
+    //             Jx  Jy  Jdp
 
-    cv::Mat jac = Backproject(-dp2).Reshape(Geometry::ROW_MAJOR).mat;
-    cv::Mat cov = cv::Mat(jac.rows, 1, jac.depth());
+    const double f = m_depthDispRatio / m_baseline;
 
-    cv::reduce(jac.mul(jac), cov, 1, cv::REDUCE_SUM);
-    cv::sqrt(cov, cov);
+    cv::Mat dp2; cv::multiply(dp, dp, dp2);
+    cv::Mat jxy = estimate.structure.mat.col(2) * (1.0f/f);
+    cv::Mat jdp = Backproject(-dp2, idx).mat;
 
-    estimate.metric = Metric::Own(new WeightedEuclideanMetric(1 / cov));
+    // lazy way.. using the magnitude of the dominating ellipsoidal axis
+    // cv::Mat cov = cv::Mat(jdp.rows, 1, jdp.depth());
+    // cv::reduce(jac.mul(jac), cov, 1, cv::REDUCE_SUM);
+    // cv::sqrt(cov, cov);
+    // estimate.metric = Metric::Own(new WeightedEuclideanMetric(1 / cov));
 
-    /*
-    cv::Mat jac = Backproject(-dp2).Reshape(Geometry::ROW_MAJOR).mat;
+    // rigorous way.. calculating full covariance matrix with all three ellipsoidal axes
+    MahalanobisMetric* metric = new MahalanobisMetric(MahalanobisMetric::ANISOTROPIC_ROTATED, 3);
     cv::Mat cov = cv::Mat(estimate.structure.GetElements(), 6, estimate.structure.mat.depth());
 
-    for (int i = 0; i < 3; i++)
-    {
-        for (int j = i; j < 3; j++)
-        {
-            const int dst = sub2symind(i, j, 3);
-            cv::multiply(jac.col(i), jac.col(j), cov.col(dst));
-        }
-    }
-
-    // apply per-pixel error variance when the variance map is available
+    // apply the variance map if provided
     if (!var.empty())
     {
-        cv::Mat var64F = var.reshape(1, cov.rows);
+        cv::Mat sigma;
 
-        if (var64F.depth() != CV_64F)
-        {
-            var64F.convertTo(var64F, CV_64F);
-        }
-
-        for (int i = 0; i < cov.rows; i++)
-        {
-            cov.row(i) *= var64F.at<double>(i);
-        }
+        cv::sqrt(Geometry(Geometry::PACKED, var)[idx].mat, sigma);
+        cv::multiply(jdp, sigma, jdp);
     }
 
-    MahalanobisMetric* metric = new MahalanobisMetric(MahalanobisMetric::ANISOTROPIC_ROTATED, 3);
+    cov.col(0) = jdp.col(0).mul(jdp.col(0)) + jxy.mul(jxy);
+    cov.col(1) = jdp.col(0).mul(jdp.col(1));
+    cov.col(2) = jdp.col(0).mul(jdp.col(2));
+    cov.col(3) = jdp.col(1).mul(jdp.col(1)) + jxy.mul(jxy);
+    cov.col(4) = jdp.col(1).mul(jdp.col(2));
+    cov.col(5) = jdp.col(2).mul(jdp.col(2));
 
     if (!metric->SetCovarianceMat(cov))
     {
@@ -618,7 +629,6 @@ StructureEstimation::Estimate RectifiedStereo::Backproject(const cv::Mat& dp, co
     {
         estimate.metric = Metric::Own(metric);
     }
-    */
 
     return estimate;
 }

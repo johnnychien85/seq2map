@@ -117,26 +117,26 @@ bool LeastSquaresSolver::Logger::operator() (const LeastSquaresSolver::State& st
 {
     if (state.updates == 0)
     {
-        E_INFO << std::setw(80) << std::setfill('=') << "";
-        E_INFO << std::setw( 6) << std::right << "Update" 
-               << std::setw(14) << std::right << "RMSE"
-               << std::setw(20) << std::right << "Lambda"
-               << std::setw(20) << std::right << "Rel. Step Size"
-               << std::setw(20) << std::right << "Rel. Error Drop";
-        E_INFO << std::setw(80) << std::setfill('=') << "";
-        E_INFO << std::setw( 6) << std::right << state.updates
-               << std::setw(14) << std::right << state.error
-               << std::setw(20) << std::right << state.lambda
-               << std::setw(20) << std::right << "-"
-               << std::setw(20) << std::right << "-";
+        E_TRACE << std::setw(80) << std::setfill('=') << "";
+        E_TRACE << std::setw( 6) << std::right << "Update" 
+                << std::setw(14) << std::right << "RMSE"
+                << std::setw(20) << std::right << "Lambda"
+                << std::setw(20) << std::right << "Rel. Step Size"
+                << std::setw(20) << std::right << "Rel. Error Drop";
+        E_TRACE << std::setw(80) << std::setfill('=') << "";
+        E_TRACE << std::setw( 6) << std::right << state.updates
+                << std::setw(14) << std::right << state.error
+                << std::setw(20) << std::right << state.lambda
+                << std::setw(20) << std::right << "-"
+                << std::setw(20) << std::right << "-";
     }
     else
     {
-        E_INFO << std::setw(6)  << std::right << state.updates
-               << std::setw(14) << std::right << state.error
-               << std::setw(20) << std::right << state.lambda
-               << std::setw(20) << std::right << state.relStep
-               << std::setw(20) << std::right << state.relError;
+        E_TRACE << std::setw(6)  << std::right << state.updates
+                << std::setw(14) << std::right << state.error
+                << std::setw(20) << std::right << state.lambda
+                << std::setw(20) << std::right << state.relStep
+                << std::setw(20) << std::right << state.relError;
     }
 
     return true;

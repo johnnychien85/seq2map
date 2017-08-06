@@ -1,4 +1,4 @@
-function demoMotionFromEssentialMatrix(K)
+function demo_emat2mot(K)
 	n = 50;
 	x = rand(n,3)*3;
 	x(:,1:2) = bsxfun(@minus,x(:,1:2),mean(x(:,1:2)));

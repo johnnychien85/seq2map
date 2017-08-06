@@ -175,14 +175,14 @@ namespace seq2map
 
             virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx) = 0;
             virtual PoseEstimator::Own GetSolver() const = 0;
-            virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector) = 0;
+            virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma) = 0;
             virtual String ToString() const = 0;
 
             AlignmentObjective::InlierSelector::Stats& stats;
         };
 
-        MultiObjectiveOutlierFilter(size_t maxIterations, double minInlierRatio, double confidence)
-        : maxIterations(maxIterations), minInlierRatio(minInlierRatio), confidence(confidence), optimisation(true) {}
+        MultiObjectiveOutlierFilter(size_t maxIterations, double minInlierRatio, double confidence, double sigma)
+        : maxIterations(maxIterations), minInlierRatio(minInlierRatio), confidence(confidence), optimisation(true), sigma(sigma) {}
 
         virtual bool operator() (ImageFeatureMap& map, Indices& inliers);
 
@@ -191,6 +191,7 @@ namespace seq2map
         size_t maxIterations;
         double minInlierRatio;
         double confidence;
+        double sigma;
         bool optimisation;
     };
 
@@ -271,13 +272,14 @@ namespace seq2map
         struct OutlierRejectionOptions
         {
             OutlierRejectionOptions(int scheme)
-            : scheme(scheme), maxIterations(30), minInlierRatio(0.5), confidence(0.5), epipolarEps(1e2) {}
+            : scheme(scheme), maxIterations(30), minInlierRatio(0.5), confidence(0.5), epipolarEps(1e2), sigma(1.0f) {}
 
             int scheme;            ///< strategies to identify the outliers from noisy feature matches
             size_t maxIterations;  ///< the upper bound of trials
             double minInlierRatio; ///< the percentage of inliers minimally required to accept a motion hypothesis
             double confidence;     ///< probability that a random sample contains only inliers
             double epipolarEps;    ///< threshold of the epipolar objective, in the normalised image pixel
+            double sigma;
         };
 
         /**
@@ -327,7 +329,7 @@ namespace seq2map
             : pi(pi), pj(pj), epsilon(epsilon), ObjectiveBuilder(stats) {}
 
             virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
-            virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector);
+            virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma);
             virtual PoseEstimator::Own GetSolver() const { return PoseEstimator::Own(new EssentialMatrixDecomposer(pi, pj)); }
             virtual String ToString() const { return "EPIPOLAR"; }
 
@@ -350,7 +352,7 @@ namespace seq2map
             : p(p), g(g), forward(forward), ObjectiveBuilder(stats) {}
 
             virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
-            virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector);
+            virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma);
             virtual PoseEstimator::Own GetSolver() const;
 
             virtual String ToString() const { return forward ? "FORWARD PROJECTION" : "BACKWARD PROJECTION"; }
@@ -374,7 +376,7 @@ namespace seq2map
             : pj(pj), gi(gi), Ii(Ii), Ij(Ij), ObjectiveBuilder(stats) {}
 
             virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
-            virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector);
+            virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma);
             virtual PoseEstimator::Own GetSolver() const { return PoseEstimator::Own(); } // photometric objective has no closed-form solver
             
             virtual String ToString() const { return "PHOTOMETRIC"; }
@@ -399,7 +401,7 @@ namespace seq2map
             : gi(gi), gj(gj), ObjectiveBuilder(stats) {}
 
             virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
-            virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector);
+            virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma);
             virtual PoseEstimator::Own GetSolver() const { return PoseEstimator::Own(new QuatAbsOrientationSolver()); }
 
             virtual String ToString() const { return "RIGID"; }
@@ -417,7 +419,8 @@ namespace seq2map
          *
          */
         FeatureTracker(const FramedStore& src = FramedStore::Null, const FramedStore& dst = FramedStore::Null)
-        : src(src), dst(dst), policy(KEEP_BOTH), outlierRejection(FORWARD_PROJ_ALIGN), inlierInjection(0), structureScheme(NO_RECOVERY) {}
+        : src(src), dst(dst), policy(KEEP_BOTH), outlierRejection(FORWARD_PROJ_ALIGN), inlierInjection(0), structureScheme(NO_RECOVERY),
+          matcher(true, true, false, 0.8f, true) {}
 
         /**
          *
@@ -425,14 +428,23 @@ namespace seq2map
         virtual bool operator() (Map& map, size_t frame);
 
         /**
-         * Get feature's 3D coordinates and error covariances from a dense structure.
+         * Get features' 3D coordinates and error covariances from a dense structure.
          *
-         * \param f Set of image features
+         * \param f set of image features
          * \param structure Dense structure from, for example, a depth map.
          *
-         * \return Structure estimates of the given features
+         * \return Structure estimate of the given features
          */
         StructureEstimation::Estimate GetFeatureStructure(const ImageFeatureSet& f, const StructureEstimation::Estimate& structure);
+
+        /**
+         * Get features' 1D indices from their 2D image subscripts.
+         *
+         * \param f feature set.
+         * \param imageSize size of image plane.
+         * \resutn Indices of feature in image plane.
+         */
+        Indices GetFeatureImageIndices(const ImageFeatureSet& f, const cv::Size& imageSize) const;
 
         /**
          * Find features in the next frame using optical flow.
@@ -458,7 +470,7 @@ namespace seq2map
          * \param aj
          * \return True when success, otherwise false.
          */
-        bool AugmentFeatures(const GeometricMapping flow, const ImageFeatureSet& fi, const ImageFeatureSet& fj, Map& map, Frame& ti, Frame& tj, Source& si, Source& sj, Landmark::Ptrs& ui, Landmark::Ptrs& uj, ImageFeatureSet& aj);
+        bool AugmentFeatures(const GeometricMapping flow, const ImageFeatureSet& fi, const ImageFeatureSet& fj, Map& map, Frame& ti, Frame& tj, Source& si, Source& sj, Landmark::Ptrs& ui, Landmark::Ptrs& uj, ImageFeatureSet& aj, size_t& spawned, size_t& tracked);
 
         /**
          *

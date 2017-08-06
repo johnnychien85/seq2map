@@ -68,6 +68,7 @@ namespace seq2map
     bool mat2raw(const cv::Mat& im, const Path& path);
     bool checkCameraMatrix(const cv::Mat& K);
     int sub2symind(int i, int j, int n);
+    bool checkPositiveDefinite(const cv::Mat& A);
 
     // file system
     bool dirExists(const Path& path);

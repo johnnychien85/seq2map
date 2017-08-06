@@ -12,8 +12,8 @@ bool AlignmentObjective::InlierSelector::operator() (const EuclideanTransform& x
     inliers.clear();
     outliers.clear();
 
-    try
-    {
+    //try
+    //{
         metre.Start();
         cv::Mat error = (*objective)(x);
         metre.Stop(error.rows);
@@ -27,6 +27,12 @@ bool AlignmentObjective::InlierSelector::operator() (const EuclideanTransform& x
 
         for (size_t i = 0; i < error.total(); i++)
         {
+            if (!std::isfinite(e[i]))
+            {
+                E_ERROR << "entry " << i << " is not a finite number";
+                return false;
+            }
+
             if (e[i] > threshold)
             {
                 outliers.push_back(i);
@@ -36,12 +42,12 @@ bool AlignmentObjective::InlierSelector::operator() (const EuclideanTransform& x
                 inliers.push_back(i);
             }
         }
-    }
-    catch (std::exception& ex)
-    {
-        E_ERROR << "error selecting inliers : " << ex.what();
-        return false;
-    }
+    //}
+    //catch (std::exception& ex)
+    //{
+    //    E_ERROR << "error selecting inliers : " << ex.what();
+    //    return false;
+    //}
 
     return true;
 }
@@ -213,28 +219,31 @@ cv::Mat ProjectionObjective::operator() (const EuclideanTransform& f) const
     }
 
     const EuclideanTransform tf = m_forward ? f : f.GetInverse();
-    const Metric::Own d = m_data.metric->Transform(tf);
 
     Geometry x = m_data.src;
+
+    // m_metres.proj.Start();
     Geometry y = m_proj->Project(tf(x, true), ProjectionModel::EUCLIDEAN_2D);
+    // m_metres.proj.Stop(x.GetElements());
 
-    return (*d)(y, m_data.dst).mat;
+    // m_metres.jaco.Start();
+    Geometry jac = m_proj->GetJacobian(x, y);
+    // m_metres.jaco.Stop(x.GetElements());
 
-    /*
-    cv::Mat rpe = y.mat - m_data.dst.mat;
+    // m_metres.tfrm.Start();
+    const Metric::Own d = m_data.metric->Transform(tf, jac);
+    // m_metres.tfrm.Stop(jac.GetElements());
 
-    if (m_separatedRpe)
-    {
-        return rpe.reshape(1, rpe.total());
-    }
+    // m_metres.eval.Start();
+    cv::Mat e = (*d)(y, m_data.dst).mat;
+    // m_metres.eval.Stop(y.GetElements());
 
-    cv::multiply(rpe, rpe, rpe);
-    cv::sqrt(cv::Mat(rpe.col(0) + rpe.col(1)), rpe);
+    // E_TRACE << m_metres.proj.GetElapsedSeconds();
+    // E_TRACE << m_metres.jaco.GetElapsedSeconds();
+    // E_TRACE << m_metres.tfrm.GetElapsedSeconds();
+    // E_TRACE << m_metres.eval.GetElapsedSeconds();
 
-    //rpe.convertTo(rpe, CV_64F);
-
-    return rpe;
-    */
+    return e;
 }
 
 //==[ PhotometricObjective ]==================================================//
@@ -579,13 +588,13 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
 
     if (m_verbose)
     {
-        E_INFO << std::setw(80) << std::setfill('=') << "";
-        E_INFO << std::setw(6)  << std::right << "Trial"
-               << std::setw(19) << std::right << "Inliers"
-               << std::setw(19) << std::right << "Best"
-               << std::setw(18) << std::right << "Solve Time"
-               << std::setw(18) << std::right << "Eval. Time";
-        E_INFO << std::setw(80) << std::setfill('=') << "";
+        E_TRACE << std::setw(80) << std::setfill('=') << "";
+        E_TRACE << std::setw(6)  << std::right << "Trial"
+                << std::setw(19) << std::right << "Inliers"
+                << std::setw(19) << std::right << "Best"
+                << std::setw(18) << std::right << "Solve Time"
+                << std::setw(18) << std::right << "Eval. Time";
+        E_TRACE << std::setw(80) << std::setfill('=') << "";
     }
 
     struct Result
@@ -629,11 +638,11 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
 
         if (m_verbose)
         {
-            E_INFO << std::setw(6)  << std::right << (k + 1)
-                   << std::setw(12) << std::right << hits       << " (" << std::setw(3) << std::right << (100*hits/population)       << "%)"
-                   << std::setw(12) << std::right << numInliers << " (" << std::setw(3) << std::right << (100*numInliers/population) << "%)"
-                   << std::setw(15) << std::right << (solveMetre.GetElapsedSeconds() * 1000) << " ms"
-                   << std::setw(15) << std::right << (evalMetre .GetElapsedSeconds() * 1000) << " ms";
+            E_TRACE << std::setw(6)  << std::right << (k + 1)
+                    << std::setw(12) << std::right << hits       << " (" << std::setw(3) << std::right << (100*hits/population)       << "%)"
+                    << std::setw(12) << std::right << numInliers << " (" << std::setw(3) << std::right << (100*numInliers/population) << "%)"
+                    << std::setw(15) << std::right << (solveMetre.GetElapsedSeconds() * 1000) << " ms"
+                    << std::setw(15) << std::right << (evalMetre .GetElapsedSeconds() * 1000) << " ms";
         }
 
         if (hits < numInliers) continue;
@@ -853,9 +862,15 @@ StructureEstimation::Estimate& StructureEstimation::Estimate::operator+= (const 
         E_ERROR << "fusion failed due to missing Mahalanobis metric(es)";
         return *this;
     }
+    
+    // PersistentMat(m0->GetCovariance().mat.clone()).Store(Path("C0.bin"));
+    // PersistentMat(m1->GetCovariance().mat.clone()).Store(Path("C1.bin"));
 
     Geometry g0  = structure.Reshape(Geometry::ROW_MAJOR);
     Geometry g10 = estimate.structure - g0;
+
+    // PersistentMat(g0.mat).Store(Path("g0.bin"));
+    // PersistentMat(estimate.structure.mat.clone()).Store(Path("g1.bin"));
 
     if (g10.IsEmpty())
     {
@@ -870,6 +885,8 @@ StructureEstimation::Estimate& StructureEstimation::Estimate::operator+= (const 
         E_ERROR << "error updating metric, invalid Kalman gain returned";
         return *this;
     }
+
+    // PersistentMat(K).Store(Path("K.bin"));
 
     switch (m0->type)
     {
@@ -897,13 +914,15 @@ StructureEstimation::Estimate& StructureEstimation::Estimate::operator+= (const 
         {
             for (int j1 = 0; j1 < g10.mat.cols; j1++)
             {
-                const int j = sub2symind(j0, j1, static_cast<int>(m0->dims));
+                const int j = j0 * g10.mat.cols + j1;
                 g0.mat.col(j0) += K.col(j).mul(g10.mat.col(j1));
             }
         }
 
         break;
     }
+
+    // PersistentMat(g0.mat).Store(Path("G2.bin"));
 
     // just in case : structure.shape == Geometry::COL_MAJOR
     structure = g0;
@@ -928,14 +947,110 @@ StructureEstimation::Estimate& StructureEstimation::Estimate::operator+= (const 
     return *this;
 }
 
+//==[ TwoViewTriangulation ]==================================================//
+
+StructureEstimation::Estimate TwoViewTriangulation::operator() (const GeometricMapping& m) const
+{
+    if (!m.Check(2, 2))
+    {
+        E_ERROR << "ill-shaped mapping";
+        return Estimate(m.src.shape);
+    }
+
+    Geometry g = (*this)(m.src.Reshape(Geometry::ROW_MAJOR), m.dst.Reshape(Geometry::ROW_MAJOR)).Reshape(m.src.shape);
+
+    // error propogation
+    const int ROWS = static_cast<int>(g.GetElements());
+    const int COLS = static_cast<int>(MahalanobisMetric::GetCovMatCols(MahalanobisMetric::ANISOTROPIC_ROTATED, 3));
+    cv::Mat jac = GetJacobian(m.src, m.dst, g).mat;
+    cv::Mat cov = cv::Mat(ROWS, COLS, g.mat.depth());
+    boost::shared_ptr<const MahalanobisMetric> metric = m.metric ? m.metric->ToMahalanobis() : 0;
+
+    if (metric)
+    {
+        for (int i = 0; i < ROWS; i++)
+        {
+            cv::Mat Ci = metric->GetFullCovMat(static_cast<size_t>(i)); // C, 4-by-4
+            cv::Mat Ji = jac.row(i).reshape(1, 4); // J', 4-by-3
+
+            Ci = Ji.t() * Ci * Ji; // J * C * J', 3-by-3
+
+            if (!checkPositiveDefinite(Ci))
+            {
+                const cv::Mat C0 = metric->GetFullCovMat(static_cast<size_t>(i));
+
+                E_WARNING << "the Jacobian-transformed covariance of entry " << i << " is not positive definite";
+                E_WARNING << mat2string(C0, "C0");
+                E_WARNING << mat2string(Ci, "C1");
+                E_WARNING << mat2string(Ji, "J");
+
+                Ci.setTo(0);
+            }
+
+            for (int d0 = 0; d0 < 3; d0++)
+            {
+                for (int d1 = d0; d1 < 3; d1++)
+                {
+                    cov.at<double>(i, sub2symind(d0, d1, 3)) = Ci.at<double>(d0, d1);
+                }
+            }
+        }   
+    }
+    else // identity covaraince assumed
+    {
+        for (int i = 0; i < ROWS; i++)
+        {
+            cv::Mat Ji = jac.row(i).reshape(1, 4); // 4-by-3
+            cv::Mat Ci = Ji.t() * Ji; // 3-by-3
+
+            for (int d0 = 0; d0 < 3; d0++)
+            {
+                for (int d1 = d0; d1 < 3; d1++)
+                {
+                    cov.at<double>(i, sub2symind(d0, d1, 3)) = Ci.at<double>(d0, d1);
+                }
+            }
+        }
+    }
+
+    // remove points behind
+    for (int i = 0; i < ROWS; i++)
+    {
+        if (g.mat.at<double>(i, 2) < 0)
+        {
+            g.mat.row(i).setTo(0.0f);
+            cov.row(i).setTo(0.0f);
+        }
+    }
+
+    return StructureEstimation::Estimate(
+        g, Metric::Own(new MahalanobisMetric(MahalanobisMetric::ANISOTROPIC_ROTATED, 3, cov))
+    );
+}
+
+Geometry TwoViewTriangulation::GetJacobian(const Geometry& x0, const Geometry& x1, const Geometry& g) const
+{
+    const double dx = 1e-1;
+    cv::Mat J(static_cast<int>(g.GetElements()), 3 * 4, g.mat.type());
+
+    for (size_t i = 0; i < 4; i++)
+    {
+        Geometry gi = (i < 2) ? (*this)(x0.Step(i, dx), x1) : (*this)(x0, x1.Step(i - 2, dx));
+        Geometry dy = g - gi;
+
+        const int j = static_cast<int>(i) * g.mat.cols;
+        J.colRange(j, j + g.mat.cols) = dy.Reshape(Geometry::ROW_MAJOR).mat / dx;
+    }
+
+    return Geometry(Geometry::ROW_MAJOR, J);
+}
+
 //==[ OptimalTriangulation ]==================================================//
 
-StructureEstimation::Estimate OptimalTriangulation::operator() (const GeometricMapping& m) const
+Geometry OptimalTriangulation::operator() (const Geometry& x0, const Geometry& x1) const
 {
-    if (m.src.IsConsistent(m.dst)) return Estimate(m.src.shape);
-
-    Geometry p0 = Geometry::FromHomogeneous(P0.proj.Backproject(m.src.Reshape(Geometry::COL_MAJOR)));
-    Geometry p1 = Geometry::FromHomogeneous(P1.proj.Backproject(m.dst.Reshape(Geometry::COL_MAJOR)));
+    Geometry p0 = Geometry::FromHomogeneous(x0);
+    Geometry p1 = Geometry::FromHomogeneous(x1);
     Geometry g(Geometry::COL_MAJOR);
 
     cv::Mat pts0 = p0.mat;
@@ -951,12 +1066,12 @@ StructureEstimation::Estimate OptimalTriangulation::operator() (const GeometricM
     cv::triangulatePoints(pmat0, pmat1, pts0, pts1, g.mat);
 
     // cast structure to the type of the given geometry data, if neccessary
-    if (g.mat.type() != m.src.mat.type())
+    if (g.mat.type() != x0.mat.type())
     {
-        g.mat.convertTo(g.mat, m.src.mat.type());
+        g.mat.convertTo(g.mat, x0.mat.type());
     }
 
-    return Estimate(Geometry::FromHomogeneous(g).Reshape(m.src));
+    return Geometry::FromHomogeneous(g).Reshape(x0);
 }
 
 //==[ MidPointTriangulation ]=================================================//
@@ -968,35 +1083,29 @@ void MidPointTriangulation::DecomposeProjMatrix(const cv::Mat& P, cv::Mat& KRinv
     c = -KRinv * P.rowRange(0, 3).col(3);
 }
 
-StructureEstimation::Estimate MidPointTriangulation::operator() (const GeometricMapping& m) const
+Geometry MidPointTriangulation::operator() (const Geometry& x0, const Geometry& x1) const
 {
-    if (!m.src.IsConsistent(m.dst))
-    {
-        E_ERROR << "given mapping is inconsistent";
-        return Estimate(m.src.shape);
-    }
-
     cv::Mat c0 = P0.pose.GetInverse().GetTranslation();
     cv::Mat c1 = P1.pose.GetInverse().GetTranslation();
 
     cv::Mat s = c0 + c1;
     cv::Mat t = c1 - c0;
-    cv::Mat x0 = P0.Backproject(m.src).Reshape(Geometry::ROW_MAJOR).mat;
-    cv::Mat x1 = P1.Backproject(m.dst).Reshape(Geometry::ROW_MAJOR).mat;
+    cv::Mat y0 = P0.Backproject(x0).mat;
+    cv::Mat y1 = P1.Backproject(x1).mat;
 
-    if (x1.type() != x0.type())
+    if (y1.type() != y0.type())
     {
-        x1.convertTo(x1, x0.type());
+        y1.convertTo(y1, y0.type());
     }
 
-    cv::Mat g = cv::Mat(x0.rows, 3, x0.type());
-    cv::Mat w = cv::Mat(x0.rows, 1, x0.type());
+    cv::Mat g = cv::Mat(y0.rows, 3, y0.type());
+    cv::Mat w = cv::Mat(y0.rows, 1, y0.type());
 
     for (int i = 0; i < g.rows; i++)
     {
-        cv::Mat Bt = cv::Mat(2, 3, x0.type());
-        x0.row(i).copyTo(Bt.row(0));
-        x1.row(i).copyTo(Bt.row(1));
+        cv::Mat Bt = cv::Mat(2, 3, y0.type());
+        y0.row(i).copyTo(Bt.row(0));
+        y1.row(i).copyTo(Bt.row(1));
 
         cv::Mat At = Bt.clone();
         At.row(1) = -Bt.row(1);
@@ -1009,11 +1118,24 @@ StructureEstimation::Estimate MidPointTriangulation::operator() (const Geometric
 
         g.row(i) = x.t();
         w.row(i) = 1.0f / cv::norm(d);
+
+        // if (g.at<double>(i, 2) < 0)
+        // {
+// #ifndef NDEBUG
+            // E_WARNING << "triangulated point " << i << " has negative depth";
+            // E_WARNING << mat2string(x0.mat.row(i), "x0");
+            // E_WARNING << mat2string(x1.mat.row(i), "x1");
+            // E_WARNING << mat2string(y0.row(i), "a0");
+            // E_WARNING << mat2string(y1.row(i), "a1");
+            // E_WARNING << mat2string(c0, "c0");
+            // E_WARNING << mat2string(c1, "c1");
+            // E_WARNING << mat2string(g.row(i), "y");
+// #endif
+            // g.row(i).setTo(0.0f);
+        // }
     }
     
-    return Estimate(
-        Geometry(Geometry::ROW_MAJOR, g).Reshape(m.src),
-        Metric::Own(new WeightedEuclideanMetric(w)));
+    return Geometry(Geometry::ROW_MAJOR, g);
 }
 
 //==[ MultipleViewBlockMatcher ]==============================================//
