@@ -353,6 +353,11 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, Indices& in
         const AlignmentObjective::InlierSelector& sel = estimator.GetSelectors()[s];
         const std::vector<size_t>& idmap = sel.objective->GetData().indices;
 
+        /////////////////////////////////////////////////////////////////////////////////
+        // std::stringstream ss; ss << "g" << s << ".bin";
+        // PersistentMat(sel.objective->operator()(estimate.pose)).Store(Path(ss.str()));
+        /////////////////////////////////////////////////////////////////////////////////
+
         if (stats[s] != NULL)
         {
             stats[s]->population = idmap.size();
@@ -1188,8 +1193,7 @@ bool FeatureTracker::RigidObjectiveBuilder::Build(GeometricMapping& data, Alignm
     AlignmentObjective::Own objective = AlignmentObjective::Own(new RigidObjective());
 
     data = m_builder.Build();
-    data.metric = gi.metric && gj.metric ?  *(*gi.metric)[m_idx0] + *(*gj.metric)[m_idx1] : Metric::Own();
-    //data.metric = gi.metric && gj.metric ?  Metric::Own(new DualMetric((*gi.metric)[m_idx0], (*gj.metric)[m_idx1])) : Metric::Own();
+    data.metric = gi.metric && gj.metric ?  Metric::Own(new DualMetric((*gi.metric)[m_idx0], (*gj.metric)[m_idx1])) : Metric::Own();
 
     if (!objective->SetData(data))
     {
@@ -1197,7 +1201,7 @@ bool FeatureTracker::RigidObjectiveBuilder::Build(GeometricMapping& data, Alignm
         return false;
     }
 
-    selector = objective->GetSelector(0.75f);
+    selector = objective->GetSelector(1.0f);
 
     return true;
 }

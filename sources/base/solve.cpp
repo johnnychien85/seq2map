@@ -55,11 +55,10 @@ cv::Mat LeastSquaresProblem::ComputeJacobian(const VectorisableD::Vec& x, Vector
     // lunch the threads
     for (size_t k = 0; k < slices.size(); k++)
     {
-        //threads.push_back(boost::thread(
         threads.add_thread(new boost::thread(
             LeastSquaresProblem::DiffThread,
             (const LeastSquaresProblem*) this,
-            slices[k])
+            boost::ref(slices[k]))
         );
     }
 
@@ -176,6 +175,8 @@ bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& f, State& state)
             cv::Mat D = J.t() * cv::Mat(state.y);            // error gradient
 
             state.lambda = state.lambda < 0 ? cv::mean(H.diag())[0] : state.lambda;
+            state.jacobian = J;
+            state.hessian  = H;
 
             bool better = false;
             size_t trials = 0;
@@ -208,8 +209,6 @@ bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& f, State& state)
                     state.error    = e_try;
                     state.relError = state.de.size() > 1 ? (state.de.rbegin()[0] / state.de.rbegin()[1]) : 1.0f;
                     state.relStep  = cv::norm(x_delta) / cv::norm(cv::Mat(x, false));
-                    state.jacobian = J;
-                    state.hessian  = H;
                     state.updates++;
                 }
                 else // reject the update

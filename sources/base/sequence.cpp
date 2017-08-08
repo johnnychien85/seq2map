@@ -543,7 +543,7 @@ Geometry RectifiedStereo::Backproject(const cv::Mat& dp, const Indices& idx) con
 
     if (!idx.empty())
     {
-        const cv::Mat dpv = dp.reshape(1, dp.total());
+        const cv::Mat dpv = dp.reshape(1, static_cast<int>(dp.total()));
         dpm = cv::Mat(m, 1, dp.depth());
 
         int j = 0;
@@ -603,7 +603,7 @@ StructureEstimation::Estimate RectifiedStereo::Backproject(const cv::Mat& dp, co
 
     // rigorous way.. calculating full covariance matrix with all three ellipsoidal axes
     MahalanobisMetric* metric = new MahalanobisMetric(MahalanobisMetric::ANISOTROPIC_ROTATED, 3);
-    cv::Mat cov = cv::Mat(estimate.structure.GetElements(), 6, estimate.structure.mat.depth());
+    cv::Mat cov = cv::Mat(static_cast<int>(estimate.structure.GetElements()), 6, static_cast<int>(estimate.structure.mat.depth()));
 
     // apply the variance map if provided
     if (!var.empty())

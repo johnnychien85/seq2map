@@ -318,28 +318,29 @@ namespace seq2map
         mutable Metres m_metres;
     };
 
-    /*
+    /**
+     * A metric that composes of metrices in two different spaces, with transformations always applied to the first metric.
+     */
     class DualMetric : public Metric
     {
     public:
-        DualMetric(const Metric::ConstOwn& m0, Metric::ConstOwn m1) : m0(m0), m1(m1) {}
+        DualMetric(const Metric::ConstOwn& src, Metric::ConstOwn dst) : src(src), dst(dst) {}
 
-        virtual Geometry operator() (const Geometry& x) const { return (*(*m0 + *m1))(x); }
-        virtual Metric::Own Clone() const { return Metric::Own(new DualMetric(m0->Clone(), m1->Clone())); }
-        virtual Metric::Own operator[] (const Indices& indices) const { return Metric::Own(new DualMetric((*m0)[indices], (*m1)[indices])); }
-        virtual Metric::Own operator+  (const Metric& metric)   const { return Metric::Own(new DualMetric((*m0) + metric, (*m1) + metric)); }
+        virtual Geometry operator() (const Geometry& x) const { return (*(*src + *dst))(x); }
+        virtual Metric::Own Clone() const { return Metric::Own(new DualMetric(src->Clone(), dst->Clone())); }
+        virtual Metric::Own operator[] (const Indices& indices) const { return Metric::Own(new DualMetric((*src)[indices], (*dst)[indices])); }
+        virtual Metric::Own operator+  (const Metric& metric)   const { return Metric::Own(new DualMetric((*src) + metric, (*dst) + metric)); }
 
-        virtual Metric::Own Transform(const Geometry& jac) const { return Clone(); }
-        virtual Metric::Own Transform(const EuclideanTransform& tform) const { return Metric::Own(new DualMetric(m0->Transform(tform), m1)); }
+        virtual Metric::Own Transform(const EuclideanTransform& tform, const Geometry& jac) const { return Metric::Own(new DualMetric(src->Transform(tform, jac), dst)); }
+        virtual Metric::Own Reduce() const { return (*src + *dst)->Reduce(); }
 
         virtual boost::shared_ptr<MahalanobisMetric> ToMahalanobis(bool& native) { return 0; }
         virtual boost::shared_ptr<const MahalanobisMetric> ToMahalanobis() const { return 0; }
         virtual bool FromMahalanobis(const MahalanobisMetric& metric) { return false; }
 
-        const Metric::ConstOwn m0;
-        const Metric::ConstOwn m1;
+        const Metric::ConstOwn src;
+        const Metric::ConstOwn dst;
     };
-    */
 
     /**
      * Mapping of geometry data in two different spaces.

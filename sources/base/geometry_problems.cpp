@@ -1,4 +1,5 @@
 #include <seq2map/geometry_problems.hpp>
+#include <boost/thread.hpp>
 #include <random>
 
 using namespace seq2map;
@@ -431,12 +432,12 @@ bool RigidObjective::SetData(const GeometricMapping& data)
 
 cv::Mat RigidObjective::operator() (const EuclideanTransform& f) const
 {
-    Metric::ConstOwn metric = m_data.metric->Transform(f);
+    Metric::ConstOwn d = m_data.metric->Transform(f);
 
     Geometry x = m_data.src;
     Geometry y = f(x, true);
 
-    return (*metric)(m_data.dst, y).mat;
+    return (*d)(m_data.dst, y).mat;
 }
 
 //==[ PoseEstimator ]=========================================================//
@@ -644,19 +645,56 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
         solveMetre.Stop(1);
 
         evalMetre.Start();
-        BOOST_FOREACH (const AlignmentObjective::InlierSelector& g, m_selectors)
+        if (!m_threaded)
         {
-            Indices accepted, rejected;
-            if (!g(trial.pose, accepted, rejected))
+            BOOST_FOREACH(const AlignmentObjective::InlierSelector& g, m_selectors)
             {
-                E_ERROR << "selector failed";
-                return false;
+                EvalResult rs;
+
+                if (!g(trial.pose, rs.accepted, rs.rejected))
+                {
+                    E_ERROR << "selector failed";
+                    return false;
+                }
+
+                result.inliers .push_back(rs.accepted);
+                result.outliers.push_back(rs.rejected);
+
+                hits += rs.accepted.size();
+            }
+        }
+        else
+        {
+            boost::thread_group threads;
+            std::vector<EvalResult> results(m_selectors.size());
+
+            for (size_t i = 0; i < m_selectors.size(); i++)
+            {
+                threads.add_thread(
+                    new boost::thread(
+                        ConsensusPoseEstimator::EvalThread,
+                        boost::cref(m_selectors[i]),
+                        boost::cref(trial.pose),
+                        boost::ref(results[i])
+                    )
+                );
             }
 
-            result.inliers.push_back(accepted);
-            result.outliers.push_back(rejected);
+            threads.join_all();
 
-            hits += accepted.size();
+            BOOST_FOREACH (const EvalResult& rs, results)
+            {
+                if (!rs.success)
+                {
+                    E_ERROR << "selector failed";
+                    return false;
+                }
+
+                result.inliers .push_back(rs.accepted);
+                result.outliers.push_back(rs.rejected);
+
+                hits += rs.accepted.size();
+            }
         }
         evalMetre.Stop(1);
 
@@ -730,10 +768,25 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
         // PersistentMat(state.hessian).Store(Path("hessian.bin"));
         //////////////////////////////////////////////////////////////
 
+        if (state.hessian.empty())
+        {
+            E_ERROR << "empty Hessian returned";
+            return false;
+        }
+
+        if (!checkPositiveDefinite(state.hessian))
+        {
+            E_ERROR << "return Hessian is not positive definite";
+            E_ERROR << mat2string(state.hessian, "H");
+
+            return false;
+        }
+
         cv::Mat cov; cv::invert(state.hessian, cov);
 
         estimate.pose = refinement.GetPose();
         estimate.metric = Metric::Own(new MahalanobisMetric(MahalanobisMetric::ANISOTROPIC_ROTATED, 6, symmat(cov)));
+        estimate.valid = true;
 
         // do evaluation again
         inliers.clear();
@@ -754,7 +807,7 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
 
         if (numInliers < minInliers)
         {
-            E_WARNING << "the optimised model results too few inliers (" << numInliers << " < " << minInliers << ")";
+            E_WARNING << "the optimised model results in too few inliers (" << numInliers << " < " << minInliers << ")";
         }
     }
 
@@ -795,6 +848,11 @@ Indices ConsensusPoseEstimator::DrawSamples(size_t population, size_t samples)
     std::random_shuffle(idx.begin(), idx.end());
 
     return Indices(idx.begin(), std::next(idx.begin(), samples));
+}
+
+void ConsensusPoseEstimator::EvalThread(const AlignmentObjective::InlierSelector& g, const EuclideanTransform& tf, EvalResult& result)
+{
+    result.success = g(tf, result.accepted, result.rejected);
 }
 
 //==[ MultiObjectivePoseEstimation ]==========================================//
@@ -1089,7 +1147,7 @@ StructureEstimation::Estimate TwoViewTriangulation::operator() (const GeometricM
 
 Geometry TwoViewTriangulation::GetJacobian(const Geometry& x0, const Geometry& x1, const Geometry& g) const
 {
-    const double dx = 1e-1;
+    const double dx = 1e0;
     cv::Mat J(static_cast<int>(g.GetElements()), g.mat.cols * 4, g.mat.type());
 
     for (size_t i = 0; i < 4; i++)
@@ -1106,7 +1164,7 @@ Geometry TwoViewTriangulation::GetJacobian(const Geometry& x0, const Geometry& x
 
 Geometry TwoViewTriangulation::GetPoseJacobian(const Geometry& x0, const Geometry& x1, const Geometry& g) const
 {
-    const double dx = 1e-1;
+    const double dx = 1e-2;
     const VectorisableD::Vec v = M01.pose.ToVector();
 
     if (v.empty())

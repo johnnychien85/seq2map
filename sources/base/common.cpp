@@ -760,7 +760,7 @@ ColourMap::ColourMap(size_t colours)
     const int q3 = static_cast<int>((double)colours * 0.75f);
     const int q4 = static_cast<int>((double)colours * 1.00f);
 
-    m_cmap.at<cv::Scalar>(0) = cv::Scalar(148, 0, 211);
+    m_cmap.at<cv::Scalar>(0) = cv::Scalar(120, 81, 169);
 
     for (int i = 1; i < static_cast<int>(colours); i++)
     {

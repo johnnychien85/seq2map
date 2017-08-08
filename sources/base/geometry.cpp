@@ -536,7 +536,7 @@ Metric::Own MahalanobisMetric::operator+ (const Metric& metric) const
         return Metric::Own();
     }
 
-    cv::Mat cov = 0.5f * (m_cov.mat + m->m_cov.mat);
+    cv::Mat cov = 8 * (m_cov.mat + m->m_cov.mat);
 
     return Metric::Own(new MahalanobisMetric(type, dims, cov));
 }
@@ -730,19 +730,9 @@ Metric::Own MahalanobisMetric::Reduce() const
 
         for (int i = 0; i < cov.rows; i++)
         {
-            cv::Mat Ci = cv::Mat(DIMS, DIMS, cov.type());
             cv::Mat eigenVals;
 
-            for (int d0 = 0; d0 < DIMS; d0++)
-            {
-                for (int d1 = 0; d1 < DIMS; d1++)
-                {
-                    const int j = sub2symind(d0, d1, DIMS);
-                    Ci.at<double>(d0, d1) = m_cov.mat.at<double>(i, j);
-                }
-            }
-
-            if (!eigen(Ci, eigenVals))
+            if (!eigen(symmat(m_cov.mat.row(i), DIMS), eigenVals))
             {
                 cov.row(i).setTo(0.0f);
                 continue;
@@ -906,14 +896,7 @@ cv::Mat MahalanobisMetric::Update(const MahalanobisMetric& metric)
         kal.reshape(1, 1).copyTo(K.row(i));
 
         // fill the upper triangle parts back to the output matrices
-        for (int d0 = 0; d0 < DIMS; d0++)
-        {
-            for (int d1 = d0; d1 < DIMS; d1++)
-            {
-                const int j = sub2symind(d0, d1, DIMS);
-                cov0.at<double>(i, j) = cov.at<double>(d0, d1);
-            }
-        }
+        symmat(cov).copyTo(cov0.row(i));
     }
 
     return K;
@@ -988,21 +971,8 @@ cv::Mat MahalanobisMetric::GetInverseCovMat(const cv::Mat& cov) const
 
     for (int i = 0; i < cov.rows; i++)
     {
-        // make a full covariance matrix
-        cv::Mat S2 = cv::Mat(DIMS, DIMS, icv.type());
-
-        for (int d0 = 0; d0 < DIMS; d0++)
-        {
-            for (int d1 = 0; d1 < DIMS; d1++)
-            {
-                const int j = sub2symind(d0, d1, DIMS);
-                S2.at<double>(d0, d1) = cov.at<double>(i, j);
-            }
-        }
-
-        // find the inverse of i-th covariance matrix
         cv::Mat S2_inv;
-        double rcond = cv::invert(S2, S2_inv, cv::DECOMP_SVD);
+        double rcond = cv::invert(symmat(cov.row(i), DIMS), S2_inv, cv::DECOMP_SVD);
 
         if (rcond < s_rcondThreshold)
         {
@@ -1012,15 +982,7 @@ cv::Mat MahalanobisMetric::GetInverseCovMat(const cv::Mat& cov) const
             continue;
         }
 
-        // fill back
-        for (int d0 = 0; d0 < DIMS; d0++)
-        {
-            for (int d1 = d0; d1 < DIMS; d1++)
-            {
-                const int j = sub2symind(d0, d1, DIMS);
-                icv.at<double>(i, j) = S2_inv.at<double>(d0, d1);
-            }
-        }
+        symmat(S2_inv).copyTo(icv.row(i));
     }
 
     return icv;
@@ -1099,14 +1061,7 @@ cv::Mat MahalanobisMetric::GetFullCovMat(size_t index) const
 
     case ANISOTROPIC_ROTATED:
 
-        for (int d0 = 0; d0 < DIMS; d0++)
-        {
-            for (int d1 = 0; d1 < DIMS; d1++)
-            {
-                const int j = sub2symind(d0, d1, DIMS);
-                C.at<double>(d0, d1) = m_cov.mat.at<double>(ROW, j);
-            }
-        }
+        C = symmat(m_cov.mat.row(ROW), DIMS);
 
         break;
     }

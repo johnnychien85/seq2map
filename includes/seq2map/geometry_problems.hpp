@@ -349,7 +349,7 @@ namespace seq2map
         // Constructor
         //
         ConsensusPoseEstimator()
-        : m_maxIter(100), m_minInlierRatio(0.5f), m_confidence(0.95f), m_optimisation(false), m_verbose(false) {}
+        : m_maxIter(100), m_minInlierRatio(0.5f), m_confidence(0.95f), m_optimisation(false), m_verbose(false), m_threaded(true) {}
 
         //
         // Pose estimation
@@ -381,7 +381,15 @@ namespace seq2map
         size_t GetPopulation() const;
 
     private:
+        struct EvalResult
+        {
+            bool success;
+            Indices accepted;
+            Indices rejected;
+        };
+
         static Indices DrawSamples(size_t population, size_t samples);
+        static void EvalThread(const AlignmentObjective::InlierSelector& g, const EuclideanTransform& tf, EvalResult& result);
 
         Strategy m_strategy;
         PoseEstimator::ConstOwn m_solver;
@@ -392,6 +400,7 @@ namespace seq2map
         double m_confidence;
         bool m_optimisation;
         bool m_verbose;
+        bool m_threaded;
     };
 
     /**
