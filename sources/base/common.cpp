@@ -43,6 +43,34 @@ namespace seq2map
         else       return j * n - (j - 1) * j / 2 + i - j;
     }
 
+    cv::Mat symmat(const cv::Mat& A)
+    {
+        assert(A.rows == A.cols);
+        cv::Mat a(1, (A.rows + 1) * A.rows / 2, A.type());
+        for (int i = 0; i < A.rows; i++)
+        {
+            for (int j = i; j < A.cols; j++)
+            {
+                a.at<double>(sub2symind(i, j, A.rows)) = A.at<double>(i, j);
+            }
+        }
+        return a;
+    }
+
+    cv::Mat symmat(const cv::Mat& a, int n)
+    {
+        assert(a.total() == (n+1) * n / 2);
+        cv::Mat A(n, n, a.type());
+        for (int i = 0; i < A.rows; i++)
+        {
+            for (int j = 0; j < A.cols; j++)
+            {
+                A.at<double>(i, j) = a.at<double>(sub2symind(i, j, n));
+            }
+        }
+        return A;
+    }
+
     bool checkPositiveDefinite(const cv::Mat& A)
     {
         if (A.rows != A.cols || A.channels() != 1) return false;
@@ -448,7 +476,7 @@ namespace seq2map
             gpuMapX.upload(xy[0]);
             gpuMapY.upload(xy[1]);
 
-            cv::cuda::remap(gpuSrc, gpuDst, gpuMapX, gpuMapY, method);
+            cv::cuda::remap(gpuSrc, gpuDst, gpuMapX, gpuMapY, method, cv::BORDER_REPLICATE);
             gpuDst.download(dst);
         }
         else
@@ -472,7 +500,7 @@ namespace seq2map
                 {
                     const int i0 = i;
                     const int in = std::min(i + stride, n);
-                    cv::remap(src, dst.rowRange(i0, in).reshape(k), map.rowRange(i0, in).reshape(2), cv::Mat(), method);
+                    cv::remap(src, dst.rowRange(i0, in).reshape(k), map.rowRange(i0, in).reshape(2), cv::Mat(), method, cv::BORDER_REPLICATE);
                 }
 
                 dst = dst.reshape(k, sub.rows);
@@ -724,7 +752,7 @@ String Speedometre::ToString() const
 
 ColourMap::ColourMap(size_t colours)
 {
-    m_cmap = cv::Mat(colours, 1, CV_64FC4);
+    m_cmap = cv::Mat(static_cast<int>(colours), 1, CV_64FC4);
 
     const int q0 = static_cast<int>((double)colours * 0.00f);
     const int q1 = static_cast<int>((double)colours * 0.25f);
@@ -732,7 +760,7 @@ ColourMap::ColourMap(size_t colours)
     const int q3 = static_cast<int>((double)colours * 0.75f);
     const int q4 = static_cast<int>((double)colours * 1.00f);
 
-    m_cmap.at<cv::Scalar>(0) = cv::Scalar(0, 0, 0);
+    m_cmap.at<cv::Scalar>(0) = cv::Scalar(148, 0, 211);
 
     for (int i = 1; i < static_cast<int>(colours); i++)
     {

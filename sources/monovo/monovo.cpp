@@ -45,6 +45,8 @@ private:
     Sequence m_seq;
     FeatureStore::ConstOwn   m_featureStore;
     DisparityStore::ConstOwn m_disparityStore;
+    int m_start;
+    int m_until;
 
     String m_alignString;
     String m_flowString;
@@ -53,13 +55,15 @@ private:
     double m_ransacConf;
     double m_ransacRatio;
     double m_sigma;
-    bool m_noRandSeeding;
+    int m_seed;
+    bool m_reducedMetric;
 
     bool m_forwardFlow;
     bool m_backwardFlow;
     bool m_blockMatching;
     int m_flowLevels;
     int m_blockSize;
+    double m_epipolarEps;
 };
 
 void MyApp::ShowHelp(const Options& o) const
@@ -77,14 +81,18 @@ void MyApp::SetOptions(Options& o, Options& h, Positional& p)
     o.add_options()
         ("feature-store,f",   po::value<size_t>(&m_kptsStoreId  )->default_value(    0), "Source feature store")
         ("disparity-store,d", po::value<int>   (&m_dispStoreId  )->default_value(   -1), "Optional disparity store, set to -1 to disable using disparity maps.")
-        ("align-model,a",     po::value<String>(&m_alignString  )->default_value(   ""), "A string containning flags of alignment models to be enabled. \"B\" for backward projection, \"P\" for photometric, \"R\" for rigid, and \"E\" for epipolar alignment.")
+        ("start",             po::value<int>   (&m_start        )->default_value(    0), "Start frame.")
+        ("until",             po::value<int>   (&m_until        )->default_value(   -1), "Last frame. Set to negative number to go through the whole sequence.")
+        ("align-model,a",     po::value<String>(&m_alignString  )->default_value(   ""), "A string containning flags of alignment models to activate. \"B\" for backward projection, \"P\" for photometric, \"R\" for rigid, and \"E\" for epipolar alignment.")
         ("flow",              po::value<String>(&m_flowString   )->default_value(   ""), "Optical flow computation option for missed features. Valid strings are \"FORWARD\", \"BACKWARD\" and \"BIDIRECTION\"")
         ("sigma",             po::value<double>(&m_sigma        )->default_value(1.00f), "Threshold for inlier selection. The value must be positive.")
+        ("epipolar-eps",      po::value<double>(&m_epipolarEps  )->default_value( 1000), "Threshold for epipolar constraint, as the inverse of the tolerable epipolar distance in normalised pixel. Ths value must be positive.")
         ("ransac-iter",       po::value<size_t>(&m_ransacIter   )->default_value(  100), "Max number of iterations for the RANSAC outlier rejection process.")
         ("ransac-conf",       po::value<double>(&m_ransacConf   )->default_value(0.50f), "Expected probability that all the drawn samples are inliers during the RANSAC process.")
         ("ransac-ratio",      po::value<double>(&m_ransacRatio  )->default_value(0.70f), "Minimum ratio of inliers required to consider a hypothesis valid.")
         ("block-matching",    po::bool_switch  (&m_blockMatching)->default_value(false), "Enable block matching along epipolar lines to recover missing features.")
-        ("no-rand-seeding",   po::bool_switch  (&m_noRandSeeding)->default_value(false), "Enable block matching along epipolar lines to recover missing features.")
+        ("seed",              po::value<int>   (&m_seed         )->default_value(   -1), "Seed for random number generation. Set to a negative number to use system time as seed.")
+        ("reduced-metric",    po::bool_switch  (&m_reducedMetric)->default_value(false), "Apply metric reduction to accelerate error evaluation.")
     ;
 
     h.add_options()
@@ -169,10 +177,7 @@ bool MyApp::Init()
     m_disparityStore = D;
 
     // randomise the RANSAC process
-    if (!m_noRandSeeding)
-    {
-        std::srand(static_cast<unsigned int>(std::time(0)));
-    }
+    std::srand(static_cast<unsigned int>(m_seed < 0 ? std::time(0) : m_seed));
 
     return true;
 }
@@ -213,7 +218,8 @@ bool MyApp::Execute()
     tracker.outlierRejection.minInlierRatio = m_ransacRatio;
     tracker.outlierRejection.confidence     = m_ransacConf;
     tracker.outlierRejection.sigma          = m_sigma;
-    tracker.outlierRejection.epipolarEps    = 999;
+    tracker.outlierRejection.reduceMetric   = m_reducedMetric;
+    tracker.outlierRejection.epipolarEps    = m_epipolarEps;
 
     if (m_forwardFlow)   tracker.inlierInjection.scheme |= FeatureTracker::FORWARD_FLOW;
     if (m_backwardFlow)  tracker.inlierInjection.scheme |= FeatureTracker::BACKWARD_FLOW;
@@ -222,7 +228,7 @@ bool MyApp::Execute()
     tracker.inlierInjection.blockSize = 5;
     tracker.inlierInjection.levels = 3;
     tracker.inlierInjection.bidirectionalEps = 1;
-    tracker.inlierInjection.epipolarEps = 1800;
+    tracker.inlierInjection.epipolarEps = m_epipolarEps;
     tracker.inlierInjection.extractDescriptor = false;
 
     tracker.structureScheme = FeatureTracker::MIDPOINT_TRIANGULATION;
@@ -232,7 +238,10 @@ bool MyApp::Execute()
 
     mot.Update(EuclideanTransform::Identity);
 
-    for (size_t t = 0; t < /*2*/ m_seq.GetFrames() - 1; t++)
+    m_until = m_until > 0 && m_until > m_start ? m_until : m_seq.GetFrames() - 1;
+    map.GetFrame(m_start).poseEstimate.valid = true; // set the starting frame as the reference frame
+
+    for (size_t t = m_start; t < m_until; t++)
     {
         metre.Start();
         bool success = tracker(map, t);

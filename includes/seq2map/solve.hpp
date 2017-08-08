@@ -105,6 +105,7 @@ namespace seq2map
             double relStep;
             double relError;
             cv::Mat jacobian;
+            cv::Mat hessian;
             double lambda;
             size_t updates;
             bool converged;
@@ -158,7 +159,7 @@ namespace seq2map
         //
         //
         //
-        virtual bool Solve(LeastSquaresProblem& problem) = 0;
+        virtual bool Solve(LeastSquaresProblem& problem, State& state) = 0;
 
     protected:
         bool               m_verbose;
@@ -186,7 +187,7 @@ namespace seq2map
         /**
          *
          */
-        bool Solve(LeastSquaresProblem& problem);
+        bool Solve(LeastSquaresProblem& problem, State& state = State());
 
     protected:
         double m_eta;

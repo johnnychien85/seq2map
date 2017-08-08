@@ -27,8 +27,6 @@ void Map::RemoveLandmark(Landmark& l)
 
 bool Map::IsJoinable(const Landmark& li, const Landmark& lj)
 {
-    AutoSpeedometreMeasure(joinChkMetre, 2);
-
     // parallel traversal
     Landmark::const_iterator hi = li.cbegin();
     Landmark::const_iterator hj = lj.cbegin();
@@ -71,8 +69,6 @@ bool Map::IsJoinable(const Landmark& li, const Landmark& lj)
 
 Landmark& Map::JoinLandmark(Landmark& li, Landmark& lj)
 {
-    AutoSpeedometreMeasure(joinMetre, 2);
-
     for (Landmark::const_iterator hj = lj.cbegin(); hj; hj++)
     {
         const Hit& hit = *hj;
@@ -416,8 +412,8 @@ bool FeatureTracker::operator() (Map& map, size_t t)
 
     Camera::ConstOwn ci = Fi.GetCamera();
     Camera::ConstOwn cj = Fj.GetCamera();
-    ProjectionModel::ConstOwn pi = ci ? ci->GetPosedProjection() : ProjectionModel::ConstOwn();
-    ProjectionModel::ConstOwn pj = cj ? cj->GetPosedProjection() : ProjectionModel::ConstOwn();
+    boost::shared_ptr<PosedProjection> pi = ci ? ci->GetPosedProjection() : boost::shared_ptr<PosedProjection>();
+    boost::shared_ptr<PosedProjection> pj = cj ? cj->GetPosedProjection() : boost::shared_ptr<PosedProjection>();
     cv::Mat Ii = ci ? ci->GetImageStore()[ti.GetIndex()].im : cv::Mat();
     cv::Mat Ij = cj ? cj->GetImageStore()[tj.GetIndex()].im : cv::Mat();
     cv::Mat Di = src.disp ? (*src.disp)[ti.GetIndex()].im : cv::Mat();
@@ -443,11 +439,8 @@ bool FeatureTracker::operator() (Map& map, size_t t)
     if (uj.empty()) uj.resize(fj.GetSize(), NULL);
 
     // get feature structure from depthmap and transform it to the reference camera's coordinates system
-    //if (ti.GetIndex() == 0)
-    //{
     if (!Di.empty() && src.disp->GetStereoPair()) gi = src.disp->GetStereoPair()->Backproject(Di, cv::Mat(), GetFeatureImageIndices(fi, Di.size())).Transform(ci->GetExtrinsics().GetInverse());
     if (!Dj.empty() && dst.disp->GetStereoPair()) gj = dst.disp->GetStereoPair()->Backproject(Dj, cv::Mat(), GetFeatureImageIndices(fj, Dj.size())).Transform(cj->GetExtrinsics().GetInverse());
-    //}
 
     // perform pre-motion structure update
     if (mi.valid) gi = map.UpdateStructure(ui, gi, mi.pose);
@@ -476,7 +469,7 @@ bool FeatureTracker::operator() (Map& map, size_t t)
             if (pj)
             {
                 filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
-                    new PerspectiveObjectiveBuilder(pj, gi, true, stats.objectives[FORWARD_PROJ_ALIGN])
+                    new PerspectiveObjectiveBuilder(pj, gi, true, outlierRejection.reduceMetric, stats.objectives[FORWARD_PROJ_ALIGN])
                 ));
             }
             else
@@ -493,7 +486,7 @@ bool FeatureTracker::operator() (Map& map, size_t t)
             if (pi)
             {
                 filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
-                    new PerspectiveObjectiveBuilder(pi, gj, false, stats.objectives[BACKWARD_PROJ_ALIGN])
+                    new PerspectiveObjectiveBuilder(pi, gj, false, outlierRejection.reduceMetric, stats.objectives[BACKWARD_PROJ_ALIGN])
                 ));
             }
             else
@@ -510,7 +503,7 @@ bool FeatureTracker::operator() (Map& map, size_t t)
             if (pj)
             {
                 filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
-                    new PhotometricObjectiveBuilder(pj, gi, Ii, Ij, stats.objectives[PHOTOMETRIC_ALIGN])
+                    new PhotometricObjectiveBuilder(pj, gi, Ii, Ij, outlierRejection.reduceMetric, stats.objectives[PHOTOMETRIC_ALIGN])
                 ));
             }
             else
@@ -525,7 +518,7 @@ bool FeatureTracker::operator() (Map& map, size_t t)
         if (outlierRejection.scheme & RIGID_ALIGN)
         {
             filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
-                new RigidObjectiveBuilder(gi, gj, stats.objectives[RIGID_ALIGN])
+                new RigidObjectiveBuilder(gi, gj, outlierRejection.reduceMetric, stats.objectives[RIGID_ALIGN])
             ));
         }
 
@@ -757,16 +750,14 @@ bool FeatureTracker::operator() (Map& map, size_t t)
 
     if (structureScheme != NO_RECOVERY && mi.valid && stats.motion.valid)
     {
-        boost::shared_ptr<const PosedProjection> ppi = boost::dynamic_pointer_cast<const PosedProjection, const ProjectionModel>(pi);
-        boost::shared_ptr<const PosedProjection> ppj = boost::dynamic_pointer_cast<const PosedProjection, const ProjectionModel>(pj);
+        //MidPointTriangulation tau(*pi, *pj, stats.motion.pose);
+        OptimalTriangulation tau(*pi, *pj, stats.motion);
 
-        assert(ppi && ppj);
-
-        MidPointTriangulation tau(*ppi, *ppj, stats.motion.pose);
         map.UpdateStructure(map.GetLandmarks(stats.flow.indices), tau(stats.flow), mi.pose);
     }
 
     cv::Mat im = imfuse(Ii, Ij);
+    cv::Mat overlay = cv::Mat::zeros(im.rows, im.cols, im.type());
     ColourMap cmap(255);
 
     for (size_t i = 0; i < stats.flow.GetSize(); i++)
@@ -775,14 +766,19 @@ bool FeatureTracker::operator() (Map& map, size_t t)
         static const double zmax = 100;
         const size_t k = stats.flow.indices[i];
 
-        Point3D gk = map.GetLandmark(k).position;
+        const Landmark& lk = map.GetLandmark(k);
+        Point3D gk = lk.position;
+        double  wk = sqrt(lk.cov.xx + lk.cov.yy + lk.cov.zz);
 
         double zk = mi.pose(gk).z;
         Point2D xk = stats.flow.src.mat.reshape(2).at<Point2D>(static_cast<int>(i));
         Point2D yk = stats.flow.dst.mat.reshape(2).at<Point2D>(static_cast<int>(i));
+        int mk = wk > 0 ? 5 * (1 / (1 + wk)) + 1 : 1;
 
-        cv::line(im, xk, yk, cmap.GetColour(zk, zmin, zmax), 2);
+        cv::line(overlay, xk, yk, cmap.GetColour(zk, zmin, zmax), std::min(mk,5));
     }
+
+    cv::add(im, 0.9f * overlay, im);
 
     //std::stringstream ss;
     //ss << "frame-" << ti.GetIndex() << ".png";
@@ -791,7 +787,7 @@ bool FeatureTracker::operator() (Map& map, size_t t)
     cv::imshow(ToString(), im);
     cv::waitKey(1);
 
-    std::stringstream ss; ss << "frame" << ti.GetIndex() << ".jpg";
+    std::stringstream ss; ss << std::setw(5) << std::setfill('0') << ti.GetIndex() << ".jpg";
     cv::imwrite(ss.str(), im);
 
     return true;
@@ -1082,7 +1078,7 @@ bool FeatureTracker::EpipolarObjectiveBuilder::Build(GeometricMapping& data, Ali
     AlignmentObjective::Own objective = AlignmentObjective::Own(new EpipolarObjective(pi, pj));
     
     data = m_builder.Build();
-    data.metric = Metric::Own(new EuclideanMetric(epsilon * 0.5f));
+    data.metric = Metric::Own(new EuclideanMetric(epsilon));
     
     if (!objective->SetData(data))
     {
@@ -1113,24 +1109,14 @@ void FeatureTracker::PerspectiveObjectiveBuilder::AddData(size_t i, size_t j, si
 bool FeatureTracker::PerspectiveObjectiveBuilder::Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma)
 {
     AlignmentObjective::Own objective = AlignmentObjective::Own(new ProjectionObjective(p, forward));
-    //boost::shared_ptr<const MahalanobisMetric> metric =
-    //    boost::dynamic_pointer_cast<const MahalanobisMetric, const Metric>(g.metric ? (*g.metric)[m_idx] : Metric::Own());
 
     data = m_builder.Build();
-
-    //if (metric)
-    //{
-    //    data.metric = (*metric).Reduce();
-    //}
-    //else
-    //{
-    //    data.metric = Metric::Own(new EuclideanMetric(1));
-    //}
-
     data.metric = g.metric ? (*g.metric)[m_idx] : Metric::Own();
 
-    // WeightedEuclideanMetric* me = dynamic_cast<WeightedEuclideanMetric*>(data.metric.get());
-    // if (me) me->scale = 0.05f;
+    if (reduceMetric && data.metric)
+    {
+        data.metric = data.metric->Reduce();
+    }
 
     if (!objective->SetData(data))
     {
@@ -1168,7 +1154,7 @@ bool FeatureTracker::PhotometricObjectiveBuilder::Build(GeometricMapping& data, 
 
     StructureEstimation::Estimate g = gi[m_idx];
 
-    if (!objective->SetData(g.structure, Ii, g.metric, m_localIdx))
+    if (!objective->SetData(g.structure, Ii, reduceMetric && g.metric ? g.metric->Reduce() : g.metric, m_localIdx))
     {
         E_WARNING << "error setting photometric constraints for \"" << ToString() << "\"";
         return false;

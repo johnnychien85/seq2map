@@ -230,15 +230,15 @@ Geometry Geometry::FromHomogeneous(const Geometry& g)
         dst = cv::Mat(src.rows, src.cols - 1, src.type());
         for (int j = 0; j < dst.cols; j++)
         {
-            dst.col(j) = src.col(j) / src.col(dst.cols);
+            cv::divide(src.col(j), src.col(dst.cols), dst.col(j));
         }
         break;
 
     case COL_MAJOR:
         dst = cv::Mat(src.rows - 1, src.cols, src.type());
-        for (int i = 0; i < dst.cols; i++)
+        for (int i = 0; i < dst.rows; i++)
         {
-            dst.row(i) = src.row(i) / src.row(dst.rows);
+            cv::divide(src.row(i), src.row(dst.rows), dst.row(i));
         }
         break;
 
@@ -248,7 +248,7 @@ Geometry Geometry::FromHomogeneous(const Geometry& g)
         dst = dst.reshape(1, m); // to row major order
         for (int j = 0; j < dst.cols; j++)
         {
-            dst.col(j) = src.reshape(1, m).col(j) / src.reshape(1, m).col(dst.cols);
+            cv::divide(src.reshape(1, m).col(j), src.reshape(1, m).col(dst.cols), dst.col(j));
         }
         dst = dst.reshape(src.channels() - 1, src.rows);
         break;
@@ -272,14 +272,14 @@ Geometry& Geometry::Dehomogenise()
     case ROW_MAJOR:
         for (int j = 0; j < mat.cols; j++)
         {
-            mat.col(j) = mat.col(j) / mat.col(n);
+            cv::divide(mat.col(j), mat.col(n), mat.col(j));
         }
         break;
 
     case COL_MAJOR:
         for (int i = 0; i < mat.rows; i++)
         {
-            mat.row(i) = mat.row(i) / mat.row(n);
+            cv::divide(mat.row(i), mat.row(n), mat.row(i));
         }
         break;
     }
@@ -327,7 +327,8 @@ Geometry EuclideanMetric::operator() (const Geometry& x) const
 {
     if (x.GetDimension() == 1)
     {
-        return Geometry(x.shape, scale * cv::abs(x.mat));
+        cv::Mat d; cv::convertScaleAbs(x.mat, d, scale);
+        return Geometry(x.shape, d);
     }
 
     if (x.shape != Geometry::ROW_MAJOR)
@@ -393,6 +394,19 @@ Geometry WeightedEuclideanMetric::operator() (const Geometry& x) const
 
     d = EuclideanMetric::operator()(x);
     cv::multiply(d.mat, m_weights, d.mat, 1.0f, m_weights.type());
+
+    for (int i = 0; i < d.mat.rows; i++)
+    {
+        if (!std::isfinite(d.mat.at<double>(i)))
+        {
+            E_ERROR << i;
+            E_ERROR << x.mat.row(i);
+            E_ERROR << d.mat.at<double>(i);
+            E_ERROR << m_weights.at<double>(i);
+
+            throw std::exception("GG");
+        }
+    }
 
     return d.Reshape(x.shape);
 }
@@ -529,7 +543,9 @@ Metric::Own MahalanobisMetric::operator+ (const Metric& metric) const
 
 Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform, const Geometry& jac) const
 {
-    if (dims != 3)
+    const bool jacobianOnly = tform.IsIdentity();
+
+    if (!jacobianOnly && dims != 3)
     {
         E_ERROR << "An Euclidean transformation can only apply to a 3D Mahalanobis metric (d=" << dims << ")";
         return Metric::Own();
@@ -537,6 +553,9 @@ Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform, const 
 
     const size_t d0 = dims;
     const size_t d1 = jac.IsEmpty() ? d0 : jac.GetDimension() / dims;
+    const size_t n0 = m_cov.GetElements();
+    const size_t n1 = jac.GetElements();
+    // const int dtype = jac.IsEmpty() ? m_cov.mat.depth() : jac.mat.depth();
 
     if (!jac.IsEmpty())
     {
@@ -545,9 +564,9 @@ Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform, const 
             return Transform(tform, jac.Reshape(Geometry::ROW_MAJOR));
         }
 
-        if (jac.GetElements() != m_cov.GetElements() /*&& jac.GetElements() > 1*/)
+        if (n0 != 1 && n1 != 1 && n0 != n1)
         {
-            E_ERROR << "given Jacobian is for " << jac.GetElements() << " element(s) while the metric has " << m_cov.GetElements();
+            E_ERROR << "given Jacobian is for " << n1 << " element(s) while the metric has " << n0;
             return Metric::Own();
         }
 
@@ -557,24 +576,26 @@ Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform, const 
             return Metric::Own();
         }
     }
+    else if (jacobianOnly)
+    {
+        return Clone();
+    }
 
     const int D0 = static_cast<int>(d0);
     const int D1 = static_cast<int>(d1);
-    // m_metres.cov.Start();
-    MahalanobisMetric* metric = new MahalanobisMetric(ANISOTROPIC_ROTATED, D1);
-    const cv::Mat cov0 = GetFullCovMat();
-    /***/ cv::Mat cov1 = cv::Mat(cov0.rows, metric->GetCovMatCols(), cov0.depth());
-    // m_metres.cov.Stop(cov0.rows);
+    const int N1 = static_cast<int>(n0 == 1 ? n1 : n0);
     const int DIMS = static_cast<int>(dims);
 
-    cv::Mat R = tform.GetRotation().ToMatrix();
+    MahalanobisMetric* metric = new MahalanobisMetric(ANISOTROPIC_ROTATED, D1);
+    const cv::Mat cov0 = GetFullCovMat();
+    /***/ cv::Mat cov1 = cv::Mat(N1, static_cast<int>(metric->GetCovMatCols()), cov0.depth());
+    cv::Mat R = !jacobianOnly ? tform.GetRotation().ToMatrix() : cv::Mat();
 
-    if (R.depth() != cov1.depth())
+    if (!R.empty() && R.depth() != cov0.depth()) 
     {
-        R.convertTo(R, cov1.depth());
+        R.convertTo(R, cov0.depth());
     }
 
-    // m_metres.tfm.Start();
     if (jac.IsEmpty())
     {
         cv::Mat Rt = R.t();
@@ -604,9 +625,55 @@ Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform, const 
             }
         }
     }
-    else
+    else if (n0 == 1) // one covariance expanded via many Jacobians (one-to-many)
     {
-        for (int i = 0; i < cov0.rows; i++)
+        cv::Mat C = symmat(cov0, D0);
+
+        for (int i = 0; i < N1; i++)
+        {
+            cv::Mat Ai = cv::Mat(D1, D0, cov0.type());
+
+            for (int d0 = 0; d0 < D0; d0++)
+            {
+                for (int d1 = 0; d1 < D1; d1++)
+                {
+                    Ai.at<double>(d1, d0) = jac.mat.at<double>(i, d0 * D1 + d1);
+                }
+            }
+
+            if (!R.empty()) Ai = Ai * R;
+
+            cv::Mat Ci = Ai * C * Ai.t();
+            symmat(Ci).copyTo(cov1.row(i));
+        }
+    }
+    else if (n1 == 1) // many covariances propagated via one Jacobian (many-to-one)
+    {
+        cv::Mat A = cv::Mat(D1, D0, cov0.type());
+
+        for (int d0 = 0; d0 < D0; d0++)
+        {
+            for (int d1 = 0; d1 < D1; d1++)
+            {
+                A.at<double>(d1, d0) = jac.mat.at<double>(0, d0 * D1 + d1);
+            }
+        }
+
+        if (!R.empty())
+        {
+            A = A * R;
+        }
+
+        cv::Mat At = A.t();
+
+        for (int i = 0; i < N1; i++)
+        {
+            symmat(A * symmat(cov0.row(i), D0) * At).copyTo(cov1.row(i));
+        }
+    }
+    else // propagation via per-covariance Jacobian (one-to-one)
+    {
+        for (int i = 0; i < N1; i++)
         {
             cv::Mat Ai = cv::Mat(D1, D0, cov0.type());
             cv::Mat Ci = cv::Mat(D0, D0, cov0.type());
@@ -625,64 +692,46 @@ Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform, const 
                 }
             }
 
-            Ai = Ai * R;
+            if (!R.empty())
+            {
+                Ai = Ai * R;
+            }
+
             Ci = Ai * Ci * Ai.t(); // Ci becomes D1 x D1, was D0 x D0
 
-            for (int d0 = 0; d0 < D1; d0++)
-            {
-                for (int d1 = d0; d1 < D1; d1++)
-                {
-                    const int j = sub2symind(d0, d1, D1);
-                    cov1.at<double>(i, j) = Ci.at<double>(d0, d1);
-                }
-            }
+            symmat(Ci).copyTo(cov1.row(i));
         }
     }
-    // m_metres.tfm.Stop(cov0.rows);
 
-    // m_metres.cov.Start();
     metric->SetCovarianceMat(cov1);
-    // m_metres.cov.Stop(cov1.rows);
-
-    // E_INFO << "TFM : " << m_metres.tfm.GetElapsedSeconds();
-    // E_INFO << "COV : " << m_metres.cov.GetElapsedSeconds();
-
     return Metric::Own(metric);
 }
 
 Metric::Own MahalanobisMetric::Reduce() const
 {
-    cv::Mat cov = cv::Mat::zeros(m_cov.mat.rows, 1, m_cov.mat.depth());
+    cv::Mat cov;
     const int DIMS = static_cast<int>(dims);
 
     switch (type)
     {
     case ISOTROPIC:
-
-        for (int j = 0; j <  m_cov.mat.cols; j++)
-        {
-            cv::Mat sqr;
-            cv::multiply(m_cov.mat, m_cov.mat, sqr);
-            cv::add(cov, sqr, cov);
-        }
-
+        cv::sqrt(m_cov.mat, cov);
         break;
 
     case ANISOTROPIC_ORTHOGONAL:
-
-        for (int j = 0; j < m_cov.mat.cols; j++)
-        {
-            cv::Mat sqr;
-            cv::multiply(m_cov.mat.col(j), m_cov.mat.col(j), sqr);
-            cv::add(cov, sqr, cov);
-        }
+        cv::sqrt(m_cov.mat, cov);
+        cv::reduce(cov, cov, 1, cv::REDUCE_AVG);
         break;
 
     case ANISOTROPIC_ROTATED:
+        // find the lengths of three ellipsoidal axes (i.e. square roots of the covaraicne matrix's eigenvalues)
+        // and use the averaged lengths as the inverse weight
+        cov = cv::Mat(m_cov.mat.rows, 3, m_cov.mat.depth());
 
         for (int i = 0; i < cov.rows; i++)
         {
             cv::Mat Ci = cv::Mat(DIMS, DIMS, cov.type());
+            cv::Mat eigenVals;
 
             for (int d0 = 0; d0 < DIMS; d0++)
             {
@@ -693,17 +742,30 @@ Metric::Own MahalanobisMetric::Reduce() const
                 }
             }
 
-            //cov.at<double>(i, 0) = cv::determinant(Ci);
-            cov.at<double>(i, 0) = std::sqrt(cv::trace(Ci)[0]);
+            if (!eigen(Ci, eigenVals))
+            {
+                cov.row(i).setTo(0.0f);
+                continue;
+            }
+            
+            eigenVals.reshape(1, 1).copyTo(cov.row(i));
         }
 
-        break;
+        cv::sqrt(cov, cov);
+        cv::reduce(cov, cov, 1, cv::REDUCE_AVG);
     }
 
-    cv::Mat mu, sg;
-    cv::meanStdDev(cov, mu, sg);
+    // the weights are inverses of the reduced sigma
+    cv::Mat icv = 1 / cov;
 
-    cv::Mat icv = 0.1f * sg.at<double>(0, 0) / cov;
+    // singularity check
+    for (int i = 0; i < icv.rows; i++) 
+    {
+        if (!std::isfinite(icv.at<double>(i)))
+        {
+            icv.row(i).setTo(0.0f);
+        }
+    }
 
     return Metric::Own(new WeightedEuclideanMetric(icv));
 }
@@ -1077,6 +1139,11 @@ bool MahalanobisMetric::FromMahalanobis(const MahalanobisMetric& metric)
 
 Geometry MahalanobisMetric::operator() (const Geometry& x) const
 {
+    if (x.shape != Geometry::ROW_MAJOR)
+    {
+        return (*this)(x.Reshape(Geometry::ROW_MAJOR)).Reshape(x.shape);
+    }
+
     if (dims != x.GetDimension())
     {
         E_ERROR << "mis-matched dimensionalities (" << dims << " != " << x.GetDimension() << ")";
@@ -1094,12 +1161,7 @@ Geometry MahalanobisMetric::operator() (const Geometry& x) const
         m_icv.mat = GetInverseCovMat(m_cov.mat);
     }
 
-    if (x.shape != Geometry::ROW_MAJOR)
-    {
-        return (*this)(x.Reshape(Geometry::ROW_MAJOR)).Reshape(x.shape);
-    }
-
-    cv::Mat d = cv::Mat::zeros(x.mat.rows, 1, x.mat.type());
+    cv::Mat d = cv::Mat::zeros(x.mat.rows, 1, x.mat.depth());
 
     switch (type)
     {
@@ -1108,12 +1170,12 @@ Geometry MahalanobisMetric::operator() (const Geometry& x) const
         for (int j = 0; j < x.mat.cols; j++)
         {
             cv::Mat dj;
-            cv::multiply(x.mat.col(j), x.mat.col(j), dj); // dj = xj .^ 2
-            cv::add(d, dj, d);                            // d  = d + dj
+            cv::multiply(x.mat.col(j), x.mat.col(j), dj, 1.0f, d.depth()); // dj = xj .^ 2
+            cv::add(d, dj, d);                                             // d  = d + dj
         }
 
-        cv::multiply(m_icv.mat, d, d); // d = w .* d
-        cv::sqrt(d, d);                // d = sqrt(d)
+        cv::multiply(m_icv.mat, d, d, 1.0f, d.depth()); // d = w .* d
+        cv::sqrt(d, d);                                 // d = sqrt(d)
 
         break;
 
@@ -1122,9 +1184,9 @@ Geometry MahalanobisMetric::operator() (const Geometry& x) const
         for (int j = 0; j < x.mat.cols; j++)
         {
             cv::Mat dj;
-            cv::multiply(x.mat.col(j), x.mat.col(j), dj); // dj = xj .^ 2
-            cv::multiply(m_icv.mat.col(j), dj, dj);       // dj = wj .* dj
-            cv::add(d, dj, d);                            // d  = d + dj
+            cv::multiply(x.mat.col(j), x.mat.col(j), dj, 1.0f, d.depth()); // dj = xj .^ 2
+            cv::multiply(m_icv.mat.col(j), dj, dj, 1.0f, d.depth());       // dj = wj .* dj
+            cv::add(d, dj, d);                                             // d  = d + dj
         }
 
         cv::sqrt(d, d); // DIMS = sqrt(DIMS)
@@ -1140,13 +1202,14 @@ Geometry MahalanobisMetric::operator() (const Geometry& x) const
                 const int j = sub2symind(j0, j1, static_cast<int>(dims));
                 cv::Mat dj;
 
-                cv::multiply(x.mat.col(j0), x.mat.col(j1), dj); // dj = x_j0 .* x_j1
-                cv::multiply(m_icv.mat.col(j), dj, dj);         // dj = wj .* dj
+                cv::multiply(x.mat.col(j0), x.mat.col(j1), dj, 1.0f, d.depth()); // dj = x_j0 .* x_j1
+                cv::multiply(m_icv.mat.col(j), dj, dj, 1.0f, d.depth());         // dj = wj .* dj
                 cv::add(d, dj, d);
             }
         }
 
         // check..
+        /*
         for (int i = 0; i < x.mat.rows; i++)
         {
             const double di = d.at<double>(i);
@@ -1160,6 +1223,7 @@ Geometry MahalanobisMetric::operator() (const Geometry& x) const
                 return Geometry(x.shape);
             }
         }
+        */
 
         cv::sqrt(d, d);
 
@@ -1926,14 +1990,12 @@ Geometry PinholeModel::GetJacobian(const Geometry& g) const
     const cv::Mat u = g.mat.col(0).mul(w);
     const cv::Mat v = g.mat.col(1).mul(w);
 
-    jac.mat.col(0) = fx * w;    // dx/dX
-    jac.mat.col(1).setTo(0.0f); // dy/dX
-
-    jac.mat.col(2).setTo(0.0f); // dx/dY
-    jac.mat.col(3) = fy * w;    // dy/dY
-
-    jac.mat.col(4) = -u.mul(w); // dx/dZ
-    jac.mat.col(5) = -v.mul(w); // dy/dZ
+    cv::multiply(fx, w, jac.mat.col(0));     // dx/dX
+    jac.mat.col(1).setTo(0.0f);              // dy/dX
+    jac.mat.col(2).setTo(0.0f);              // dx/dY
+    cv::multiply(fy, w, jac.mat.col(3));     // dy/dY
+    cv::multiply( u, w, jac.mat.col(4), -1); // dx/dZ
+    cv::multiply( v, w, jac.mat.col(5), -1); // dx/dZ
 #else
     cv::cuda::GpuMat gmat, w, u, v, dxx, dyy, dxz, dyz;
 

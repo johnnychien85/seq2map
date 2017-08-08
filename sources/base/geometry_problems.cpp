@@ -231,7 +231,7 @@ cv::Mat ProjectionObjective::operator() (const EuclideanTransform& f) const
     // m_metres.jaco.Stop(x.GetElements());
 
     // m_metres.tfrm.Start();
-    const Metric::Own d = m_data.metric->Transform(tf, jac);
+    Metric::ConstOwn d = m_data.metric->Transform(tf, jac);
     // m_metres.tfrm.Stop(jac.GetElements());
 
     // m_metres.eval.Start();
@@ -344,7 +344,7 @@ bool PhotometricObjective::SetData(const Geometry& g, const cv::Mat& src, const 
     return SetData(data);
 }
 
-cv::Mat PhotometricObjective::operator() (const EuclideanTransform& f) const
+cv::Mat PhotometricObjective::operator() (const EuclideanTransform& tf) const
 {
     if (!m_proj)
     {
@@ -352,20 +352,44 @@ cv::Mat PhotometricObjective::operator() (const EuclideanTransform& f) const
         return cv::Mat();
     }
 
-    Metric::ConstOwn metric = m_data.metric->Transform(f);
+    // source 3D geometry
     Geometry x = m_data.src;
 
+    // project to the 2D image plane as packed 2D points (for interpolation)
     cv::Mat proj;
-    m_proj->Project(f(x, true), ProjectionModel::EUCLIDEAN_2D).Reshape(Geometry::PACKED).mat.convertTo(proj, CV_32F);
+    m_proj->Project(tf(x, true), ProjectionModel::EUCLIDEAN_2D).Reshape(Geometry::PACKED).mat.convertTo(proj, CV_32F);
 
+    // find mapped pixel values
     Geometry y = Geometry(Geometry::PACKED, interp(m_dst, proj, m_interp));
 
-    //if (y.mat.depth() != m_data.dst.mat.depth())
-    //{
-    //    y.mat.convertTo(y.mat, m_data.dst.mat.depth());
-    //}
+    // metric conversion
+    Geometry jac = m_proj->GetJacobian(x, y);
+    cv::Mat dx = interp(m_gradient.Ix, proj, m_interp);
+    cv::Mat dy = interp(m_gradient.Iy, proj, m_interp);
+    cv::Mat dI = cv::Mat(jac.mat.rows, 3, jac.mat.depth());
 
-    return (*metric)(m_data.dst, y).mat;
+    // propagate 3D -> 2D error metric to image manifold (2D -> 1D)
+    if (dx.depth() != dI.depth()) dx.convertTo(dx, dI.depth());
+    if (dy.depth() != dI.depth()) dy.convertTo(dy, dI.depth());
+
+    for (int j = 0; j < 3; j++)
+    {
+        const int k = j * 2;
+        cv::add(jac.mat.col(k).mul(dx), jac.mat.col(k+1).mul(dy), dI.col(j));
+    }
+
+    jac.mat = dI; // the new metric will be in 1D space
+
+    Metric::ConstOwn d = m_data.metric->Transform(tf, jac);
+    return (*d)(m_data.dst, y).mat;
+}
+
+//==[ PhotometricObjective::GradientImage ]===================================//
+
+PhotometricObjective::GradientImage::GradientImage(const cv::Mat& im, int depth)
+{
+    cv::Scharr(im, Ix, depth, 1, 0);
+    cv::Scharr(im, Iy, depth, 0, 1);
 }
 
 //==[ RigidObjective ]========================================================//
@@ -690,10 +714,11 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
             refinement.AddObjective(AlignmentObjective::ConstOwn(sub));
         }
 
+        LeastSquaresSolver::State state;
         LevenbergMarquardtAlgorithm levmar;
         levmar.SetVervbose(m_verbose);
 
-        if (!levmar.Solve(refinement))
+        if (!levmar.Solve(refinement, state))
         {
             E_ERROR << "non-linear optimisation failed";
             return false;
@@ -702,9 +727,15 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
         //////////////////////////////////////////////////////////////
         // VectorisableD::Vec x; refinement.GetPose().Store(x);
         // PersistentMat(cv::Mat(refinement(x))).Store(Path("y.bin"));
+        // PersistentMat(state.hessian).Store(Path("hessian.bin"));
         //////////////////////////////////////////////////////////////
 
+        cv::Mat cov; cv::invert(state.hessian, cov);
+
         estimate.pose = refinement.GetPose();
+        estimate.metric = Metric::Own(new MahalanobisMetric(MahalanobisMetric::ANISOTROPIC_ROTATED, 6, symmat(cov)));
+
+        // do evaluation again
         inliers.clear();
         outliers.clear();
         numInliers = 0;
@@ -957,7 +988,10 @@ StructureEstimation::Estimate TwoViewTriangulation::operator() (const GeometricM
         return Estimate(m.src.shape);
     }
 
-    Geometry g = (*this)(m.src.Reshape(Geometry::ROW_MAJOR), m.dst.Reshape(Geometry::ROW_MAJOR)).Reshape(m.src.shape);
+    Geometry g = (*this)(
+        m.src.Reshape(Geometry::ROW_MAJOR),
+        m.dst.Reshape(Geometry::ROW_MAJOR),
+        M01.pose).Reshape(m.src.shape);
 
     // error propogation
     const int ROWS = static_cast<int>(g.GetElements());
@@ -975,17 +1009,17 @@ StructureEstimation::Estimate TwoViewTriangulation::operator() (const GeometricM
 
             Ci = Ji.t() * Ci * Ji; // J * C * J', 3-by-3
 
-            if (!checkPositiveDefinite(Ci))
-            {
-                const cv::Mat C0 = metric->GetFullCovMat(static_cast<size_t>(i));
-
-                E_WARNING << "the Jacobian-transformed covariance of entry " << i << " is not positive definite";
-                E_WARNING << mat2string(C0, "C0");
-                E_WARNING << mat2string(Ci, "C1");
-                E_WARNING << mat2string(Ji, "J");
-
-                Ci.setTo(0);
-            }
+            // if (!checkPositiveDefinite(Ci))
+            // {
+            //   const cv::Mat C0 = metric->GetFullCovMat(static_cast<size_t>(i));
+            //
+            //   E_WARNING << "the Jacobian-transformed covariance of entry " << i << " is not positive definite";
+            //   E_WARNING << mat2string(C0, "C0");
+            //   E_WARNING << mat2string(Ci, "C1");
+            //   E_WARNING << mat2string(Ji, "J");
+            //
+            //   Ci.setTo(0);
+            // }
 
             for (int d0 = 0; d0 < 3; d0++)
             {
@@ -994,7 +1028,7 @@ StructureEstimation::Estimate TwoViewTriangulation::operator() (const GeometricM
                     cov.at<double>(i, sub2symind(d0, d1, 3)) = Ci.at<double>(d0, d1);
                 }
             }
-        }   
+        }
     }
     else // identity covaraince assumed
     {
@@ -1010,6 +1044,31 @@ StructureEstimation::Estimate TwoViewTriangulation::operator() (const GeometricM
                     cov.at<double>(i, sub2symind(d0, d1, 3)) = Ci.at<double>(d0, d1);
                 }
             }
+        }
+    }
+
+    if (M01.metric)
+    {
+        Geometry jacpos = GetPoseJacobian(m.src, m.dst, g);
+
+        if (!jacpos.IsEmpty())
+        {
+            boost::shared_ptr<const MahalanobisMetric> pmetric =
+                M01.metric->Transform(EuclideanTransform::Identity, jacpos)->ToMahalanobis();
+
+            if (pmetric)
+            {
+                cv::Mat covpos = pmetric->GetFullCovMat();
+                cv::add(cov, covpos, cov);
+            }
+            else
+            {
+                E_WARNING << "error obtaining pose metric as a Mahalanobis one";
+            }
+        }
+        else
+        {
+            E_WARNING << "error evaluating Jacobian with respect to the pose";
         }
     }
 
@@ -1031,11 +1090,46 @@ StructureEstimation::Estimate TwoViewTriangulation::operator() (const GeometricM
 Geometry TwoViewTriangulation::GetJacobian(const Geometry& x0, const Geometry& x1, const Geometry& g) const
 {
     const double dx = 1e-1;
-    cv::Mat J(static_cast<int>(g.GetElements()), 3 * 4, g.mat.type());
+    cv::Mat J(static_cast<int>(g.GetElements()), g.mat.cols * 4, g.mat.type());
 
     for (size_t i = 0; i < 4; i++)
     {
-        Geometry gi = (i < 2) ? (*this)(x0.Step(i, dx), x1) : (*this)(x0, x1.Step(i - 2, dx));
+        Geometry gi = (i < 2) ? (*this)(x0.Step(i, dx), x1, M01.pose) : (*this)(x0, x1.Step(i - 2, dx), M01.pose);
+        Geometry dy = g - gi;
+
+        const int j = static_cast<int>(i) * g.mat.cols;
+        J.colRange(j, j + g.mat.cols) = dy.Reshape(Geometry::ROW_MAJOR).mat / dx;
+    }
+
+    return Geometry(Geometry::ROW_MAJOR, J);
+}
+
+Geometry TwoViewTriangulation::GetPoseJacobian(const Geometry& x0, const Geometry& x1, const Geometry& g) const
+{
+    const double dx = 1e-1;
+    const VectorisableD::Vec v = M01.pose.ToVector();
+
+    if (v.empty())
+    {
+        E_ERROR << "error vectorising pose";
+        return Geometry(Geometry::ROW_MAJOR);
+    }
+
+    cv::Mat J(static_cast<int>(g.GetElements()), g.mat.cols * static_cast<int>(v.size()), g.mat.type());
+
+    for (size_t i = 0; i < v.size(); i++)
+    {
+        VectorisableD::Vec vi = v;
+        vi[i] += dx;
+
+        EuclideanTransform mi(M01.pose.GetRotation().GetParameterisation());
+        if (!mi.FromVector(vi))
+        {
+            E_ERROR << "error devectorising pose for numerical differentiation of pose parameter " << i;
+            return Geometry(Geometry::ROW_MAJOR);
+        }
+
+        Geometry gi = (*this)(x0, x1, mi);
         Geometry dy = g - gi;
 
         const int j = static_cast<int>(i) * g.mat.cols;
@@ -1047,23 +1141,22 @@ Geometry TwoViewTriangulation::GetJacobian(const Geometry& x0, const Geometry& x
 
 //==[ OptimalTriangulation ]==================================================//
 
-Geometry OptimalTriangulation::operator() (const Geometry& x0, const Geometry& x1) const
+Geometry OptimalTriangulation::operator() (const Geometry& x0, const Geometry& x1, const EuclideanTransform& tform) const
 {
-    Geometry p0 = Geometry::FromHomogeneous(x0);
-    Geometry p1 = Geometry::FromHomogeneous(x1);
+    const PosedProjection Q1(tform, P1.Clone());
+
+    Geometry p0 = Geometry::FromHomogeneous(P0.Backproject(x0)).Reshape(Geometry::PACKED);
+    Geometry p1 = Geometry::FromHomogeneous(Q1.Backproject(x1)).Reshape(Geometry::PACKED);
     Geometry g(Geometry::COL_MAJOR);
 
-    cv::Mat pts0 = p0.mat;
-    cv::Mat pts1 = p1.mat;
-
-    // type casting due to the limitation of cv::triangulatePoints
-    if (pts0.type() != CV_32F) pts0.convertTo(pts0, CV_32F);
-    if (pts1.type() != CV_32F) pts1.convertTo(pts1, CV_32F);
+    // type casting to fit cv::triangulatePoints
+    if (p0.mat.depth() != CV_32F) p0.mat.convertTo(p0.mat, CV_32F);
+    if (p1.mat.depth() != CV_32F) p1.mat.convertTo(p1.mat, CV_32F);
 
     cv::Mat pmat0 = P0.pose.GetTransformMatrix(false, true, CV_32F); // I * (R0 | t0)
-    cv::Mat pmat1 = P1.pose.GetTransformMatrix(false, true, CV_32F); // I * (R1 | t1)
+    cv::Mat pmat1 = Q1.pose.GetTransformMatrix(false, true, CV_32F); // I * (R1 | t1)
 
-    cv::triangulatePoints(pmat0, pmat1, pts0, pts1, g.mat);
+    cv::triangulatePoints(pmat0, pmat1, p0.mat, p1.mat, g.mat);
 
     // cast structure to the type of the given geometry data, if neccessary
     if (g.mat.type() != x0.mat.type())
@@ -1071,7 +1164,7 @@ Geometry OptimalTriangulation::operator() (const Geometry& x0, const Geometry& x
         g.mat.convertTo(g.mat, x0.mat.type());
     }
 
-    return Geometry::FromHomogeneous(g).Reshape(x0);
+    return Geometry::FromHomogeneous(g).Reshape(x0.shape);
 }
 
 //==[ MidPointTriangulation ]=================================================//
@@ -1083,15 +1176,17 @@ void MidPointTriangulation::DecomposeProjMatrix(const cv::Mat& P, cv::Mat& KRinv
     c = -KRinv * P.rowRange(0, 3).col(3);
 }
 
-Geometry MidPointTriangulation::operator() (const Geometry& x0, const Geometry& x1) const
+Geometry MidPointTriangulation::operator() (const Geometry& x0, const Geometry& x1, const EuclideanTransform& tform) const
 {
+    const PosedProjection Q1(tform, P1.Clone());
+
     cv::Mat c0 = P0.pose.GetInverse().GetTranslation();
-    cv::Mat c1 = P1.pose.GetInverse().GetTranslation();
+    cv::Mat c1 = Q1.pose.GetInverse().GetTranslation();
 
     cv::Mat s = c0 + c1;
     cv::Mat t = c1 - c0;
     cv::Mat y0 = P0.Backproject(x0).mat;
-    cv::Mat y1 = P1.Backproject(x1).mat;
+    cv::Mat y1 = Q1.Backproject(x1).mat;
 
     if (y1.type() != y0.type())
     {
@@ -1118,21 +1213,6 @@ Geometry MidPointTriangulation::operator() (const Geometry& x0, const Geometry& 
 
         g.row(i) = x.t();
         w.row(i) = 1.0f / cv::norm(d);
-
-        // if (g.at<double>(i, 2) < 0)
-        // {
-// #ifndef NDEBUG
-            // E_WARNING << "triangulated point " << i << " has negative depth";
-            // E_WARNING << mat2string(x0.mat.row(i), "x0");
-            // E_WARNING << mat2string(x1.mat.row(i), "x1");
-            // E_WARNING << mat2string(y0.row(i), "a0");
-            // E_WARNING << mat2string(y1.row(i), "a1");
-            // E_WARNING << mat2string(c0, "c0");
-            // E_WARNING << mat2string(c1, "c1");
-            // E_WARNING << mat2string(g.row(i), "y");
-// #endif
-            // g.row(i).setTo(0.0f);
-        // }
     }
     
     return Geometry(Geometry::ROW_MAJOR, g);
@@ -1140,4 +1220,4 @@ Geometry MidPointTriangulation::operator() (const Geometry& x0, const Geometry& 
 
 //==[ MultipleViewBlockMatcher ]==============================================//
 
-PinholeModel MultipleViewBlockMatcher::RefView::NullProjection;
+// PinholeModel MultipleViewBlockMatcher::RefView::NullProjection;

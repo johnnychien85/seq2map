@@ -166,7 +166,7 @@ namespace seq2map
         // Constructor and destructor
         //
         PhotometricObjective(const ProjectionModel::ConstOwn& proj, const cv::Mat& dst, int type = CV_32F, int interp = cv::INTER_LINEAR)
-        : m_type(type), m_interp(interp), ProjectionObjective(proj)
+        : m_type(type), m_interp(interp), ProjectionObjective(proj), m_gradient(dst, CV_64F)
         { dst.convertTo(m_dst, m_type); }
 
         //
@@ -187,9 +187,18 @@ namespace seq2map
         virtual cv::Mat operator() (const EuclideanTransform& tform) const;
 
     private:
+        struct GradientImage
+        {
+            GradientImage(const cv::Mat& im, int depth);
+
+            cv::Mat Ix;
+            cv::Mat Iy;
+        };
+
         int m_type;
         int m_interp;
         cv::Mat m_dst;
+        GradientImage m_gradient;
     };
 
     /**
@@ -498,18 +507,19 @@ namespace seq2map
     class TwoViewTriangulation : public StructureEstimation
     {
     public:
-        TwoViewTriangulation(const PosedProjection& P0, const PosedProjection& P1, const EuclideanTransform& tform = EuclideanTransform::Identity)
-        : M01(tform >> P1.pose), P0(P0), P1((PosedProjection(M01, P1.proj))) {}
+        TwoViewTriangulation(const PosedProjection& P0, const PosedProjection& P1, const PoseEstimator::Estimate& M01)
+        : P0(P0), P1(P1), M01(M01) {}
 
         Estimate operator() (const GeometricMapping& m) const;
 
-        const EuclideanTransform M01;
-        const PosedProjection P0;
-        const PosedProjection P1;
+        const PosedProjection& P0;
+        const PosedProjection& P1;
+        const PoseEstimator::Estimate& M01;
 
     protected:
-        virtual Geometry operator() (const Geometry& x0, const Geometry& x1) const = 0;
+        virtual Geometry operator() (const Geometry& x0, const Geometry& x1, const EuclideanTransform& tform) const = 0;
         virtual Geometry GetJacobian(const Geometry& x0, const Geometry& x1, const Geometry& g) const;
+        virtual Geometry GetPoseJacobian(const Geometry& x0, const Geometry& x1, const Geometry& g) const;
     };
 
     /**
@@ -528,13 +538,13 @@ namespace seq2map
     class MidPointTriangulation : public TwoViewTriangulation
     {
     public:
-        MidPointTriangulation(const PosedProjection& P0, const PosedProjection& P1, const EuclideanTransform tform)
-            : TwoViewTriangulation(P0, P1, tform) {}
+        MidPointTriangulation(const PosedProjection& P0, const PosedProjection& P1, const PoseEstimator::Estimate& M01)
+        : TwoViewTriangulation(P0, P1, M01) {}
 
         using TwoViewTriangulation::operator();
 
     protected:
-        virtual Geometry operator() (const Geometry& x0, const Geometry& x1) const;
+        virtual Geometry operator() (const Geometry& x0, const Geometry& x1, const EuclideanTransform& tform) const;
         static void DecomposeProjMatrix(const cv::Mat& P, cv::Mat& KRinv, cv::Mat& c);
     };
 
@@ -545,15 +555,16 @@ namespace seq2map
     class OptimalTriangulation : public TwoViewTriangulation
     {
     public:
-        OptimalTriangulation(const PosedProjection& P0, const PosedProjection& P1, const EuclideanTransform tform)
-        : TwoViewTriangulation(P0, P1, tform) {}
+        OptimalTriangulation(const PosedProjection& P0, const PosedProjection& P1, const PoseEstimator::Estimate& M01)
+        : TwoViewTriangulation(P0, P1, M01) {}
         
         using TwoViewTriangulation::operator();
 
     protected:
-        virtual Geometry operator() (const Geometry& x0, const Geometry& x1) const;
+        virtual Geometry operator() (const Geometry& x0, const Geometry& x1, const EuclideanTransform& tform) const;
     };
 
+    /*
     class MultipleViewBlockMatcher
     {
     public:
@@ -582,5 +593,6 @@ namespace seq2map
         int   m_blockSize;
         bool  m_perspectiveWarping;
     };
+    */
 }
 #endif // GEOMETRY_HPP

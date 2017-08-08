@@ -180,6 +180,11 @@ namespace seq2map
         virtual Metric::Own Transform(const EuclideanTransform& tform, const Geometry& jac = Geometry(Geometry::ROW_MAJOR)) const = 0;
 
         /**
+         * Simplify the metric to a degenerated form for faster evaluation.
+         */
+        virtual Metric::Own Reduce() const = 0;
+
+        /**
          *
          */
         virtual boost::shared_ptr<MahalanobisMetric> ToMahalanobis(bool& native) = 0;
@@ -208,6 +213,7 @@ namespace seq2map
         virtual Metric::Own operator[] (const Indices& indices) const { return Clone(); }
         virtual Metric::Own operator+ (const Metric& metric) const;
         virtual Metric::Own Transform(const EuclideanTransform& tform, const Geometry& jac = Geometry(Geometry::ROW_MAJOR)) const { return Clone(); }
+        virtual Metric::Own Reduce() const { return Clone(); }
         virtual boost::shared_ptr<MahalanobisMetric> ToMahalanobis(bool& native) { return 0; }
         virtual boost::shared_ptr<const MahalanobisMetric> ToMahalanobis() const { return 0; }
         virtual bool FromMahalanobis(const MahalanobisMetric& metric) { return false; }
@@ -688,6 +694,11 @@ namespace seq2map
          */
         cv::Mat GetTransformMatrix(bool sqrMat = false, bool preMult = true, int type = CV_64F) const;
 
+        /**
+         *
+         */
+        bool IsIdentity() const { return m_rotation.IsIdentity() && cv::norm(m_tvec) == 0; }
+
         //
         // Creation and conversion
         //
@@ -775,6 +786,11 @@ namespace seq2map
             HOMOGENEOUS_3D // a 3D point (X,Y,Z) is mapped to an image point (x,y,1)
         };
 
+        /**
+         * Get a cloned projection model.
+         */
+        virtual ProjectionModel::Own Clone() const = 0;
+
         //
         // Transforms
         //
@@ -855,30 +871,32 @@ namespace seq2map
     : public ProjectionModel
     { 
     public:
-        PosedProjection(const EuclideanTransform& pose, ProjectionModel& proj) : pose(pose), proj(proj) {}
+        PosedProjection(const EuclideanTransform& pose, ProjectionModel::Own& proj) : pose(pose), proj(proj) {}
 
-        virtual Point3F& operator() (Point3F& pt) const { return proj(pose(pt)); }
-        virtual Point3D& operator() (Point3D& pt) const { return proj(pose(pt)); }
+        virtual ProjectionModel::Own Clone() const { return ProjectionModel::Own(new PosedProjection(pose, proj->Clone())); }
 
-        virtual Geometry Project(const Geometry& g, ProjectiveSpace space = EUCLIDEAN_2D) const { return proj.Project(pose(Geometry(g), true), space); }
-        virtual Geometry Backproject(const Geometry& g) const { return pose.GetInverse().GetRotation()(proj.Backproject(g)); }
+        virtual Point3F& operator() (Point3F& pt) const { return (*proj)(pose(pt)); }
+        virtual Point3D& operator() (Point3D& pt) const { return (*proj)(pose(pt)); }
 
-        virtual Geometry GetJacobian(const Geometry& g, const Geometry& proj) const { return this->proj.GetJacobian(pose(Geometry(g), true), proj); }
+        virtual Geometry Project(const Geometry& g, ProjectiveSpace space = EUCLIDEAN_2D) const { return proj->Project(pose(Geometry(g), true), space); }
+        virtual Geometry Backproject(const Geometry& g) const { return pose.GetInverse().GetRotation()(proj->Backproject(g)); }
 
-        virtual String GetModelName() const { return proj.GetModelName(); }
+        virtual Geometry GetJacobian(const Geometry& g, const Geometry& proj) const { return this->proj->GetJacobian(pose(Geometry(g), true), proj); }
 
-        virtual bool Store(cv::FileStorage& fs) const { return proj.Store(fs);   }
-        virtual bool Restore(const cv::FileNode& fn)  { return proj.Restore(fn); }
+        virtual String GetModelName() const { return proj->GetModelName(); }
+
+        virtual bool Store(cv::FileStorage& fs) const { return proj->Store(fs);   }
+        virtual bool Restore(const cv::FileNode& fn)  { return proj->Restore(fn); }
 
         //
         // Vectorisation and de-vectorisation
         //
-        virtual bool Store(Vec& v) const    { return proj.Store(v);   }
-        virtual bool Restore(const Vec& v)  { return proj.Restore(v); }
-        virtual size_t GetDimension() const { return proj.GetDimension(); }
+        virtual bool Store(Vec& v) const    { return proj->Store(v);   }
+        virtual bool Restore(const Vec& v)  { return proj->Restore(v); }
+        virtual size_t GetDimension() const { return proj->GetDimension(); }
 
         const EuclideanTransform& pose;
-        ProjectionModel& proj;
+        ProjectionModel::Own proj;
     };
 
     /**
@@ -892,6 +910,8 @@ namespace seq2map
         //
         PinholeModel() : m_matrix(cv::Mat::eye(3, 3, CV_64F)) { SetValues(1.0f, 1.0f, 0.0f, 0.0f); }
         PinholeModel(const cv::Mat& K) : m_matrix(cv::Mat::eye(3, 3, CV_64F)) { SetCameraMatrix(K); }
+
+        virtual ProjectionModel::Own Clone() const { return ProjectionModel::Own(new PinholeModel(m_matrix)); }
 
         //
         // Creation and conversion
@@ -929,7 +949,6 @@ namespace seq2map
         // Backward projection
         //
         virtual Geometry Backproject(const Geometry& g) const;
-
 
         //
         // Differentiation
@@ -978,6 +997,8 @@ namespace seq2map
         BouguetModel() : m_distCoeffs(14) { SetValues(1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f); }
         BouguetModel(const cv::Mat& K, const cv::Mat& D);
         
+        virtual ProjectionModel::Own Clone() const { return ProjectionModel::Own(new BouguetModel(m_matrix, cv::Mat(m_distCoeffs, false))); }
+
         //
         // Accessors
         //

@@ -144,10 +144,9 @@ bool LeastSquaresSolver::Logger::operator() (const LeastSquaresSolver::State& st
 
 //==[ LevenbergMarquardtAlgorithm ]===========================================//
 
-bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& f)
+bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& f, State& state)
 {
     assert(m_eta > 1.0f);
-    State state;
 
     if (!f.Initialise(state.x))
     {
@@ -210,6 +209,7 @@ bool LevenbergMarquardtAlgorithm::Solve(LeastSquaresProblem& f)
                     state.relError = state.de.size() > 1 ? (state.de.rbegin()[0] / state.de.rbegin()[1]) : 1.0f;
                     state.relStep  = cv::norm(x_delta) / cv::norm(cv::Mat(x, false));
                     state.jacobian = J;
+                    state.hessian  = H;
                     state.updates++;
                 }
                 else // reject the update

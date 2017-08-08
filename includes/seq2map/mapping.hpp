@@ -122,7 +122,7 @@ namespace seq2map
             virtual bool operator() (Map& map, size_t frame) = 0;
         };
 
-        Map() : m_newLandmarkId(0), joinChkMetre("CHK"), joinMetre("JOIN") {}
+        Map() : m_newLandmarkId(0) {}
         virtual ~Map() {}
 
         Landmark& AddLandmark();
@@ -152,9 +152,6 @@ namespace seq2map
         inline Frame&    GetFrame   (size_t index) { return Dim1(index); }
         inline Source&   GetSource  (size_t index) { return Dim2(index); }
 
-        Speedometre joinChkMetre;
-        Speedometre joinMetre;
-
     private:
         size_t m_newLandmarkId;
     };
@@ -171,7 +168,8 @@ namespace seq2map
         class ObjectiveBuilder : public Referenced<ObjectiveBuilder>
         {
         public:
-            ObjectiveBuilder(AlignmentObjective::InlierSelector::Stats& stats) : stats(stats) {}
+            ObjectiveBuilder(AlignmentObjective::InlierSelector::Stats& stats, bool reduceMetric = false)
+            : stats(stats), reduceMetric(reduceMetric) {}
 
             virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx) = 0;
             virtual PoseEstimator::Own GetSolver() const = 0;
@@ -179,6 +177,7 @@ namespace seq2map
             virtual String ToString() const = 0;
 
             AlignmentObjective::InlierSelector::Stats& stats;
+            bool reduceMetric;
         };
 
         MultiObjectiveOutlierFilter(size_t maxIterations, double minInlierRatio, double confidence, double sigma)
@@ -272,14 +271,15 @@ namespace seq2map
         struct OutlierRejectionOptions
         {
             OutlierRejectionOptions(int scheme)
-            : scheme(scheme), maxIterations(30), minInlierRatio(0.5), confidence(0.5), epipolarEps(1e2), sigma(1.0f) {}
+            : scheme(scheme), maxIterations(30), minInlierRatio(0.5), confidence(0.5), epipolarEps(1e3), sigma(1.0f), reduceMetric(false) {}
 
             int scheme;            ///< strategies to identify the outliers from noisy feature matches
             size_t maxIterations;  ///< the upper bound of trials
             double minInlierRatio; ///< the percentage of inliers minimally required to accept a motion hypothesis
             double confidence;     ///< probability that a random sample contains only inliers
             double epipolarEps;    ///< threshold of the epipolar objective, in the normalised image pixel
-            double sigma;
+            double sigma;          ///< threshold to determine if a model is fit or not
+            bool reduceMetric;     ///< reduce Mahalanobis metric to weighted Euclidean one for acceleration
         };
 
         /**
@@ -288,7 +288,7 @@ namespace seq2map
         struct InlierInjectionOptions
         {
             InlierInjectionOptions(int scheme)
-            : scheme(scheme), blockSize(5), levels(3), bidirectionalEps(0), extractDescriptor(false) {}
+            : scheme(scheme), blockSize(5), levels(3), bidirectionalEps(0), epipolarEps(1e3), extractDescriptor(false) {}
 
             int scheme;              ///< Strategies to recover missing features.
             size_t blockSize;        ///< Size of search window.
@@ -317,7 +317,6 @@ namespace seq2map
             PoseEstimator::Estimate motion; ///< ego-motion
             GeometricMapping flow; ///< feature flow
         };
-
 
         /**
          * Objective builder for OutlierRejectionScheme::EPIPOLAR_ALIGN
@@ -348,8 +347,8 @@ namespace seq2map
         class PerspectiveObjectiveBuilder : public MultiObjectiveOutlierFilter::ObjectiveBuilder
         {
         public:
-            PerspectiveObjectiveBuilder(const ProjectionModel::ConstOwn& p, const StructureEstimation::Estimate& g, bool forward, AlignmentObjective::InlierSelector::Stats& stats)
-            : p(p), g(g), forward(forward), ObjectiveBuilder(stats) {}
+            PerspectiveObjectiveBuilder(const ProjectionModel::ConstOwn& p, const StructureEstimation::Estimate& g, bool forward, bool reduceMetric, AlignmentObjective::InlierSelector::Stats& stats)
+            : p(p), g(g), forward(forward), ObjectiveBuilder(stats, reduceMetric) {}
 
             virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
             virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma);
@@ -372,8 +371,8 @@ namespace seq2map
         class PhotometricObjectiveBuilder : public MultiObjectiveOutlierFilter::ObjectiveBuilder
         {
         public:
-            PhotometricObjectiveBuilder(const ProjectionModel::ConstOwn& pj, const StructureEstimation::Estimate& gi, const cv::Mat& Ii, const cv::Mat& Ij, AlignmentObjective::InlierSelector::Stats& stats)
-            : pj(pj), gi(gi), Ii(Ii), Ij(Ij), ObjectiveBuilder(stats) {}
+            PhotometricObjectiveBuilder(const ProjectionModel::ConstOwn& pj, const StructureEstimation::Estimate& gi, const cv::Mat& Ii, const cv::Mat& Ij, bool reduceMetric, AlignmentObjective::InlierSelector::Stats& stats)
+            : pj(pj), gi(gi), Ii(Ii), Ij(Ij), ObjectiveBuilder(stats, reduceMetric) {}
 
             virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
             virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma);
@@ -397,8 +396,8 @@ namespace seq2map
         class RigidObjectiveBuilder : public MultiObjectiveOutlierFilter::ObjectiveBuilder
         {
         public:
-            RigidObjectiveBuilder(const StructureEstimation::Estimate& gi, const StructureEstimation::Estimate& gj, AlignmentObjective::InlierSelector::Stats& stats)
-            : gi(gi), gj(gj), ObjectiveBuilder(stats) {}
+            RigidObjectiveBuilder(const StructureEstimation::Estimate& gi, const StructureEstimation::Estimate& gj, bool reduceMetric, AlignmentObjective::InlierSelector::Stats& stats)
+            : gi(gi), gj(gj), ObjectiveBuilder(stats, reduceMetric) {}
 
             virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
             virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma);

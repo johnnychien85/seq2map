@@ -68,6 +68,8 @@ namespace seq2map
     bool mat2raw(const cv::Mat& im, const Path& path);
     bool checkCameraMatrix(const cv::Mat& K);
     int sub2symind(int i, int j, int n);
+    cv::Mat symmat(const cv::Mat& A);
+    cv::Mat symmat(const cv::Mat& a, int n);
     bool checkPositiveDefinite(const cv::Mat& A);
 
     // file system
@@ -335,11 +337,19 @@ namespace seq2map
         virtual bool Store(Vec& v) const = 0;
         virtual bool Restore(const Vec& v) = 0;
 
+        /**
+         * Assignment form of Store.
+         */
         Vec ToVector() const
         {
             Vec v;
             return Store(v) ? v : Vec();
         }
+
+        /**
+         * Alias of Restore.
+         */
+        inline bool FromVector(const Vec& v) { return Restore(v); }
 
         /**
          * Get the dimension of the vector represent of class.
