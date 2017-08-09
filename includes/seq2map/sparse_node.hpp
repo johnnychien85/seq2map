@@ -663,6 +663,10 @@ namespace seq2map
         D1& Dim1(size_t j) { return Dim<D1, S1>(m_dim1, j); }
         D2& Dim2(size_t k) { return Dim<D2, S2>(m_dim2, k); }
 
+        inline size_t GetSize0() const { return m_dim0.size(); }
+        inline size_t GetSize1() const { return m_dim1.size(); }
+        inline size_t GetSize2() const { return m_dim2.size(); }
+
         inline T& Insert(size_t i, size_t j, size_t k, const T& value)
         {
             typedef NodeND<T, 3>::Container* dnType;

@@ -17,9 +17,12 @@ namespace seq2map
     struct Hit
     {
     public:
-        const size_t index; // originating feature index in the store
-        Point2D proj;       // observed 2D image coordinates
+        const size_t index; ///< originating feature index in the store
+        Point2D proj;       ///< observed 2D image coordinates
 
+        /**
+         * Assignment.
+         */
         Hit& operator= (const Hit& hit)
         {
             proj = hit.proj;
@@ -28,6 +31,10 @@ namespace seq2map
 
     protected:
         friend class Landmark; // only landmarks can make hits
+
+        /**
+         * Constructor; accessible only via the Landmark class.
+         */
         Hit(size_t index) : index(index) {}
     };
 
@@ -40,6 +47,10 @@ namespace seq2map
     {
     public:
         typedef std::vector<Landmark*> Ptrs;
+
+        /**
+         * Error covariance of a 3D coordinates.
+         */
         struct Covar3D
         {
             Covar3D() : xx(0), xy(0), xz(0), yy(0), yz(0), zz(0) {}
@@ -69,13 +80,16 @@ namespace seq2map
 
         Hit& Hit(Frame& frame, Source& src, size_t index);
 
-        Point3D position;
-        Covar3D cov;
-        double  icv;
+        Point3D position; ///< coordinates with respect to the reference frame
+        Covar3D cov;      ///< covariance of the coordinates
 
     protected:
         friend class Map3<seq2map::Hit, Landmark, Frame, Source>;
-        Landmark(size_t index = INVALID_INDEX) : DimensionZero(index), icv(0) {}
+
+        /**
+         * A Landmark can only be created by a Map.
+         */
+        Landmark(size_t index = INVALID_INDEX) : DimensionZero(index) {}
     };
 
     /**
@@ -84,14 +98,25 @@ namespace seq2map
     class Frame : public HitNode::Dimension<1>
     {
     public:
+        /**
+         * A feature index-to-landmark lookup table.
+         */
         std::map<size_t, Landmark::Ptrs> featureLandmarkLookup;
+
+        /**
+         * Augmented feature sets indexed by the source store IDs.
+         */
         std::map<size_t, ImageFeatureSet> augmentedFeaturs;
 
-        PoseEstimator::Estimate poseEstimate;
+        PoseEstimator::Estimate pose;
 
     protected:
         friend class Map3<Hit, Landmark, Frame, Source>;
-        Frame(size_t index = INVALID_INDEX) : Dimension(index) { poseEstimate.valid = (index == 0); }
+
+        /**
+         * A Frame can only be created by a Map.
+         */
+        Frame(size_t index = INVALID_INDEX) : Dimension(index) { pose.valid = (index == 0); }
     };
 
     /**
@@ -100,7 +125,8 @@ namespace seq2map
     class Source : public HitNode::Dimension<2>
     {
     public:
-        FeatureStore::ConstOwn store;
+        FeatureStore::ConstOwn store; ///< the source store
+        DisparityStore::ConstOwn dpm;
 
     protected:
         friend class Map3<Hit, Landmark, Frame, Source>;
@@ -108,29 +134,83 @@ namespace seq2map
     };
 
     /**
-     *
+     * A Map contains sets of Landmark, Frame and Source.
+     * The these classes are connected by Hits, which are internally stored as a sparse data structure.
      */
     class Map : protected Map3<Hit, Landmark, Frame, Source>
     {
     public:
         /**
+         * Operator applied to a map taking one frame as input.
          *
+         * \param map A map to be processed.
+         * \param s0 The referenced source.
+         * \param t0 The referenced frame.
+         *
+         * \return True if the process is successful; otherwise false.
          */
-        class Operator
+        class UnaryOperator
         {
         public:
-            virtual bool operator() (Map& map, size_t frame) = 0;
+            virtual bool operator() (Map& map, Source& s0, Frame& t0) = 0;
         };
 
-        Map() : m_newLandmarkId(0) {}
+        /**
+         * Operator applied to a map taking two frames as inputs.
+         *
+         * \param map A map to be processed.
+         * \param s0 The first referenced source.
+         * \param t0 The first referenced frame.
+         * \param s1 The second referenced source.
+         * \param t1 The second referenced frame.
+         *
+         * \return True if the process is successful; otherwise false.
+         */
+        class BinaryOperator
+        {
+        public:
+            virtual bool operator() (Map& map, Source& s0, Frame& t0, Source& s1, Frame& t1) = 0;
+        };
+
+        /**
+         *
+         */
+        Map() : m_newLandmarkId(0), m_newSourcId(0) {}
         virtual ~Map() {}
 
+        /**
+         *
+         */
+        Source& AddSource(FeatureStore::ConstOwn& store, DisparityStore::ConstOwn& dpm);
+
+        /**
+         *
+         */
         Landmark& AddLandmark();
+
+        /**
+         * Remove a landmark from the map.
+         */
         void RemoveLandmark(Landmark& l);
+        
+        /**
+         * ...
+         */
         bool IsJoinable(const Landmark& li, const Landmark& lj);
+        
+        /**
+         * ...
+         */
         Landmark& JoinLandmark(Landmark& li, Landmark& lj);
 
+        /**
+         * Retrieve structure of landmarks.
+         */
         StructureEstimation::Estimate GetStructure(const Landmark::Ptrs& u) const;
+
+        /**
+         * Write back structure estimates of landmark.
+         */
         void SetStructure(const Landmark::Ptrs& u, const StructureEstimation::Estimate& structure);
 
         /**
@@ -139,25 +219,43 @@ namespace seq2map
          * \param u m landmark pointers
          * \param g structure estimate of m 3D points
          * \param pose transformation to the frame of g
+         *
          * \return updated landmark structure in the frame of g
          */
         StructureEstimation::Estimate UpdateStructure(const Landmark::Ptrs& u, const StructureEstimation::Estimate& g, const EuclideanTransform& ref);
 
         /**
-         *
+         * Inqury a set of landmark given an index list.
          */
         Landmark::Ptrs GetLandmarks(std::vector<size_t> indices);
 
+        /**
+         * Get number of landmarks on the map.
+         */
+        inline size_t GetLandmarks() const { return GetSize0(); }
+
+        /**
+         * Retrieve a landmark.
+         */
         inline Landmark& GetLandmark(size_t index) { return Dim0(index); }
-        inline Frame&    GetFrame   (size_t index) { return Dim1(index); }
-        inline Source&   GetSource  (size_t index) { return Dim2(index); }
+
+        /**
+         * Retrieve a frame.
+         */
+        inline Frame& GetFrame(size_t index) { return Dim1(index); }
+
+        /**
+         * Retrieve a source.
+         */
+        inline Source& GetSource (size_t index) { return Dim2(index); }
 
     private:
         size_t m_newLandmarkId;
+        size_t m_newSourcId;
     };
 
     /**
-     *
+     * A multi-objective RANSAC-based outlier filter.
      */
     class MultiObjectiveOutlierFilter : public FeatureMatcher::Filter
     {
@@ -195,40 +293,48 @@ namespace seq2map
     };
 
     /**
-     *
+     * A FeatureTracker is a binary operator applicable to two frames.
+     * The tracking performs follow steps:
+     * <ol>
+     *   <li>
+     *     <b>Pre-motion structure retrieval.</b>
+     *     A disparity map is loaded and converted to depth map if available.
+     *     If the pose of frame is known, the retrieved structure is integrated with the existing
+     *     landmark structure using a Bauesian filter.
+     *   </li>
+     *   <li>
+     *     <b>Correspondence establishment and egomotion estimation.</b>
+     *     Image features are loaded and matched in the feature space.
+     *     An adjoint outlier rejection and pose recovery algorithm is then carried out.
+     *   </li>
+     *   <li>
+     *     <b>Post-motion correspondence discovery.</b>
+     *     The features that failed to find corresponding entries are processed by a
+     *     motion-based correspondence analysis algorithm.
+     *   </li>
+     *   <li>
+     *     <b>Post-motion structure recovery.</b>
+     *     The feature flow obtained in previous two stages is used by a two-view triangulator
+     *     to update the landmarks' structure. A newly calculated coodinates is integrated with
+     *     an existing one by a Bayesian filter.
+     *   </li>
+     * </ol>
      */
-    class FeatureTracker : public Map::Operator
+    class FeatureTracker
+    : public Map::BinaryOperator,
+      public Parameterised
     {
     public:
         /**
-         *
-         */
-        struct FramedStore
-        {
-            FramedStore(FeatureStore::ConstOwn& store = FeatureStore::ConstOwn(), int offset = 0, DisparityStore::ConstOwn& disp = DisparityStore::ConstOwn())
-            : store(store), offset(offset),
-              disp(disp && disp->GetStereoPair() && store->GetCamera() && disp->GetStereoPair()->GetPrimaryCamera() == store->GetCamera() ? disp : DisparityStore::ConstOwn())
-            {}
-
-            bool operator== (const FramedStore fs) const { return store && fs.store && store->GetIndex() == fs.store->GetIndex() && offset == fs.offset; }
-
-            static const FramedStore Null;
-
-            FeatureStore::ConstOwn store;
-            DisparityStore::ConstOwn disp;
-            int offset;
-        };
-
-        /**
-         *
+         * Alignment models for outlier rejection and egomotion estimation.
          */
         enum OutlierRejectionScheme
         {
-            EPIPOLAR_ALIGN      = 1 << 0, ///< outlier detection using Epipolar constraints
-            FORWARD_PROJ_ALIGN  = 1 << 1, ///< outlier detection using projective constraints when 3D-to-2D correspondences are available
-            BACKWARD_PROJ_ALIGN = 1 << 2, ///< outlier detection using projective constraints when 2D-to-3D correspondences are available
-            RIGID_ALIGN         = 1 << 3, ///< outlier detection using rigid alignment when 3D-to-3D correspondences are available
-            PHOTOMETRIC_ALIGN   = 1 << 4  ///< outlier detection using photometric alignment when intensity data are available
+            EPIPOLAR_ALIGN      = 1 << 0, ///< Epipolar constraints
+            FORWARD_PROJ_ALIGN  = 1 << 1, ///< projective constraints when 3D-to-2D correspondences are available
+            BACKWARD_PROJ_ALIGN = 1 << 2, ///< projective constraints when 2D-to-3D correspondences are available
+            RIGID_ALIGN         = 1 << 3, ///< rigid alignment when 3D-to-3D correspondences are available
+            PHOTOMETRIC_ALIGN   = 1 << 4  ///< photometric alignment when intensity data are available
         };
 
         /**
@@ -244,11 +350,11 @@ namespace seq2map
         /**
          * Post-motion structure recovery
          */
-        enum StructureRecoveryScheme
+        enum TriangulationMethod
         {
-            NO_RECOVERY,
-            MIDPOINT_TRIANGULATION,
-            OPTIMAL_TRIANGULATION
+            DISABLED,
+            MIDPOINT,
+            OPTIMAL
         };
 
         /**
@@ -266,12 +372,12 @@ namespace seq2map
         };
 
         /**
-         *
+         * Options for outlier rejection and egomotion estimation.
          */
         struct OutlierRejectionOptions
         {
             OutlierRejectionOptions(int scheme)
-            : scheme(scheme), maxIterations(30), minInlierRatio(0.5), confidence(0.5), epipolarEps(1e3), sigma(1.0f), reduceMetric(false) {}
+            : scheme(scheme), maxIterations(30), minInlierRatio(0.5), confidence(0.5), epipolarEps(1e3), sigma(1.0f), fastMetric(false) {}
 
             int scheme;            ///< strategies to identify the outliers from noisy feature matches
             size_t maxIterations;  ///< the upper bound of trials
@@ -279,11 +385,11 @@ namespace seq2map
             double confidence;     ///< probability that a random sample contains only inliers
             double epipolarEps;    ///< threshold of the epipolar objective, in the normalised image pixel
             double sigma;          ///< threshold to determine if a model is fit or not
-            bool reduceMetric;     ///< reduce Mahalanobis metric to weighted Euclidean one for acceleration
+            bool fastMetric;       ///< reduce Mahalanobis metric to weighted Euclidean one for acceleration
         };
 
         /**
-         *
+         * Options for inlier recovery.
          */
         struct InlierInjectionOptions
         {
@@ -300,7 +406,7 @@ namespace seq2map
         };
 
         /**
-         *
+         * Feature tracking statistics updated each time the operator is in action.
          */
         struct Stats
         {
@@ -313,9 +419,9 @@ namespace seq2map
             size_t joined;   ///< number of joined landmarks
             size_t removed;  ///< number of removed landmarks
             size_t injected; ///< number of recovered landmarks
-            ObjectiveStats objectives; ///< per outlier model stats
+            ObjectiveStats objectives;      ///< per outlier model stats
             PoseEstimator::Estimate motion; ///< ego-motion
-            GeometricMapping flow; ///< feature flow
+            GeometricMapping flow;          ///< feature flow
         };
 
         /**
@@ -324,7 +430,9 @@ namespace seq2map
         class EpipolarObjectiveBuilder : public MultiObjectiveOutlierFilter::ObjectiveBuilder
         {
         public:
-            EpipolarObjectiveBuilder(const ProjectionModel::ConstOwn& pi, const ProjectionModel::ConstOwn& pj, double epsilon, AlignmentObjective::InlierSelector::Stats& stats)
+            EpipolarObjectiveBuilder(
+                const ProjectionModel::ConstOwn& pi, const ProjectionModel::ConstOwn& pj,
+                double epsilon, AlignmentObjective::InlierSelector::Stats& stats)
             : pi(pi), pj(pj), epsilon(epsilon), ObjectiveBuilder(stats) {}
 
             virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
@@ -347,7 +455,9 @@ namespace seq2map
         class PerspectiveObjectiveBuilder : public MultiObjectiveOutlierFilter::ObjectiveBuilder
         {
         public:
-            PerspectiveObjectiveBuilder(const ProjectionModel::ConstOwn& p, const StructureEstimation::Estimate& g, bool forward, bool reduceMetric, AlignmentObjective::InlierSelector::Stats& stats)
+            PerspectiveObjectiveBuilder(
+                const ProjectionModel::ConstOwn& p, const StructureEstimation::Estimate& g,
+                bool forward, bool reduceMetric, AlignmentObjective::InlierSelector::Stats& stats)
             : p(p), g(g), forward(forward), ObjectiveBuilder(stats, reduceMetric) {}
 
             virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
@@ -371,7 +481,9 @@ namespace seq2map
         class PhotometricObjectiveBuilder : public MultiObjectiveOutlierFilter::ObjectiveBuilder
         {
         public:
-            PhotometricObjectiveBuilder(const ProjectionModel::ConstOwn& pj, const StructureEstimation::Estimate& gi, const cv::Mat& Ii, const cv::Mat& Ij, bool reduceMetric, AlignmentObjective::InlierSelector::Stats& stats)
+            PhotometricObjectiveBuilder(
+                const ProjectionModel::ConstOwn& pj, const StructureEstimation::Estimate& gi,
+                const cv::Mat& Ii, const cv::Mat& Ij, bool reduceMetric, AlignmentObjective::InlierSelector::Stats& stats)
             : pj(pj), gi(gi), Ii(Ii), Ij(Ij), ObjectiveBuilder(stats, reduceMetric) {}
 
             virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
@@ -396,7 +508,9 @@ namespace seq2map
         class RigidObjectiveBuilder : public MultiObjectiveOutlierFilter::ObjectiveBuilder
         {
         public:
-            RigidObjectiveBuilder(const StructureEstimation::Estimate& gi, const StructureEstimation::Estimate& gj, bool reduceMetric, AlignmentObjective::InlierSelector::Stats& stats)
+            RigidObjectiveBuilder(
+                const StructureEstimation::Estimate& gi, const StructureEstimation::Estimate& gj,
+                bool reduceMetric, AlignmentObjective::InlierSelector::Stats& stats)
             : gi(gi), gj(gj), ObjectiveBuilder(stats, reduceMetric) {}
 
             virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
@@ -417,14 +531,17 @@ namespace seq2map
         /**
          *
          */
-        FeatureTracker(const FramedStore& src = FramedStore::Null, const FramedStore& dst = FramedStore::Null)
-        : src(src), dst(dst), policy(KEEP_BOTH), outlierRejection(FORWARD_PROJ_ALIGN), inlierInjection(0), structureScheme(NO_RECOVERY),
-          matcher(true, true, false, 0.8f, true) {}
+        FeatureTracker()
+        : policy(KEEP_BOTH),
+          outlierRejection(FORWARD_PROJ_ALIGN),
+          inlierInjection(0),
+          triangulation(OPTIMAL),
+          matcher(true, true, false, 0.8f, true)
+        {}
 
-        /**
-         *
-         */
-        virtual bool operator() (Map& map, size_t frame);
+        bool StringToOutlierRejectionScheme(const String& flag, int& scheme);
+        bool StringToInlierInjectionScheme(const String& flow, int& scheme);
+        bool StringToTriangulationMethod(const String& triangulation, TriangulationMethod& method);
 
         /**
          * Get features' 3D coordinates and error covariances from a dense structure.
@@ -456,7 +573,7 @@ namespace seq2map
          * \param tracked Input/output array of booleans to indicate the status of each feature's tracking.
          * \return Mapping of tracked feature from source frame to the target.
          */
-        GeometricMapping FindLostFeaturesFlow(const cv::Mat& Ii, const cv::Mat& Ij, const ImageFeatureSet& fi, AlignmentObjective::Own eval, const EuclideanTransform& pose, std::vector<bool>& tracked);
+        GeometricMapping FindLostFeaturesFlow(const cv::Mat& Ii, const cv::Mat& Ij, const ImageFeatureSet& fi, AlignmentObjective::Own& eval, const EuclideanTransform& pose, std::vector<bool>& tracked);
 
         /**
          * Augment a target feature set by means of a feature flow from the source set.
@@ -474,39 +591,33 @@ namespace seq2map
         /**
          *
          */
-        bool IsOkay() const;
+        //String ToString() const;
 
-        /**
-         *
-         */
-        bool InRange(size_t t, size_t tn) const;
+        //
+        // Map::BinaryOperator
+        //
+        virtual bool operator() (Map& map, Source& s0, Frame& t0, Source& s1, Frame& t1);
 
-        /**
-         *
-         */
-        bool IsCrossed() const;
+        //
+        // Parametrised
+        //
+        virtual void WriteParams(cv::FileStorage& fs) const;
+        virtual bool ReadParams(const cv::FileNode& fn);
+        virtual void ApplyParams();
+        virtual Options GetOptions(int flag = 0);
 
-        /**
-         *
-         */
-        bool IsSynchronised() const { return src.offset == dst.offset; }
+        Stats stats; ///< Feature tracking statistics
+        FeatureMatcher matcher;    ///< Descriptor matcher
+        ConflictResolution policy; ///< Landmark merge policy
+        OutlierRejectionOptions outlierRejection; ///< outlier rejection options
+        InlierInjectionOptions  inlierInjection;  ///< inlier recovery options
+        TriangulationMethod     triangulation;    ///< triangulation method
 
-        /**
-         *
-         */
-        String ToString() const;
-
-        const FramedStore src;
-        const FramedStore dst;
-
-        FeatureMatcher matcher;
-        Stats stats;
-        ConflictResolution policy;
-
-        OutlierRejectionOptions outlierRejection;
-        InlierInjectionOptions  inlierInjection;
-
-        StructureRecoveryScheme structureScheme;
+    private:
+        String m_alignString;
+        String m_flowString;
+        String m_triangulation;
+        double m_epipolarEps;
     };
 }
 #endif // MAPPING_HPP

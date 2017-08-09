@@ -327,8 +327,7 @@ Geometry EuclideanMetric::operator() (const Geometry& x) const
 {
     if (x.GetDimension() == 1)
     {
-        cv::Mat d; cv::convertScaleAbs(x.mat, d, scale);
-        return Geometry(x.shape, d);
+        return Geometry(x.shape, cv::abs(x.mat) * scale);
     }
 
     if (x.shape != Geometry::ROW_MAJOR)
