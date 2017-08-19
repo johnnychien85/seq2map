@@ -36,7 +36,7 @@ cv::Mat LeastSquaresProblem::ComputeJacobian(const VectorisableD::Vec& x, Vector
     std::vector<JacobianSlices> slices(m_diffThreads);
     size_t i = 0;
 
-    for (Indices::const_iterator var = m_varIdx.begin(); var != m_varIdx.end(); var++)
+    for (IndexList::const_iterator var = m_varIdx.begin(); var != m_varIdx.end(); var++)
     {
         JacobianSlice slice;
         size_t threadIdx = i % m_diffThreads;
@@ -84,7 +84,7 @@ void LeastSquaresProblem::DiffThread(const LeastSquaresProblem* lsq, JacobianSli
     }
 }
 
-bool LeastSquaresProblem::SetActiveVars(const Indices& varIdx)
+bool LeastSquaresProblem::SetActiveVars(const IndexList& varIdx)
 {
     BOOST_FOREACH(size_t var, varIdx)
     {

@@ -50,9 +50,10 @@ namespace seq2map
     typedef std::vector<Point2D> Points2D;
     typedef std::vector<Point3D> Points3D;
 
-    typedef std::list<size_t> Indices;
+    typedef std::list<size_t> IndexList;
+    typedef std::vector<size_t> Indices;
     const size_t INVALID_INDEX = (size_t)-1;
-    Indices makeIndices(size_t start, size_t end);
+    IndexList makeIndices(size_t start, size_t end);
 }
 
 /**
@@ -88,7 +89,7 @@ namespace seq2map
     // string processing
     String makeNameList(Strings names);
     Strings explode(const String& string, char delimiter);
-    String indices2string(const Indices& idx);
+    String indices2string(const IndexList& idx);
     String size2string(const cv::Size& size);
     cv::Mat strings2mat(const Strings& strings, const cv::Size& matSize);
     bool replace(String& subject, const String& from, const String& to);
@@ -110,6 +111,21 @@ namespace seq2map
 namespace seq2map
 {
     /**
+     * Named item
+     */
+    class Named
+    {
+    public:
+        Named() : m_name("unnamed") {}
+
+        inline void SetName(const String& name) { m_name = name; }
+        inline String GetName() const           { return m_name; }
+
+    private:
+        String m_name;
+    };
+
+    /**
      * Indexed item
      */
     class Indexed
@@ -118,7 +134,7 @@ namespace seq2map
         Indexed(size_t index = INVALID_INDEX) : m_index(index) {}
         virtual ~Indexed() {}
         inline virtual void SetIndex(size_t index) { m_index = index; }
-        inline size_t GetIndex() const {return m_index;}
+        inline size_t GetIndex() const { return m_index; }
         inline bool IsOkay() const { return m_index != INVALID_INDEX; }
         inline bool operator<  (const Indexed& rhs) const { return m_index <  rhs.m_index; }
         inline bool operator== (const Indexed& rhs) const { return m_index == rhs.m_index; }

@@ -1,5 +1,6 @@
 #include <boost/log/core.hpp> // for log level setting
 #include <boost/log/expressions.hpp>
+#include <boost/algorithm/string.hpp>
 #include <seq2map/app.hpp>
 
 namespace logging = boost::log;
@@ -62,7 +63,7 @@ int App::Run()
         return EXIT_SUCCESS;
     }
 
-    if (!SetLogLevel(loglevel))
+    if (!SetLogLevel(boost::to_lower_copy(loglevel)))
     {
         E_ERROR << "error setting log level to \"" << loglevel << "\"";
     }
@@ -72,8 +73,10 @@ int App::Run()
         E_WARNING << "error writing to log file " << m_logfile;
     }
 
-    //try
-    //{
+#ifdef NDEBUG
+    try
+    {
+#endif
         if (!ProcessUnknownArgs(unknownArgs) || !Init())
         {
             ShowSynopsis();
@@ -81,14 +84,16 @@ int App::Run()
         }
 
         return Execute() ? EXIT_SUCCESS : EXIT_FAILURE;
-    //}
-    //catch (std::exception& ex)
-    //{
-    //    E_FATAL << "unhandled exception caught";
-    //    E_FATAL << ex.what();
+#ifdef NDEBUG
+    }
+    catch (std::exception& ex)
+    {
+        E_FATAL << "unhandled exception caught";
+        E_FATAL << ex.what();
 
-    //    return EXIT_FAILURE;
-    //}
+        return EXIT_FAILURE;
+    }
+#endif
 }
 
 bool App::SetLogLevel(const String& level)
@@ -111,6 +116,7 @@ bool App::SetLogLevel(const String& level)
         return true;
     }
 
+    E_WARNING << "unknown level \"" << level << "\"";
     return false;
 }
 

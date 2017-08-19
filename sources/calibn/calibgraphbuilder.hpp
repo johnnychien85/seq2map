@@ -28,7 +28,7 @@ private:
         bool FromString(const String& def);
         String ToString() const; 
         bool IsOkay() const { return patternSize.area() >= 4 && patternMetric.area() > 0; }
-        void GetObjectPoints(Points3F& pts, Indices& corners) const;
+        void GetObjectPoints(Points3F& pts, IndexList& corners) const;
 
         cv::Size   patternSize;
         cv::Size2f patternMetric;

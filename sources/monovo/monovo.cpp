@@ -142,9 +142,6 @@ bool MyApp::Execute()
     m_tracker.matcher.SetMaxRatio(0.8f);
     m_tracker.matcher.SetUniqueness(true);
     m_tracker.matcher.SetSymmetric(false);
-    m_tracker.inlierInjection.blockSize = 5;
-    m_tracker.inlierInjection.levels = 3;
-    m_tracker.inlierInjection.bidirectionalEps = 1;
     m_tracker.inlierInjection.extractDescriptor = false;
 
     Motion mot;
@@ -155,6 +152,8 @@ bool MyApp::Execute()
 
     m_until = m_until > 0 && m_until > m_start ? m_until : m_seq.GetFrames() - 1;
     map.GetFrame(m_start).pose.valid = true; // set the starting frame as the reference frame
+
+    size_t kf = INVALID_INDEX;
 
     for (size_t t = m_start; t < m_until; t++)
     {
@@ -192,8 +191,31 @@ bool MyApp::Execute()
         E_INFO << mat2string(stats.motion.pose.GetRotation().ToVector(), "R");
         E_INFO << mat2string(stats.motion.pose.GetTranslation(), "t");
 
+        const double covis = kf == INVALID_INDEX ? 0.0f : map.GetFrame(kf).GetCovisibility(map.GetFrame(tj));
+
+        if (kf == INVALID_INDEX || covis < 0.25f)
+        {
+            E_INFO << "added frame " << ti << " as a keyframe";
+            kf = ti;
+        }
+        else
+        {
+            E_INFO << "covis(" << kf << "," << ti << ") = " << std::setprecision(2) << (100.0f * covis) << "%";
+        }
+
         mot.Update(stats.motion.pose);
     }
+
+    // covisibility matrix
+    // cv::Mat cvs = cv::Mat::zeros(m_until, m_until, CV_64F);
+    // for (size_t ti = m_start; ti != m_until; ti++)
+    // {
+    //    for (size_t tj = ti + 1; tj < m_until; tj++)
+    //    {
+    //        cvs.at<double>(ti, tj) = map.GetFrame(ti).GetCovisibility(map.GetFrame(tj));
+    //    }
+    // }
+    // PersistentMat(cvs).Store(Path("cvs.bin"));
 
     E_INFO << "runtime : " << metre.GetSpeed() << " fps";
 

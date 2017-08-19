@@ -47,7 +47,7 @@ public:
     MinimumSpanningTree(const cv::Mat& costs, size_t start);
     virtual ~MinimumSpanningTree() {}
 
-    std::vector<Indices> traces;
+    std::vector<IndexList> traces;
 
     Edges edges;
     bool valid;
@@ -417,7 +417,7 @@ bool CalibGraph::Calibrate(bool pairwiseOptim)
 
 bool CalibGraph::Optimise(size_t iter, double eps, size_t threads)
 {    
-    Indices camIdx, viewIdx;
+    IndexList camIdx, viewIdx;
 
     // find all the connected cameras
     if (!m_camvtx[m_refCamIdx]->connected)

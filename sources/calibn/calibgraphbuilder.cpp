@@ -37,7 +37,7 @@ String CalibGraphBuilder::TargetDef::ToString() const
     return ss.str();
 }
 
-void CalibGraphBuilder::TargetDef::GetObjectPoints(Points3F& pts, Indices& corners) const
+void CalibGraphBuilder::TargetDef::GetObjectPoints(Points3F& pts, IndexList& corners) const
 {
     pts.clear();
     pts.reserve(patternSize.area());
@@ -68,7 +68,7 @@ void CalibGraphBuilder::TargetDef::GetObjectPoints(Points3F& pts, Indices& corne
 
     // swap last two corners so they are arranged clockwise
     assert(corners.size() == 4);
-    Indices::iterator last = boost::prior(corners.end());
+    IndexList::iterator last = boost::prior(corners.end());
     std::iter_swap(last, boost::prior(last));
 }
 
@@ -248,7 +248,7 @@ bool CalibGraphBuilder::Build(CalibGraph& graph) const
     bool subpixel = m_subpxWinSize.area() > 0;
 
     Points3F objectPoints;
-    Indices cornersIdx;
+    IndexList cornersIdx;
     m_targetDef.GetObjectPoints(objectPoints, cornersIdx);
 
     for (size_t view = 0; view < m_views; view++)

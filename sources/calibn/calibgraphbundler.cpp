@@ -98,9 +98,9 @@ size_t CalibGraphBundler::BundleParams::GetDimension() const
     return d;
 }
 
-Indices CalibGraphBundler::BundleParams::MakeVarList() const
+IndexList CalibGraphBundler::BundleParams::MakeVarList() const
 {
-    Indices vars;
+    IndexList vars;
 
     size_t n = GetDimension();
     size_t i0 = intrinsics[0].GetDimension();
@@ -114,7 +114,7 @@ Indices CalibGraphBundler::BundleParams::MakeVarList() const
     return vars;
 }
 
-CalibGraphBundler::Ptr CalibGraphBundler::Create(const CalibGraph& graph, const Indices& camIdx, const Indices& viewIdx)
+CalibGraphBundler::Ptr CalibGraphBundler::Create(const CalibGraph& graph, const IndexList& camIdx, const IndexList& viewIdx)
 {
     size_t cams  = camIdx.size();
     size_t views = viewIdx.size();
@@ -173,7 +173,7 @@ CalibGraphBundler::Ptr CalibGraphBundler::Create(const CalibGraph& graph, const 
     return Ptr(new CalibGraphBundler(params, dataset));
 }
 
-void CalibGraphBundler::Apply(CalibGraph& graph, const Indices& camIdx, const Indices& viewIdx) const
+void CalibGraphBundler::Apply(CalibGraph& graph, const IndexList& camIdx, const IndexList& viewIdx) const
 {
     // apply camera parameters
     size_t c = 0;

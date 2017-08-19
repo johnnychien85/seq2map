@@ -247,7 +247,7 @@ namespace seq2map
     {
     public:
         inline FeatureMatch& operator[] (size_t idx) { return m_matches[idx]; }
-        Indices Select(int mask) const;
+        IndexList Select(int mask) const;
         void Draw(cv::Mat& canvas);
         cv::Mat Draw(const cv::Mat& src, const cv::Mat& dst);
         inline const ImageFeatureSet& From() const { return m_src; }
@@ -279,7 +279,7 @@ namespace seq2map
         class Filter : public Referenced<Filter>
         {
         public:
-            virtual bool operator() (ImageFeatureMap& map, Indices& inliers) = 0;
+            virtual bool operator() (ImageFeatureMap& map, IndexList& inliers) = 0;
         };
 
         typedef std::vector<Filter::Own> Filters;
@@ -369,7 +369,7 @@ namespace seq2map
         /**
          *
          */
-        virtual bool operator() (ImageFeatureMap& map, Indices& inliers);
+        virtual bool operator() (ImageFeatureMap& map, IndexList& inliers);
 
         /**
          *
@@ -402,7 +402,7 @@ namespace seq2map
         /**
          *
          */
-        virtual bool operator() (ImageFeatureMap& map, Indices& inliers);
+        virtual bool operator() (ImageFeatureMap& map, IndexList& inliers);
 
         /**
          *
@@ -459,7 +459,7 @@ namespace seq2map
         /**
          *
          */
-        virtual bool operator() (ImageFeatureMap& map, Indices& inliers);
+        virtual bool operator() (ImageFeatureMap& map, IndexList& inliers);
 
     protected:
         float m_k;

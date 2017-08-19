@@ -36,8 +36,8 @@ namespace seq2map
             InlierSelector(AlignmentObjective::ConstOwn& objective, double threshold)
             : objective(objective), threshold(threshold) {}
 
-            bool operator() (const EuclideanTransform& tform, Indices& inliers) const;
-            bool operator() (const EuclideanTransform& tform, Indices& inliers, Indices& outliers) const;
+            bool operator() (const EuclideanTransform& tform, IndexList& inliers) const;
+            bool operator() (const EuclideanTransform& tform, IndexList& inliers, IndexList& outliers) const;
             inline bool IsEnabled() const { return threshold > 0; }
 
             AlignmentObjective::ConstOwn objective;
@@ -65,7 +65,7 @@ namespace seq2map
         /**
          * Make a new objective from a subset of data.
          */
-        virtual AlignmentObjective::Own GetSubObjective(const Indices& indices) const = 0;
+        virtual AlignmentObjective::Own GetSubObjective(const IndexList& indices) const = 0;
 
     protected:
         GeometricMapping m_data;
@@ -98,7 +98,7 @@ namespace seq2map
         virtual bool SetData(const GeometricMapping& data) { return SetData(data, m_src, m_dst); }
         bool SetData(const GeometricMapping& data, ProjectionModel::ConstOwn& src, ProjectionModel::ConstOwn& dst);
 
-        virtual AlignmentObjective::Own GetSubObjective(const Indices& indices) const;
+        virtual AlignmentObjective::Own GetSubObjective(const IndexList& indices) const;
 
         //
         // Evaluation
@@ -128,7 +128,7 @@ namespace seq2map
         virtual void SetProjectionModel(ProjectionModel::Own& proj) { m_proj = proj; }
         virtual bool SetData(const GeometricMapping& data);
 
-        virtual AlignmentObjective::Own GetSubObjective(const Indices& indices) const;
+        virtual AlignmentObjective::Own GetSubObjective(const IndexList& indices) const;
 
         //
         // Evaluation
@@ -175,11 +175,34 @@ namespace seq2map
         virtual bool SetData(const GeometricMapping& data);
 
         /**
-         * Build objective data from 3D points and a base image
+         * Build objective data from source 3D and 2D poiints and base image.
+         *
+         * \param worldPoints Points in 3D space
+         * \param imagePoints Points in 2D source image, used to subsampling.
+         * \param src Source image, used with imagePoints to establish target pixel values.
+         * \param snapped Indicating if the 2D image points are snapped to image grid so the subsampling can be skipped.
+         * \param metric Metric associated with the data in image domain.
+         * \param indices Optional indicis of back-tracing data source.
+         *
+         * \return True if the data is successfully built, false otherwise.
          */
-        virtual bool SetData(const Geometry& g, const cv::Mat& src, const Metric::Own metric = Metric::Own(), const std::vector<size_t>& indices = std::vector<size_t>());
+        virtual bool SetData(const Geometry& worldPoints, const Geometry& imagePoints, const cv::Mat& src, bool snapped = false, const Metric::Own metric = Metric::Own(), const Indices& indices = Indices());
 
-        virtual AlignmentObjective::Own GetSubObjective(const Indices& indices) const;
+        /**
+         * Build objective data from source 3D points and base image.
+         * The missing source 2D points are obtained by projecting the given 3D points onto the base image.
+         *
+         * \param worldPoints Points in 3D space
+         * \param src Source image, used with imagePoints to establish target pixel values.
+         * \param metric Metric associated with the data in image domain.
+         * \param indices Optional indicis of back-tracing data source.
+         *
+         * \return True if the data is successfully built, false otherwise.
+         */
+        virtual bool SetData(const Geometry& worldPoints, const cv::Mat& src, const Metric::Own metric = Metric::Own(), const Indices& indices = Indices());
+
+
+        virtual AlignmentObjective::Own GetSubObjective(const IndexList& indices) const;
 
         //
         // Evaluation
@@ -212,7 +235,7 @@ namespace seq2map
         //
         virtual bool SetData(const GeometricMapping& data);
 
-        virtual AlignmentObjective::Own GetSubObjective(const Indices& indices) const;
+        virtual AlignmentObjective::Own GetSubObjective(const IndexList& indices) const;
 
         //
         // Evaluation
@@ -343,7 +366,7 @@ namespace seq2map
         };
 
         typedef std::vector<AlignmentObjective::InlierSelector> Selectors;
-        typedef std::vector<Indices> IndexLists;
+        typedef std::vector<IndexList> IndexLists;
 
         //
         // Constructor
@@ -384,11 +407,11 @@ namespace seq2map
         struct EvalResult
         {
             bool success;
-            Indices accepted;
-            Indices rejected;
+            IndexList accepted;
+            IndexList rejected;
         };
 
-        static Indices DrawSamples(size_t population, size_t samples);
+        static IndexList DrawSamples(size_t population, size_t samples);
         static void EvalThread(const AlignmentObjective::InlierSelector& g, const EuclideanTransform& tf, EvalResult& result);
 
         Strategy m_strategy;
@@ -472,7 +495,7 @@ namespace seq2map
              * \param indices List of indices of elements to be extracted from structure and metric.
              * \return extracted sub-elements.
              */
-            Estimate operator[] (const Indices& indices) const;
+            Estimate operator[] (const IndexList& indices) const;
 
             /**
              * Update the current estimate using a recursive Bayesian filter.

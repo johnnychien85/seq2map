@@ -439,7 +439,6 @@ bool Camera::Restore(const cv::FileNode& fn)
     return m_imageStore.Restore(fn["imageStore"]);
 }
 
-
 //==[ RectifiedStereo ]=======================================================//
 
 RectifiedStereo::Configuration RectifiedStereo::GetConfiguration(const EuclideanTransform& rel, double& baseline)
@@ -525,7 +524,7 @@ RectifiedStereo::Configuration RectifiedStereo::GetConfiguration(const Euclidean
     return UNKNOWN;
 }
 
-Geometry RectifiedStereo::Backproject(const cv::Mat& dp, const Indices& idx) const
+Geometry RectifiedStereo::Backproject(const cv::Mat& dp, const IndexList& idx) const
 {
     if (dp.rows != m_rays.mat.rows || dp.cols != m_rays.mat.cols || dp.channels() != 1)
     {
@@ -567,7 +566,7 @@ Geometry RectifiedStereo::Backproject(const cv::Mat& dp, const Indices& idx) con
         Geometry(Geometry::ROW_MAJOR, dst);
 }
 
-StructureEstimation::Estimate RectifiedStereo::Backproject(const cv::Mat& dp, const cv::Mat& var, const Indices& idx) const
+StructureEstimation::Estimate RectifiedStereo::Backproject(const cv::Mat& dp, const cv::Mat& var, const IndexList& idx) const
 {
     StructureEstimation::Estimate estimate(Backproject(dp, idx));
 
@@ -719,10 +718,10 @@ String RectifiedStereo::ToString() const
 
 //==[ Sequence ]==============================================================//
 
-String Sequence::s_storeIndexFileName    = "index.yml";
-String Sequence::s_featureStoreDirName   = "kpt";
-String Sequence::s_disparityStoreDirName = "dpm";
-String Sequence::s_mapStoreDirName       = "map";
+String Sequence::s_storeIndexFileName = "index.yml";
+String Sequence::s_kptStoreDirName = "kpt";
+String Sequence::s_dpmStoreDirName = "dpm";
+String Sequence::s_mapStoreDirName = "map";
 
 void Sequence::Clear()
 {
@@ -732,14 +731,14 @@ void Sequence::Clear()
     m_vehicleName = "";
     m_grabberName = "";
 
-    m_kptsDirName = s_featureStoreDirName;
-    m_dispDirName = s_disparityStoreDirName;
+    m_kptsDirName = s_kptStoreDirName;
+    m_dispDirName = s_dpmStoreDirName;
     m_mapsDirName = s_mapStoreDirName;
 
     m_cameras.clear();
     m_stereo.clear();
-    m_kptsStores.clear();
-    m_dispStores.clear();
+    m_kptStores.clear();
+    m_dpmStores.clear();
 }
 
 RectifiedStereo::ConstOwn Sequence::GetStereoPair(size_t priCamIdx, size_t secCamIdx) const
@@ -934,7 +933,7 @@ size_t Sequence::ScanStores()
     {
         E_TRACE << "processing " << dir;
 
-        FeatureStore::Own store = FeatureStore::New(m_kptsStores.size());
+        FeatureStore::Own store = FeatureStore::New(m_kptStores.size());
         const Path from = dir / s_storeIndexFileName;
 
         cv::FileStorage fs(from.string(), cv::FileStorage::READ);
@@ -968,7 +967,7 @@ size_t Sequence::ScanStores()
         }
 
         store->m_cam = cam;
-        m_kptsStores[store->GetIndex()] = store;
+        m_kptStores[store->GetIndex()] = store;
 
         E_TRACE << "feature store " << store->GetIndex() << " loaded to camera " << cam->GetIndex();
     }
@@ -981,7 +980,7 @@ size_t Sequence::ScanStores()
     {
         E_TRACE << "processing " << dir;
 
-        DisparityStore::Own store = DisparityStore::New(m_dispStores.size());
+        DisparityStore::Own store = DisparityStore::New(m_dpmStores.size());
         const Path from = dir / s_storeIndexFileName;
 
         cv::FileStorage fs(from.string(), cv::FileStorage::READ);
@@ -1018,12 +1017,12 @@ size_t Sequence::ScanStores()
         }
 
         store->m_stereo = pair;
-        m_dispStores[store->GetIndex()] = store;
+        m_dpmStores[store->GetIndex()] = store;
 
         E_TRACE << "disparity store " << store->GetIndex() << " loaded to stereo pair " << pair->ToString();
     }
 
-    return m_kptsStores.size() + m_dispStores.size();
+    return m_kptStores.size() + m_dpmStores.size();
 }
 
 //==[ Sequence::Builder ]=====================================================//

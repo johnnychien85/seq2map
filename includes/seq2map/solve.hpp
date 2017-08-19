@@ -14,7 +14,7 @@ namespace seq2map
         //
         //
         //
-        LeastSquaresProblem(size_t m, size_t n, const Indices& vars = Indices(), double dx = 1e-3, size_t diffThreads = 0)
+        LeastSquaresProblem(size_t m, size_t n, const IndexList& vars = IndexList(), double dx = 1e-3, size_t diffThreads = 0)
         : m_conds(m), m_vars(n), m_diffStep(dx), m_diffThreads(diffThreads > 0 ? diffThreads : GetHardwareConcurrency())
         {
             if (vars.empty() || !SetActiveVars(vars)) m_varIdx = makeIndices(0, n-1); 
@@ -30,7 +30,7 @@ namespace seq2map
         //
         //
         //
-        bool SetActiveVars(const Indices& varIdx);
+        bool SetActiveVars(const IndexList& varIdx);
 
         /**
          * Initialise the state of problem and set initial guess.
@@ -81,7 +81,7 @@ namespace seq2map
         static size_t GetHardwareConcurrency();
         static void DiffThread(const LeastSquaresProblem* lsq, JacobianSlices& slices);
 
-        Indices m_varIdx; ///< list of active variables
+        IndexList m_varIdx; ///< list of active variables
         double  m_diffStep;
         size_t  m_diffThreads;
         cv::Mat m_jacobianPattern;

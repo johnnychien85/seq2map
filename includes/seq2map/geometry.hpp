@@ -87,7 +87,7 @@ namespace seq2map
         /**
          * Extract sub-elements.
          */
-        Geometry operator[] (const Indices& indices) const;
+        Geometry operator[] (const IndexList& indices) const;
 
         /**
          * Change the memory layout of elements.
@@ -159,7 +159,7 @@ namespace seq2map
          * \param indices list of element indices.
          * \return A new metric containing extracted sub-elements.
          */
-        virtual Metric::Own operator[] (const Indices& indices) const = 0;
+        virtual Metric::Own operator[] (const IndexList& indices) const = 0;
 
         /**
          * Combine two metrices.
@@ -210,7 +210,7 @@ namespace seq2map
 
         virtual Geometry operator() (const Geometry& x) const;
         virtual Metric::Own Clone() const { return Metric::Own(new EuclideanMetric(scale)); }
-        virtual Metric::Own operator[] (const Indices& indices) const { return Clone(); }
+        virtual Metric::Own operator[] (const IndexList& indices) const { return Clone(); }
         virtual Metric::Own operator+ (const Metric& metric) const;
         virtual Metric::Own Transform(const EuclideanTransform& tform, const Geometry& jac = Geometry(Geometry::ROW_MAJOR)) const { return Clone(); }
         virtual Metric::Own Reduce() const { return Clone(); }
@@ -231,7 +231,7 @@ namespace seq2map
 
         virtual Geometry operator() (const Geometry& x) const;
         virtual Metric::Own Clone() const { return Metric::Own(new WeightedEuclideanMetric(m_weights.clone(), scale)); }
-        virtual Metric::Own operator[] (const Indices& indices) const;
+        virtual Metric::Own operator[] (const IndexList& indices) const;
         virtual Metric::Own operator+ (const Metric& metric) const;
 
         virtual boost::shared_ptr<MahalanobisMetric> ToMahalanobis(bool& native);
@@ -268,7 +268,7 @@ namespace seq2map
 
         virtual Metric::Own Clone() const { return Metric::Own(new MahalanobisMetric(type, dims, m_cov.mat.clone())); }
 
-        virtual Metric::Own operator[] (const Indices& indices) const;
+        virtual Metric::Own operator[] (const IndexList& indices) const;
 
         virtual Metric::Own operator+ (const Metric& metric) const;
 
@@ -328,7 +328,7 @@ namespace seq2map
 
         virtual Geometry operator() (const Geometry& x) const { return (*(*src + *dst))(x); }
         virtual Metric::Own Clone() const { return Metric::Own(new DualMetric(src->Clone(), dst->Clone())); }
-        virtual Metric::Own operator[] (const Indices& indices) const { return Metric::Own(new DualMetric((*src)[indices], (*dst)[indices])); }
+        virtual Metric::Own operator[] (const IndexList& indices) const { return Metric::Own(new DualMetric((*src)[indices], (*dst)[indices])); }
         virtual Metric::Own operator+  (const Metric& metric)   const { return Metric::Own(new DualMetric((*src) + metric, (*dst) + metric)); }
 
         virtual Metric::Own Transform(const EuclideanTransform& tform, const Geometry& jac) const { return Metric::Own(new DualMetric(src->Transform(tform, jac), dst)); }
@@ -420,7 +420,7 @@ namespace seq2map
         /**
          * Extract sub-elements.
          */
-        GeometricMapping operator[] (const Indices& indices) const;
+        GeometricMapping operator[] (const IndexList& indices) const;
 
         /**
          * Check if the mapping is one-to-one.

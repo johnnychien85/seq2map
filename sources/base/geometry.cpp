@@ -287,7 +287,7 @@ Geometry& Geometry::Dehomogenise()
     return *this;
 }
 
-Geometry Geometry::operator[] (const Indices& indices) const
+Geometry Geometry::operator[] (const IndexList& indices) const
 {
     Geometry g(shape);
 
@@ -410,7 +410,7 @@ Geometry WeightedEuclideanMetric::operator() (const Geometry& x) const
     return d.Reshape(x.shape);
 }
 
-Metric::Own WeightedEuclideanMetric::operator[] (const Indices& indices) const
+Metric::Own WeightedEuclideanMetric::operator[] (const IndexList& indices) const
 {
     cv::Mat w = cv::Mat(static_cast<int>(indices.size()), 1, m_weights.depth());
 
@@ -511,7 +511,7 @@ MahalanobisMetric::MahalanobisMetric(CovarianceType type, size_t dims, const cv:
     }
 }
 
-Metric::Own MahalanobisMetric::operator[] (const Indices& indices) const
+Metric::Own MahalanobisMetric::operator[] (const IndexList& indices) const
 {
     MahalanobisMetric* metric = new MahalanobisMetric(type, dims);
     metric->m_cov = m_cov[indices];
@@ -703,6 +703,7 @@ Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform, const 
     }
 
     metric->SetCovarianceMat(cov1);
+
     return Metric::Own(metric);
 }
 
@@ -937,20 +938,9 @@ bool MahalanobisMetric::SetCovarianceMat(const cv::Mat& cov)
 
     for (int i = 0; i < cov.rows; i++)
     {
-        cv::Mat Ci = cv::Mat(DIMS, DIMS, cov.depth());
-        
-        for (int d0 = 0; d0 < DIMS; d0++)
+        if (/*cov.at<double>(i,0) != 0 &&*/ !checkPositiveDefinite(symmat(cov.row(i), DIMS)))
         {
-            for (int d1 = 0; d1 < DIMS; d1++)
-            {
-                const int j = sub2symind(d0, d1, DIMS);
-                Ci.at<double>(d0, d1) = cov.at<double>(i, j);
-            }
-        }
-
-        if (!checkPositiveDefinite(Ci))
-        {
-            E_TRACE << "entry " << i << " is not positive definite, " << mat2string(Ci, "C");
+            E_TRACE << "entry " << i << " is not positive-definite or nearly singular";
             m_cov.mat.row(i).setTo(0.0f); // nullify the entry
         }
     }
@@ -1087,7 +1077,6 @@ bool MahalanobisMetric::FromMahalanobis(const MahalanobisMetric& metric)
     }
 
     SetCovarianceMat(metric.GetCovariance().mat);
-
     return true;
 }
 
@@ -1218,7 +1207,7 @@ bool GeometricMapping::Check(size_t d0, size_t d1) const
     return true;
 }
 
-GeometricMapping GeometricMapping::operator[] (const Indices& idx) const
+GeometricMapping GeometricMapping::operator[] (const IndexList& idx) const
 {
     GeometricMapping mapping;
     mapping.src = src[idx];
@@ -1797,7 +1786,7 @@ Geometry ProjectionModel::GetJacobian(const Geometry& g, const Geometry& proj) c
         return GetJacobian(g, proj.Reshape(Geometry::ROW_MAJOR));
     }
 
-    const double dx = 1e-1;
+    const double dx = 1e-2;
 
     Geometry jac(Geometry::ROW_MAJOR);
     jac.mat = cv::Mat(static_cast<int>(g.GetElements()), 6, g.mat.type());

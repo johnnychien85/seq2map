@@ -459,9 +459,9 @@ void CvSuperDetextractorAdaptor<T>::SetCvSuperDetextractorPtr(CvDextractorPtr cv
 
 //==[ ImageFeatureMap ]=======================================================//
 
-Indices ImageFeatureMap::Select(int mask) const
+IndexList ImageFeatureMap::Select(int mask) const
 {
-    Indices indices;
+    IndexList indices;
     for (size_t i = 0; i < m_matches.size(); i++)
     {
         if (m_matches[i].state & mask) indices.push_back(i);
@@ -536,7 +536,7 @@ ImageFeatureMap FeatureMatcher::operator() (const ImageFeatureSet& src, const Im
     // perform symmetry test
     if (m_symmetric)
     {
-        Indices mapped = map.Select(FeatureMatch::INLIER);
+        IndexList mapped = map.Select(FeatureMatch::INLIER);
         cv::Mat subDescriptors = cv::Mat(mapped.size(), srcDescriptors.cols, srcDescriptors.type());
 
         std::vector<size_t> idmap;
@@ -556,7 +556,7 @@ ImageFeatureMap FeatureMatcher::operator() (const ImageFeatureSet& src, const Im
         RunSymmetryTest(forward, backward, idmap, static_cast<size_t>(srcDescriptors.rows));
     }
 
-    Indices inliers = map.Select(FeatureMatch::INLIER);
+    IndexList inliers = map.Select(FeatureMatch::INLIER);
 
     BOOST_FOREACH(Filter::Own& f, m_filters)
     {
@@ -747,7 +747,7 @@ seq2map::String FeatureMatcher::Report() const
 
 //==[ FundamentalMatrixFilter ]===============================================//
 
-bool FundamentalMatrixFilter::operator() (ImageFeatureMap& map, Indices& inliers)
+bool FundamentalMatrixFilter::operator() (ImageFeatureMap& map, IndexList& inliers)
 {
     // at least 8 point correspondences are required 
     //  to estimate the fundamental matrix
@@ -778,7 +778,7 @@ bool FundamentalMatrixFilter::operator() (ImageFeatureMap& map, Indices& inliers
     int method = m_ransac ? CV_FM_RANSAC : CV_FM_LMEDS;
     m_fmat = findFundamentalMat(pts0, pts1, mask, method, m_epsilon, m_confidence);
 
-    Indices::iterator itr = inliers.begin(); 
+    IndexList::iterator itr = inliers.begin(); 
     for (size_t i = 0; itr != inliers.end(); i++)
     {
         bool outlier = mask[i] == 0;
@@ -820,7 +820,7 @@ void EssentialMatrixFilter::SetCameraMatrices(const cv::Mat& K0, const cv::Mat& 
     m_K1inv.convertTo(m_K1inv, CV_64F);
 }
 
-bool EssentialMatrixFilter::operator() (ImageFeatureMap& map, Indices& inliers)
+bool EssentialMatrixFilter::operator() (ImageFeatureMap& map, IndexList& inliers)
 {
     // at least 5 point correspondences are required 
     //  to estimate the essential matrix
@@ -861,7 +861,7 @@ bool EssentialMatrixFilter::operator() (ImageFeatureMap& map, Indices& inliers)
         return false;
     }
 
-    Indices::iterator itr = inliers.begin(); 
+    IndexList::iterator itr = inliers.begin(); 
     for (size_t i = 0; itr != inliers.end(); i++)
     {
         bool outlier = mask[i] == 0;
@@ -906,7 +906,7 @@ void EssentialMatrixFilter::BackprojectPoints(Points2D& pts, const cv::Mat& Kinv
 
 //==[ SigmaFilter ]===========================================================//
 
-bool SigmaFilter::operator() (ImageFeatureMap& map, Indices& inliers)
+bool SigmaFilter::operator() (ImageFeatureMap& map, IndexList& inliers)
 {
     if (inliers.size() < 2) return true;
 
@@ -932,7 +932,7 @@ bool SigmaFilter::operator() (ImageFeatureMap& map, Indices& inliers)
     float ksigma = m_k * m_stdev;
     float cutoff = m_mean + ksigma;
 
-    Indices::iterator itr = inliers.begin();
+    IndexList::iterator itr = inliers.begin();
     while (itr != inliers.end())
     {
         bool outlier = map[*itr].distance > cutoff;

@@ -7,10 +7,13 @@ using namespace seq2map;
 
 Source& Map::AddSource(FeatureStore::ConstOwn& store, DisparityStore::ConstOwn& dpm)
 {
+    const bool validDisp =
+        dpm && dpm->GetStereoPair() && store->GetCamera()->GetIndex() == dpm->GetStereoPair()->GetPrimaryCamera()->GetIndex();
+
     Source& src = Dim2(m_newSourcId++);
 
     src.store = store;
-    src.dpm = dpm;
+    src.dpm = validDisp ? dpm : DisparityStore::Own();
 
     return src;
 }
@@ -90,7 +93,7 @@ Landmark& Map::JoinLandmark(Landmark& li, Landmark& lj)
         li.Hit(tj, cj, hit.index) = hit;
 
         // ID table rewriting
-        Landmark::Ptrs& uj = tj.featureLandmarkLookup[cj.GetIndex()];
+        Landmark::Ptrs& uj = tj.featureLandmarkLookup[cj.store->GetIndex()];
         uj[hit.index] = &li;
     }
 
@@ -257,9 +260,58 @@ Hit& Landmark::Hit(Frame& frame, Source& src, size_t index)
     return Insert(::Hit(index), d12);
 }
 
+//==[ Frame ]=================================================================//
+
+double Frame::GetCovisibility(const Frame& tj) const
+{
+    const Frame& ti = *this;
+
+    Frame::const_iterator hi = ti.cbegin();
+    Frame::const_iterator hj = tj.cbegin();
+
+    size_t qi = INVALID_INDEX;
+    size_t unique = 0;
+    size_t shared = 0;
+
+    while (hi && hj)
+    {
+        const Landmark& li = hi.GetContainer<0, Landmark>();
+        const Landmark& lj = hj.GetContainer<0, Landmark>();
+
+        if (li < lj)
+        {
+            if (li.GetIndex() != qi)
+            {
+                qi = li.GetIndex();
+                unique++;
+            }
+
+            hi++;
+        }
+        else if (lj < li)
+        {
+            hj++;
+        }
+        else
+        {
+            if (li.GetIndex() != qi)
+            {
+                qi = li.GetIndex();
+                unique++;
+                shared++;
+            }
+
+            hi++;
+            hj++;
+        }
+    }
+
+    return static_cast<double>(shared) / static_cast<double>(unique);
+}
+
 //==[ MultiObjectiveOutlierFilter ]==========================================//
 
-bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, Indices& inliers)
+bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, IndexList& inliers)
 {
     if (builders.empty())
     {
@@ -273,6 +325,16 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, Indices& in
     const ImageFeatureSet& Fi = fmap.From();
     const ImageFeatureSet& Fj = fmap.To();
 
+    struct Record
+    {
+        Record() : refs(0), hits(0) {}
+
+        size_t refs; // number of referenced models
+        size_t hits; // number of being an inlier to the referenced models
+    };
+
+    std::vector<Record> rec(inliers.size());
+
     size_t idx = 0;
     BOOST_FOREACH (size_t k, inliers)
     {
@@ -280,7 +342,10 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, Indices& in
 
         BOOST_FOREACH (ObjectiveBuilder::Own builder, builders)
         {
-            builder->AddData(m.srcIdx, m.dstIdx, k, Fi[m.srcIdx], Fj[m.dstIdx], idx);
+            if (builder->AddData(m.srcIdx, m.dstIdx, k, Fi[m.srcIdx], Fj[m.dstIdx], idx))
+            {
+                rec[idx].refs++;
+            }
         }
 
         idx++;
@@ -349,7 +414,7 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, Indices& in
         estimator.DisableOptimisation();
     }
 
-    std::vector<Indices> survived, eliminated;
+    std::vector<IndexList> survived, eliminated;
 
     if (!estimator(solverData, estimate, survived, eliminated))
     {
@@ -357,7 +422,6 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, Indices& in
     }
 
     // aggregate all inliers from all the selectors
-    std::vector<size_t> hits(inliers.size(), 0);
 
     for (size_t s = 0; s < survived.size(); s++)
     {
@@ -365,8 +429,12 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, Indices& in
         const std::vector<size_t>& idmap = sel.objective->GetData().indices;
 
         /////////////////////////////////////////////////////////////////////////////////
-        // std::stringstream ss; ss << "g" << s << ".bin";
+        // std::stringstream ss; ss << "M" << s << ".bin";
+        // std::stringstream ss2; ss2 << "I" << s << ".bin";
         // PersistentMat(sel.objective->operator()(estimate.pose)).Store(Path(ss.str()));
+        // std::vector<int> idmap2(idmap.size());
+        // for (size_t k = 0; k < idmap.size(); k++) idmap2[k] = (int) idmap[k];
+        // PersistentMat(cv::Mat(idmap2, false)).Store(Path(ss2.str()));
         /////////////////////////////////////////////////////////////////////////////////
 
         if (stats[s] != NULL)
@@ -378,14 +446,14 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, Indices& in
 
         BOOST_FOREACH (size_t j, survived[s])
         {
-            hits[idmap[j]]++;
+            rec[idmap[j]].hits++;
         }
     }
 
-    Indices::iterator itr = inliers.begin();
-    for (std::vector<size_t>::const_iterator h = hits.begin(); h != hits.end(); h++)
+    IndexList::iterator itr = inliers.begin();
+    for (std::vector<Record>::const_iterator h = rec.begin(); h != rec.end(); h++)
     {
-        if (*h < estimator.GetSelectors().size())
+        if (h->hits < h->refs)
         {
             fmap[*itr].Reject(FeatureMatch::GEOMETRIC_TEST_FAILED);
             inliers.erase(itr++);
@@ -407,19 +475,18 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, Indices& in
 
 //==[ FeatureTracker ]=======================================================//
 
-
-bool FeatureTracker::StringToOutlierRejectionScheme(const String& flag, int& scheme)
+bool FeatureTracker::StringToAlignment(const String& flag, int& model)
 {
-    scheme = 0;
+    model = 0;
 
     for (size_t i = 0; i < flag.length(); i++)
     {
         switch (flag[i])
         {
-        case 'B': scheme |= OutlierRejectionScheme::BACKWARD_PROJ_ALIGN; break;
-        case 'P': scheme |= OutlierRejectionScheme::PHOTOMETRIC_ALIGN;   break;
-        case 'R': scheme |= OutlierRejectionScheme::RIGID_ALIGN;         break;
-        case 'E': scheme |= OutlierRejectionScheme::EPIPOLAR_ALIGN;      break;
+        case 'B': model |= OutlierRejectionScheme::BACKWARD_PROJ_ALIGN; break;
+        case 'P': model |= OutlierRejectionScheme::PHOTOMETRIC_ALIGN;   break;
+        case 'R': model |= OutlierRejectionScheme::RIGID_ALIGN;         break;
+        case 'E': model |= OutlierRejectionScheme::EPIPOLAR_ALIGN;      break;
         default:
             E_ERROR << "unknown model \"" << flag[i] << "\"";
             return false;
@@ -429,29 +496,40 @@ bool FeatureTracker::StringToOutlierRejectionScheme(const String& flag, int& sch
     return true;
 }
 
-bool FeatureTracker::StringToInlierInjectionScheme(const String& flow, int& scheme)
+String FeatureTracker::AlignmentToString(int model)
+{
+    std::stringstream ss;
+    if (model & OutlierRejectionScheme::BACKWARD_PROJ_ALIGN) ss << "B";
+    if (model & OutlierRejectionScheme::PHOTOMETRIC_ALIGN)   ss << "P";
+    if (model & OutlierRejectionScheme::RIGID_ALIGN)         ss << "R";
+    if (model & OutlierRejectionScheme::EPIPOLAR_ALIGN)      ss << "E";
+
+    return ss.str();
+}
+
+bool FeatureTracker::StringToFlow(const String& flow, int& type)
 {
     if (flow.empty())
     {
-        scheme = 0;
+        type = 0;
         return true;
     }
 
     if (flow.compare("FORWARD") == 0)
     {
-        scheme = InlierInjectionScheme::FORWARD_FLOW;
+        type = InlierInjectionScheme::FORWARD_FLOW;
         return true;
     }
 
     if (flow.compare("BACKWARD") == 0)
     {
-        scheme = InlierInjectionScheme::BACKWARD_FLOW;
+        type = InlierInjectionScheme::BACKWARD_FLOW;
         return true;
     }
 
     if (flow.compare("BIDIRECTION") == 0)
     {
-        scheme = InlierInjectionScheme::FORWARD_FLOW + InlierInjectionScheme::BACKWARD_FLOW;
+        type = InlierInjectionScheme::FORWARD_FLOW | InlierInjectionScheme::BACKWARD_FLOW;
         return true;
     }
 
@@ -459,7 +537,18 @@ bool FeatureTracker::StringToInlierInjectionScheme(const String& flow, int& sche
     return false;
 }
 
-bool FeatureTracker::StringToTriangulationMethod(const String& triangulation, TriangulationMethod& method)
+String FeatureTracker::FlowToString(int scheme)
+{
+    bool forward  = scheme & InlierInjectionScheme::FORWARD_FLOW;
+    bool backward = scheme & InlierInjectionScheme::BACKWARD_FLOW;
+
+    if (forward && backward) return "BIDIRECTION";
+    else if (forward)        return "FORWARD";
+    else if (backward)       return "BACKWARD";
+    else                     return "";
+}
+
+bool FeatureTracker::StringToTriangulation(const String& triangulation, TriangulationMethod& method)
 {
     if (triangulation.empty())
     {
@@ -467,62 +556,134 @@ bool FeatureTracker::StringToTriangulationMethod(const String& triangulation, Tr
         return true;
     }
 
-    if (triangulation.compare("MIDPOINT"))
+    if (triangulation.compare("MIDPOINT") == 0)
     {
         method = TriangulationMethod::MIDPOINT;
         return true;
     }
 
-    if (triangulation.compare("OPTIMAL"))
+    if (triangulation.compare("OPTIMAL") == 0)
     {
         method = TriangulationMethod::OPTIMAL;
         return true;
     }
 
     E_ERROR << "unknown triangulation method \"" << triangulation << "\"";
+    method = TriangulationMethod::DISABLED;
+
     return false;
+}
+
+String FeatureTracker::TriangulationToString(TriangulationMethod method)
+{
+    switch (method)
+    {
+    case TriangulationMethod::MIDPOINT: return "MIDPOINT"; break;
+    case TriangulationMethod::OPTIMAL:  return "OPTIMAL";  break;
+    case TriangulationMethod::DISABLED: return "";         break;
+    }
+
+    E_ERROR << "unknown method " << method;
+    return TriangulationToString(TriangulationMethod::DISABLED);
 }
 
 void FeatureTracker::WriteParams(cv::FileStorage& fs) const
 {
+    fs << "name" << GetName();
 
+    fs << "outlierRejection" << "{";
+    {
+        fs << "model" << AlignmentToString(outlierRejection.model);
+        fs << "confidence" << outlierRejection.confidence;
+        fs << "iterations" << outlierRejection.maxIterations;
+        fs << "minInliers" << outlierRejection.minInlierRatio;
+        fs << "sigma" << outlierRejection.sigma;
+        // fs << "epipolarEps" << outlierRejection.epipolarEps;
+        fs << "fastMetric" << outlierRejection.fastMetric;
+    }
+    fs << "}";
+
+    fs << "inlierInjection" << "{";
+    {
+        fs << "flow" << FlowToString(inlierInjection.scheme);
+        fs << "blockSize" << inlierInjection.blockSize;
+        fs << "levels" << inlierInjection.levels;
+        // fs << "epipolarEps" << inlierInjection.epipolarEps;
+        fs << "bidirectionalTol" << inlierInjection.bidirectionalTol;
+    }
+    fs << "}";
+
+    fs << "triangulation" << TriangulationToString(triangulation);
+    fs << "epipolarEps"   << m_epipolarEps;
 }
 
 bool FeatureTracker::ReadParams(const cv::FileNode& fn)
 {
-    return false;
+    String name;
+    const cv::FileNode oj = fn["outlierRejection"];
+    const cv::FileNode ij = fn["inlierInjection"];
+
+    oj["model"]       >> m_alignString;
+    oj["confidence"]  >> outlierRejection.confidence;
+    oj["iterations"]  >> outlierRejection.maxIterations;
+    oj["minInliers"]  >> outlierRejection.minInlierRatio;
+    oj["sigma"]       >> outlierRejection.sigma;
+    oj["fastMetric"]  >> outlierRejection.fastMetric;
+
+    ij["flow"]        >> m_flowString;
+    ij["blockSize"]   >> inlierInjection.blockSize;
+    ij["levels"]      >> inlierInjection.levels;
+    ij["bidirectionalTol"] >> inlierInjection.bidirectionalTol;
+
+    fn["name"] >> name;
+    fn["epipolarEps"]   >> m_epipolarEps;
+    fn["triangulation"] >> m_triangulation;
+
+    SetName(name);
+    ApplyParams();
+
+    return true;
 }
 
 void FeatureTracker::ApplyParams()
 {
-    if (!StringToOutlierRejectionScheme(m_alignString, outlierRejection.scheme))
+    if (!StringToAlignment(m_alignString, outlierRejection.model))
     {
         E_ERROR << "error applying alignment models \"" << m_alignString << "\"";
     }
 
-    if (!StringToInlierInjectionScheme(m_flowString, inlierInjection.scheme))
+    if (!StringToFlow(m_flowString, inlierInjection.scheme))
     {
         E_ERROR << "error applying flow-based inlier injection setting";
     }
 
-    if (!StringToTriangulationMethod(m_triangulation, triangulation))
+    if (!StringToTriangulation(m_triangulation, triangulation))
     {
         E_ERROR << "error applying triangulation setting";
     }
 
-    outlierRejection.scheme |= OutlierRejectionScheme::FORWARD_PROJ_ALIGN;
+    outlierRejection.model |= OutlierRejectionScheme::FORWARD_PROJ_ALIGN;
     outlierRejection.epipolarEps = inlierInjection.epipolarEps = m_epipolarEps;
 
     Strings models;
 
-    if (outlierRejection.scheme & OutlierRejectionScheme::FORWARD_PROJ_ALIGN)  models.push_back("FORWARD-PROJECTION");
-    if (outlierRejection.scheme & OutlierRejectionScheme::BACKWARD_PROJ_ALIGN) models.push_back("BACKWARD-PROJECTION");
-    if (outlierRejection.scheme & OutlierRejectionScheme::RIGID_ALIGN)         models.push_back("RIGID");
-    if (outlierRejection.scheme & OutlierRejectionScheme::PHOTOMETRIC_ALIGN)   models.push_back("PHOTOMETRIC");
-    if (outlierRejection.scheme & OutlierRejectionScheme::EPIPOLAR_ALIGN)      models.push_back("EPIPOLAR");
+    if (outlierRejection.model & OutlierRejectionScheme::FORWARD_PROJ_ALIGN)  models.push_back("FORWARD-PROJECTION");
+    if (outlierRejection.model & OutlierRejectionScheme::BACKWARD_PROJ_ALIGN) models.push_back("BACKWARD-PROJECTION");
+    if (outlierRejection.model & OutlierRejectionScheme::RIGID_ALIGN)         models.push_back("RIGID");
+    if (outlierRejection.model & OutlierRejectionScheme::PHOTOMETRIC_ALIGN)   models.push_back("PHOTOMETRIC");
+    if (outlierRejection.model & OutlierRejectionScheme::EPIPOLAR_ALIGN)      models.push_back("EPIPOLAR");
 
-    E_INFO << "enabled alignment model: " << boost::algorithm::join(models, ", ");
-    E_INFO << "optical flow direction:  " << (m_flowString.empty() ? "DISABLED" : m_flowString);
+    E_INFO << "[" << GetName() << "]";
+    E_INFO << "enabled alignment model : " << boost::algorithm::join(models, ", ");
+    E_INFO << "optical flow direction  : " << (m_flowString.empty() ? "DISABLED" : m_flowString);
+    E_INFO << "triangulation method    : " << TriangulationToString(triangulation);
+    E_INFO << "RANSAC iterations       : " << outlierRejection.maxIterations;
+    E_INFO << "RANSAC confidence       : " << (100.0f * outlierRejection.confidence) << "%";
+    E_INFO << "minimum inlier ratio    : " << (100.0f * outlierRejection.minInlierRatio) << "%";
+    E_INFO << "inlier sigma            : " << outlierRejection.sigma;
+    E_INFO << "fast metric evaluation  : " << (outlierRejection.fastMetric ? "YES" : "NO");
+    E_INFO << "flow bidirectional tol. : " << inlierInjection.bidirectionalTol << " pixel(s)";
+    E_INFO << "epipolar tolerance      : " << (1/m_epipolarEps) << " normalised pixel(s)";
 }
 
 FeatureTracker::Options FeatureTracker::GetOptions(int flag)
@@ -531,20 +692,54 @@ FeatureTracker::Options FeatureTracker::GetOptions(int flag)
     Options o;
 
     OutlierRejectionOptions& oj = outlierRejection;
+    InlierInjectionOptions&  ij = inlierInjection;
 
     o.add_options()
         ("align-model,a",  po::value<String>(&m_alignString    )->default_value(   ""), "A string containning flags of alignment models to activate. \"B\" for backward projection, \"P\" for photometric, \"R\" for rigid, and \"E\" for epipolar alignment.")
-        ("flow",           po::value<String>(&m_flowString     )->default_value(   ""), "Optical flow computation option for missed features. Valid strings are \"FORWARD\", \"BACKWARD\" and \"BIDIRECTION\"")
         ("triangulation",  po::value<String>(&m_triangulation  )->default_value(   ""), "Pose-motion triangulation method; valid strings are \"MIDPOINT\" and \"OPTIMAL\". Set to empty string to disable the feature.")
         ("epipolar-eps",   po::value<double>(&m_epipolarEps    )->default_value( 1000), "Threshold for epipolar constraint, as the inverse of the tolerable epipolar distance in normalised pixel. Ths value must be positive.")
         ("sigma",          po::value<double>(&oj.sigma         )->default_value(1.00f), "Threshold for inlier selection. The value must be positive.")
         ("ransac-iter",    po::value<size_t>(&oj.maxIterations )->default_value(  100), "Max number of iterations for the RANSAC outlier rejection process.")
-        ("ransac-conf",    po::value<double>(&oj.confidence    )->default_value(0.50f), "Expected probability that all the drawn samples are inliers during the RANSAC process.")
+        ("ransac-conf",    po::value<double>(&oj.confidence    )->default_value(0.99f), "The confidence of obtaining a valid estimate at the end of the RANSAC process. The value is used to calculate a required iteration number.")
         ("ransac-ratio",   po::value<double>(&oj.minInlierRatio)->default_value(0.70f), "Minimum ratio of inliers required to consider a hypothesis valid.")
+        ("flow",           po::value<String>(&m_flowString     )->default_value(   ""), "Optical flow computation option for missed features. Valid strings are \"FORWARD\", \"BACKWARD\" and \"BIDIRECTION\"")
+        ("flow-level",     po::value<size_t>(&ij.levels        )->default_value(    3), "Level of pyramid for optical flow computation.")
+        ("flow-bidir-tol", po::value<double>(&ij.bidirectionalTol)->default_value(  1), "Threshold of the forward-backward flow error, in image pixels. Set to a non-positive value to disable the test.")
+        ("block-size",     po::value<size_t>(&ij.blockSize     )->default_value(    5), "Block size for optical flow computation and epipolar search.")
         ("fast-metric",    po::bool_switch  (&oj.fastMetric    )->default_value(false), "Apply metric reduction to accelerate error evaluation.")
         ;
 
     return o;
+}
+
+StructureEstimation::Estimate FeatureTracker::GetFeatureStructure(const ImageFeatureSet& f, const StructureEstimation::Estimate& structure)
+{
+    return structure[GetFeatureImageIndices(f, structure.structure.mat.size())];
+}
+
+IndexList FeatureTracker::GetFeatureImageIndices(const ImageFeatureSet& f, const cv::Size& imageSize) const
+{
+    IndexList indices;
+
+    // convert subscripts to rounded integer indices
+    for (size_t k = 0; k < f.GetSize(); k++)
+    {
+        const Point2F& sub = f[k].keypoint.pt;
+        const int i = static_cast<int>(std::round(sub.y));
+        const int j = static_cast<int>(std::round(sub.x));
+
+        if (i < 0 || i >= imageSize.height || j < 0 || j >= imageSize.width)
+        {
+            indices.push_back(INVALID_INDEX);
+            E_ERROR << "subscript (" << i << "," << j << ") out of bound";
+
+            continue;
+        }
+
+        indices.push_back(static_cast<size_t>(i * imageSize.width + j));
+    }
+
+    return indices;
 }
 
 bool FeatureTracker::operator() (Map& map, Source& si, Frame& ti, Source& sj, Frame& tj)
@@ -587,15 +782,15 @@ bool FeatureTracker::operator() (Map& map, Source& si, Frame& ti, Source& sj, Fr
     if (uj.empty()) uj.resize(fj.GetSize(), NULL);
 
     // get feature structure from depthmap and transform it to the reference camera's coordinates system
-    if (!Di.empty() && si.dpm->GetStereoPair()) gi = si.dpm->GetStereoPair()->Backproject(Di, cv::Mat(), GetFeatureImageIndices(fi, Di.size())).Transform(ci->GetExtrinsics().GetInverse());
-    if (!Dj.empty() && sj.dpm->GetStereoPair()) gj = sj.dpm->GetStereoPair()->Backproject(Dj, cv::Mat(), GetFeatureImageIndices(fj, Dj.size())).Transform(cj->GetExtrinsics().GetInverse());
+    if (!Di.empty()) gi = si.dpm->GetStereoPair()->Backproject(Di, cv::Mat(), GetFeatureImageIndices(fi, Di.size())).Transform(ci->GetExtrinsics().GetInverse());
+    if (!Dj.empty()) gj = sj.dpm->GetStereoPair()->Backproject(Dj, cv::Mat(), GetFeatureImageIndices(fj, Dj.size())).Transform(cj->GetExtrinsics().GetInverse());
 
     // perform pre-motion structure update
     if (mi.valid) gi = map.UpdateStructure(ui, gi, mi.pose);
     if (mj.valid) gj = map.UpdateStructure(uj, gj, mj.pose);
 
     // build the outlier filter and models
-    if (outlierRejection.scheme)
+    if (outlierRejection.model)
     {
         filter = boost::shared_ptr<MultiObjectiveOutlierFilter>(
             new MultiObjectiveOutlierFilter(outlierRejection.maxIterations, outlierRejection.minInlierRatio, outlierRejection.confidence, outlierRejection.sigma)
@@ -610,9 +805,14 @@ bool FeatureTracker::operator() (Map& map, Source& si, Frame& ti, Source& sj, Fr
         {
             filter->motion.pose = mi.pose.GetInverse() >> mj.pose;
             filter->motion.valid = true;
+
+            ////////////////////////////////////////////////////////////////////////////////////////
+            // E_TRACE << GetName() << " uses motion " << ti.GetIndex() << " -> " << tj.GetIndex()";
+            // E_TRACE << mat2string(filter->motion.pose.GetTransformMatrix(),"M");
+            ////////////////////////////////////////////////////////////////////////////////////////
         }
 
-        if (outlierRejection.scheme & FORWARD_PROJ_ALIGN)
+        if (outlierRejection.model & FORWARD_PROJ_ALIGN)
         {
             if (pj)
             {
@@ -625,11 +825,11 @@ bool FeatureTracker::operator() (Map& map, Source& si, Frame& ti, Source& sj, Fr
                 E_WARNING << "error adding forward projection objective to the outlier filter due to missing projection model";
                 E_WARNING << "forward projection-based outlier rejection deactivated"; // << ToString();
 
-                outlierRejection.scheme &= ~FORWARD_PROJ_ALIGN;
+                outlierRejection.model &= ~FORWARD_PROJ_ALIGN;
             }
         }
 
-        if (outlierRejection.scheme & BACKWARD_PROJ_ALIGN)
+        if (outlierRejection.model & BACKWARD_PROJ_ALIGN)
         {
             if (pi)
             {
@@ -642,11 +842,11 @@ bool FeatureTracker::operator() (Map& map, Source& si, Frame& ti, Source& sj, Fr
                 E_WARNING << "error adding backward projection objective to the outlier filter due to missing projection model";
                 E_WARNING << "backward projection-based outlier rejection deactivated"; // << ToString();
 
-                outlierRejection.scheme &= ~BACKWARD_PROJ_ALIGN;
+                outlierRejection.model &= ~BACKWARD_PROJ_ALIGN;
             }
         }
 
-        if (outlierRejection.scheme & PHOTOMETRIC_ALIGN)
+        if (outlierRejection.model & PHOTOMETRIC_ALIGN)
         {
             if (pj)
             {
@@ -659,18 +859,18 @@ bool FeatureTracker::operator() (Map& map, Source& si, Frame& ti, Source& sj, Fr
                 E_WARNING << "error adding photometric objective to the outlier filter due to missing projection model";
                 E_WARNING << "photometric outlier rejection deactivated"; // << ToString();
 
-                outlierRejection.scheme &= ~PHOTOMETRIC_ALIGN;
+                outlierRejection.model &= ~PHOTOMETRIC_ALIGN;
             }
         }
 
-        if (outlierRejection.scheme & RIGID_ALIGN)
+        if (outlierRejection.model & RIGID_ALIGN)
         {
             filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
                 new RigidObjectiveBuilder(gi, gj, outlierRejection.fastMetric, stats.objectives[RIGID_ALIGN])
             ));
         }
 
-        if (outlierRejection.scheme & EPIPOLAR_ALIGN)
+        if (outlierRejection.model & EPIPOLAR_ALIGN)
         {
             if (pi && pj)
             {
@@ -683,7 +883,7 @@ bool FeatureTracker::operator() (Map& map, Source& si, Frame& ti, Source& sj, Fr
                 E_WARNING << "error adding epipolar objective to the outlier filter due to missing projection model(s)";
                 E_WARNING << "epipolar-based outlier rejection deactivated"; // << ToString();
 
-                outlierRejection.scheme &= ~EPIPOLAR_ALIGN;
+                outlierRejection.model &= ~EPIPOLAR_ALIGN;
             }
         }
 
@@ -693,15 +893,20 @@ bool FeatureTracker::operator() (Map& map, Source& si, Frame& ti, Source& sj, Fr
     ImageFeatureMap fmap = matcher(fi, fj);
 
     // dispose the outlier filter and apply the solved ego-motion whenever useful
-    if (outlierRejection.scheme)
+    if (outlierRejection.model)
     {
         matcher.GetFilters().pop_back();
 
         if (!filter->motion.valid)
         {
-            E_ERROR << "all features lost";
+            E_ERROR << "tracker \"" << GetName() << "\" failed egomotion estimation";
             return false;
         }
+
+        ////////////////////////////////////////////////////////////////////////////////////////
+        // E_TRACE << GetName() << " solved motion " << ti.GetIndex() << " -> " << tj.GetIndex();
+        // E_TRACE << mat2string(filter->motion.pose.GetTransformMatrix(), "M");
+        ////////////////////////////////////////////////////////////////////////////////////////
 
         stats.motion = filter->motion;
 
@@ -829,7 +1034,7 @@ bool FeatureTracker::operator() (Map& map, Source& si, Frame& ti, Source& sj, Fr
             if (pi && pj)
             {
                 AlignmentObjective::Own eval(new EpipolarObjective(pi, pj));
-                forward = FindLostFeaturesFlow(Ii, Ij, fi, eval, stats.motion.pose, qi);
+                forward = FindFeaturesFlow(Ii, Ij, fi, eval, stats.motion.pose, qi);
             }
             else
             {
@@ -845,7 +1050,7 @@ bool FeatureTracker::operator() (Map& map, Source& si, Frame& ti, Source& sj, Fr
             if (pi && pj)
             {
                 AlignmentObjective::Own eval(new EpipolarObjective(pj, pi));
-                backward = FindLostFeaturesFlow(Ij, Ii, fj, eval, stats.motion.pose.GetInverse(), qj);
+                backward = FindFeaturesFlow(Ij, Ii, fj, eval, stats.motion.pose.GetInverse(), qj);
             }
             else
             {
@@ -926,6 +1131,7 @@ bool FeatureTracker::operator() (Map& map, Source& si, Frame& ti, Source& sj, Fr
         Point2D yk = stats.flow.dst.mat.reshape(2).at<Point2D>(static_cast<int>(i));
         int mk = wk > 0 ? 5 * (1 / (1 + wk)) + 1 : 1;
 
+        const double d = std::sqrt((xk.x - yk.x) * (xk.x - yk.x) + (xk.y - yk.y) * (xk.y - yk.y));
         cv::line(overlay, xk, yk, cmap.GetColour(zk, zmin, zmax), std::min(mk,5));
     }
 
@@ -944,37 +1150,7 @@ bool FeatureTracker::operator() (Map& map, Source& si, Frame& ti, Source& sj, Fr
     return true;
 }
 
-StructureEstimation::Estimate FeatureTracker::GetFeatureStructure(const ImageFeatureSet& f, const StructureEstimation::Estimate& structure)
-{
-    return structure[GetFeatureImageIndices(f, structure.structure.mat.size())];
-}
-
-Indices FeatureTracker::GetFeatureImageIndices(const ImageFeatureSet& f, const cv::Size& imageSize) const
-{
-    Indices indices;
-
-    // convert subscripts to rounded integer indices
-    for (size_t k = 0; k < f.GetSize(); k++)
-    {
-        const Point2F& sub = f[k].keypoint.pt;
-        const int i = static_cast<int>(std::round(sub.y));
-        const int j = static_cast<int>(std::round(sub.x));
-
-        if (i < 0 || i >= imageSize.height || j < 0 || j >= imageSize.width)
-        {
-            indices.push_back(INVALID_INDEX);
-            E_ERROR << "subscript (" << i << "," << j << ") out of bound";
-
-            continue;
-        }
-
-        indices.push_back(static_cast<size_t>(i * imageSize.width + j));
-    }
-
-    return indices;
-}
-
-GeometricMapping FeatureTracker::FindLostFeaturesFlow(const cv::Mat& Ii, const cv::Mat& Ij, const ImageFeatureSet& fi, AlignmentObjective::Own& eval, const EuclideanTransform& pose, std::vector<bool>& tracked)
+GeometricMapping FeatureTracker::FindFeaturesFlow(const cv::Mat& Ii, const cv::Mat& Ij, const ImageFeatureSet& fi, AlignmentObjective::Own& eval, const EuclideanTransform& pose, std::vector<bool>& tracked)
 {
     assert(fi.GetSize() == tracked.size());
     assert(eval);
@@ -1017,7 +1193,7 @@ GeometricMapping FeatureTracker::FindLostFeaturesFlow(const cv::Mat& Ii, const c
         }
     }
 
-    if (inlierInjection.bidirectionalEps > 0)
+    if (inlierInjection.bidirectionalTol > 0)
     {
         Flow backward;
 
@@ -1033,7 +1209,7 @@ GeometricMapping FeatureTracker::FindLostFeaturesFlow(const cv::Mat& Ii, const c
         }
 
         cv::calcOpticalFlowPyrLK(Ij, Ii, backward.xj, backward.xi, backward.found, backward.err, win, static_cast<int>(inlierInjection.levels));
-        const double eps2 = inlierInjection.bidirectionalEps * inlierInjection.bidirectionalEps;
+        const double tol2 = inlierInjection.bidirectionalTol * inlierInjection.bidirectionalTol;
 
         for (size_t j = 0; j < backward.found.size(); j++)
         {
@@ -1050,7 +1226,7 @@ GeometricMapping FeatureTracker::FindLostFeaturesFlow(const cv::Mat& Ii, const c
             const double dx = forward.xi[i].x - backward.xi[j].x;
             const double dy = forward.xi[i].y - backward.xi[j].y;
             
-            forward.found[i] = (dx * dx + dy * dy) < eps2;
+            forward.found[i] = (dx * dx + dy * dy) < tol2;
 
             // cv::line(im, forward.xj[i], backward.xi[j], forward.found[i] ? cv::Scalar(192, 64, 64) : cv::Scalar(64, 64, 192));
         }
@@ -1058,7 +1234,7 @@ GeometricMapping FeatureTracker::FindLostFeaturesFlow(const cv::Mat& Ii, const c
 
     GeometricMapping::ImageToImageBuilder builder;
     GeometricMapping mapping;
-    Indices inliers;
+    IndexList inliers;
     // std::vector<size_t> trace;
 
     for (size_t i = 0; i < forward.found.size(); i++)
@@ -1072,7 +1248,7 @@ GeometricMapping FeatureTracker::FindLostFeaturesFlow(const cv::Mat& Ii, const c
     }
 
     mapping = builder.Build();
-    mapping.metric = Metric::Own(new EuclideanMetric(1.0f / inlierInjection.epipolarEps));
+    mapping.metric = Metric::Own(new EuclideanMetric(inlierInjection.epipolarEps));
     
     if (!eval->SetData(mapping))
     {
@@ -1181,9 +1357,10 @@ bool FeatureTracker::AugmentFeatures(
 
 //==[ FeatureTracker::EpipolarOutlierModel ]=================================//
 
-void FeatureTracker::EpipolarObjectiveBuilder::AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx)
+bool FeatureTracker::EpipolarObjectiveBuilder::AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx)
 {
     m_builder.Add(fi.keypoint.pt, fj.keypoint.pt, localIdx);
+    return true;
 }
 
 bool FeatureTracker::EpipolarObjectiveBuilder::Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma)
@@ -1205,9 +1382,9 @@ bool FeatureTracker::EpipolarObjectiveBuilder::Build(GeometricMapping& data, Ali
 
 //==[ FeatureTracker::ProjectiveOutlierModel ]===============================//
 
-void FeatureTracker::PerspectiveObjectiveBuilder::AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx)
+bool FeatureTracker::PerspectiveObjectiveBuilder::AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx)
 {
-    if (g.structure.IsEmpty()) return;
+    if (g.structure.IsEmpty()) return false;
 
     const Point3D& gk = g.structure.mat.reshape(3).at<Point3D>(static_cast<int>(forward ? i : j));
     const Point2F& pk = forward ? fj.keypoint.pt : fi.keypoint.pt;
@@ -1216,7 +1393,11 @@ void FeatureTracker::PerspectiveObjectiveBuilder::AddData(size_t i, size_t j, si
     {
         m_builder.Add(gk, pk, localIdx);
         m_idx.push_back(forward ? i : j);
+
+        return true;
     }
+
+    return false;
 }
 
 bool FeatureTracker::PerspectiveObjectiveBuilder::Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma)
@@ -1249,7 +1430,7 @@ PoseEstimator::Own FeatureTracker::PerspectiveObjectiveBuilder::GetSolver() cons
 
 //==[ FeatureTracker::PhotometricObjectiveBuilder ]=========================//
 
-void FeatureTracker::PhotometricObjectiveBuilder::AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx)
+bool FeatureTracker::PhotometricObjectiveBuilder::AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx)
 {
     const Point3D& gi_k = gi.structure.mat.reshape(3).at<Point3D>(static_cast<int>(i));
 
@@ -1257,7 +1438,12 @@ void FeatureTracker::PhotometricObjectiveBuilder::AddData(size_t i, size_t j, si
     {
         m_idx.push_back(i);
         m_localIdx.push_back(localIdx);
+        m_imagePoints.push_back(fi.keypoint.pt);
+
+        return true;
     }
+
+    return false;
 }
 
 bool FeatureTracker::PhotometricObjectiveBuilder::Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma)
@@ -1266,8 +1452,9 @@ bool FeatureTracker::PhotometricObjectiveBuilder::Build(GeometricMapping& data, 
         boost::shared_ptr<PhotometricObjective>(new PhotometricObjective(pj, Ij));
 
     StructureEstimation::Estimate g = gi[m_idx];
+    Geometry p(Geometry::PACKED, cv::Mat(m_imagePoints, false));
 
-    if (!objective->SetData(g.structure, Ii, reduceMetric && g.metric ? g.metric->Reduce() : g.metric, m_localIdx))
+    if (!objective->SetData(g.structure, p, Ii, false, reduceMetric && g.metric ? g.metric->Reduce() : g.metric, m_localIdx))
     {
         E_WARNING << "error setting photometric constraints for \"" << ToString() << "\"";
         return false;
@@ -1281,9 +1468,9 @@ bool FeatureTracker::PhotometricObjectiveBuilder::Build(GeometricMapping& data, 
 
 //==[ FeatureTracker::RigidObjectiveBuilder ]===============================//
 
-void FeatureTracker::RigidObjectiveBuilder::AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx)
+bool FeatureTracker::RigidObjectiveBuilder::AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx)
 {
-    if (gi.structure.IsEmpty() || gj.structure.IsEmpty()) return;
+    if (gi.structure.IsEmpty() || gj.structure.IsEmpty()) return false;
 
     const Point3D& gi_k = gi.structure.mat.reshape(3).at<Point3D>(static_cast<int>(i));
     const Point3D& gj_k = gj.structure.mat.reshape(3).at<Point3D>(static_cast<int>(j));
@@ -1293,7 +1480,11 @@ void FeatureTracker::RigidObjectiveBuilder::AddData(size_t i, size_t j, size_t k
         m_builder.Add(gi_k, gj_k, localIdx);
         m_idx0.push_back(i);
         m_idx1.push_back(j);
+
+        return true;
     }
+
+    return false;
 }
 
 bool FeatureTracker::RigidObjectiveBuilder::Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma)
@@ -1301,7 +1492,8 @@ bool FeatureTracker::RigidObjectiveBuilder::Build(GeometricMapping& data, Alignm
     AlignmentObjective::Own objective = AlignmentObjective::Own(new RigidObjective());
 
     data = m_builder.Build();
-    data.metric = gi.metric && gj.metric ?  Metric::Own(new DualMetric((*gi.metric)[m_idx0], (*gj.metric)[m_idx1])) : Metric::Own();
+    //data.metric = gi.metric && gj.metric ?  Metric::Own(new DualMetric((*gi.metric)[m_idx0], (*gj.metric)[m_idx1])) : Metric::Own();
+    data.metric = gi.metric ?  Metric::Own((*gi.metric)[m_idx0]) : Metric::Own();
 
     if (!objective->SetData(data))
     {
@@ -1309,7 +1501,7 @@ bool FeatureTracker::RigidObjectiveBuilder::Build(GeometricMapping& data, Alignm
         return false;
     }
 
-    selector = objective->GetSelector(1.0f);
+    selector = objective->GetSelector(sigma);
 
     return true;
 }

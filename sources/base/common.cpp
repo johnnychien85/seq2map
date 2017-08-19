@@ -14,9 +14,9 @@ using namespace seq2map;
 
 namespace seq2map
 {
-    Indices makeIndices(size_t start, size_t end)
+    IndexList makeIndices(size_t start, size_t end)
     {
-        Indices idx;
+        IndexList idx;
         for (size_t i = start; i < end + 1; i++)
         {
             idx.push_back(i);
@@ -73,12 +73,33 @@ namespace seq2map
 
     bool checkPositiveDefinite(const cv::Mat& A)
     {
-        if (A.rows != A.cols || A.channels() != 1) return false;
+        static const double EPS = 0; //1e-14;
+
+        if (A.rows != A.cols || A.channels() != 1)
+        {
+            E_WARNING << "given matrix is not a one-channel square matrix";
+            return false;
+        }
 
         for (int i = 0; i < A.rows; i++)
         {
-            if (cv::determinant(A.rowRange(0, i + 1).colRange(0, i + 1)) < 0)
+            if (cv::determinant(A.rowRange(0, i + 1).colRange(0, i + 1)) < EPS)
             {
+                // cv::Mat Ai = A.rowRange(0, i + 1).colRange(0, i + 1);
+                // double det = cv::determinant(Ai);
+                // double d0 = Ai.at<double>(0, 0)*(Ai.at<double>(1, 1)*Ai.at<double>(2, 2) - Ai.at<double>(1, 2)*Ai.at<double>(2, 1));
+                // double d1 = Ai.at<double>(0, 1)*(Ai.at<double>(1, 0)*Ai.at<double>(2, 2) - Ai.at<double>(1, 2)*Ai.at<double>(2, 0));
+                // double d2 = Ai.at<double>(0, 2)*(Ai.at<double>(1, 0)*Ai.at<double>(2, 1) - Ai.at<double>(1, 1)*Ai.at<double>(2, 0));
+                // if (det != 0)
+                // {
+                //     E_TRACE << mat2string(Ai, "Ai");
+                //     E_TRACE << "det(Ai) = " << det;
+                // }
+                // E_TRACE << "d0 = " << d0;
+                // E_TRACE << "d1 = " << d1;
+                // E_TRACE << "d2 = " << d2;
+                // E_TRACE << "eval = " <<(d0 - d1 + d2);
+
                 return false;
             }
         }
@@ -358,10 +379,10 @@ namespace seq2map
         return toks;
     }
 
-    String indices2string(const Indices& indices)
+    String indices2string(const IndexList& indices)
     {
         std::stringstream ss;
-        Indices::const_iterator idx, last = indices.end();
+        IndexList::const_iterator idx, last = indices.end();
 
         for (idx = indices.begin(); idx != last; idx++)
         {

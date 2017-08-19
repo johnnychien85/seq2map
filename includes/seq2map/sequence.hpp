@@ -221,7 +221,7 @@ namespace seq2map
          *
          * \return 3D geometry converted from the disparity map.
          */
-        Geometry Backproject(const cv::Mat& dp, const Indices& idx = Indices()) const;
+        Geometry Backproject(const cv::Mat& dp, const IndexList& idx = IndexList()) const;
 
         /**
          * Back-project a disparity map with error variance map to obtain 3D points and the propagated error covariances.
@@ -232,7 +232,7 @@ namespace seq2map
          *
          * \return Structure estimate with 3D error covariance.
          */
-        StructureEstimation::Estimate Backproject(const cv::Mat& dp, const cv::Mat& var, const Indices& idx = Indices()) const;
+        StructureEstimation::Estimate Backproject(const cv::Mat& dp, const cv::Mat& var, const IndexList& idx = IndexList()) const;
 
     private:
         friend class Sequence; // for restoring camera references
@@ -390,12 +390,12 @@ namespace seq2map
 
         inline const Camera::Map& GetCameras()                 const { return m_cameras;    }
         inline const RectifiedStereo::Set& GetStereoPairs()    const { return m_stereo;     }
-        inline const FeatureStore::Map& GetFeatureStores()     const { return m_kptsStores; }
-        inline const DisparityStore::Map& GetDisparityStores() const { return m_dispStores; }
+        inline const FeatureStore::Map& GetFeatureStores()     const { return m_kptStores; }
+        inline const DisparityStore::Map& GetDisparityStores() const { return m_dpmStores; }
 
         Camera::ConstOwn GetCamera(size_t index) const { return Camera::Find(m_cameras, index); }
-        FeatureStore::ConstOwn GetFeatureStore(size_t index) const { return FeatureStore::Find(m_kptsStores, index); }
-        DisparityStore::ConstOwn GetDisparityStore(size_t index) const { return DisparityStore::Find(m_dispStores, index); }
+        FeatureStore::ConstOwn GetFeatureStore(size_t index) const { return FeatureStore::Find(m_kptStores, index); }
+        DisparityStore::ConstOwn GetDisparityStore(size_t index) const { return DisparityStore::Find(m_dpmStores, index); }
         RectifiedStereo::ConstOwn GetStereoPair(size_t priCamIdx, size_t secCamIdx) const;
 
         //
@@ -420,12 +420,12 @@ namespace seq2map
 
         Camera::Map          m_cameras;
         RectifiedStereo::Set m_stereo;
-        FeatureStore::Map    m_kptsStores;
-        DisparityStore::Map  m_dispStores;
+        FeatureStore::Map    m_kptStores;
+        DisparityStore::Map  m_dpmStores;
 
         static String s_storeIndexFileName;
-        static String s_featureStoreDirName;
-        static String s_disparityStoreDirName;
+        static String s_kptStoreDirName;
+        static String s_dpmStoreDirName;
         static String s_mapStoreDirName;
     };
 }

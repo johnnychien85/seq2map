@@ -8,7 +8,7 @@ using namespace seq2map;
 
 //==[ AlignmentObjective::InlierSelector ]====================================//
 
-bool AlignmentObjective::InlierSelector::operator() (const EuclideanTransform& x, Indices& inliers, Indices& outliers) const
+bool AlignmentObjective::InlierSelector::operator() (const EuclideanTransform& x, IndexList& inliers, IndexList& outliers) const
 {
     inliers.clear();
     outliers.clear();
@@ -53,9 +53,9 @@ bool AlignmentObjective::InlierSelector::operator() (const EuclideanTransform& x
     return true;
 }
 
-bool AlignmentObjective::InlierSelector::operator() (const EuclideanTransform& x, Indices& inliers) const
+bool AlignmentObjective::InlierSelector::operator() (const EuclideanTransform& x, IndexList& inliers) const
 {
-    Indices outliers;
+    IndexList outliers;
     return (*this)(x, inliers, outliers);
 }
 
@@ -100,7 +100,7 @@ bool EpipolarObjective::SetData(const GeometricMapping& data, ProjectionModel::C
     return true;
 }
 
-AlignmentObjective::Own EpipolarObjective::GetSubObjective(const Indices& indices) const
+AlignmentObjective::Own EpipolarObjective::GetSubObjective(const IndexList& indices) const
 {
     EpipolarObjective* sub = new EpipolarObjective(m_src, m_dst, m_distType);
     sub->m_data = m_data[indices]; // avoid calling SetData() as the normalised data should not be normalised again
@@ -137,7 +137,7 @@ cv::Mat EpipolarObjective::operator() (const EuclideanTransform& tform) const
     cv::Mat Fx1 = x1 * F;
     cv::Mat Fx10 = Fx1.col(0);
     cv::Mat Fx11 = Fx1.col(1);
-    cv::Mat Fx12 = Fx1.col(2);
+    //cv::Mat Fx12 = Fx1.col(2);
 
     cv::Mat nn0 = Fx00.mul(Fx00) + Fx01.mul(Fx01);
     cv::Mat nn1 = Fx10.mul(Fx10) + Fx11.mul(Fx11);
@@ -176,7 +176,7 @@ cv::Mat EpipolarObjective::operator() (const EuclideanTransform& tform) const
 
 //==[ ProjectionObjective ]===================================================//
 
-AlignmentObjective::Own ProjectionObjective::GetSubObjective(const Indices& indices) const
+AlignmentObjective::Own ProjectionObjective::GetSubObjective(const IndexList& indices) const
 {
     ProjectionObjective* sub = new ProjectionObjective(m_proj, m_forward);
     sub->m_data = m_data[indices];
@@ -249,7 +249,7 @@ cv::Mat ProjectionObjective::operator() (const EuclideanTransform& f) const
 
 //==[ PhotometricObjective ]==================================================//
 
-AlignmentObjective::Own PhotometricObjective::GetSubObjective(const Indices& indices) const
+AlignmentObjective::Own PhotometricObjective::GetSubObjective(const IndexList& indices) const
 {
     PhotometricObjective* sub = new PhotometricObjective(m_proj, m_dst, m_type, m_interp);
     sub->m_data = m_data[indices];
@@ -290,12 +290,15 @@ bool PhotometricObjective::SetData(const GeometricMapping& data)
     return true;
 }
 
-bool PhotometricObjective::SetData(const Geometry& g, const cv::Mat& src, const Metric::Own metric, const std::vector<size_t>& indices)
+bool PhotometricObjective::SetData(const Geometry& g, const Geometry& p, const cv::Mat& src, bool snapped, const Metric::Own metric, const Indices& indices)
 {
+    if (g.GetElements() != p.GetElements())
+    {
+        E_ERROR << "inconsistent number of elements, given " << g.GetElements() << " 3D point(s) and " << p.GetElements() << " 2D point(s)";
+        return false;
+    }
+
     GeometricMapping data;
-
-    bool dense = g.shape == Geometry::PACKED && g.mat.rows == src.rows && g.mat.cols == src.cols;
-
     cv::Mat src32F = src;
 
     if (src.depth() != m_type)
@@ -303,7 +306,17 @@ bool PhotometricObjective::SetData(const Geometry& g, const cv::Mat& src, const 
         src.convertTo(src32F, m_type);
     }
 
-    if (dense)
+    data.src = g;
+    data.dst = Geometry(Geometry::PACKED, interp(src32F, p.mat, snapped ? cv::INTER_NEAREST : m_interp));
+    data.metric = metric;
+    data.indices = indices;
+
+    return SetData(data);
+}
+
+bool PhotometricObjective::SetData(const Geometry& g, const cv::Mat& src, const Metric::Own metric, const Indices& indices)
+{
+    if (g.shape == Geometry::PACKED && g.mat.rows == src.rows && g.mat.cols == src.cols)
     {
         Points3D xyz;
         std::vector<cv::Point_<short>> sub;
@@ -321,28 +334,22 @@ bool PhotometricObjective::SetData(const Geometry& g, const cv::Mat& src, const 
             }
         }
 
-        data.src = Geometry(Geometry::PACKED, cv::Mat(xyz));
-        data.dst = Geometry(Geometry::PACKED, interp(src32F, cv::Mat(sub, false), cv::INTER_NEAREST));
+        return SetData(
+            Geometry(Geometry::PACKED, cv::Mat(xyz, false)),
+            Geometry(Geometry::PACKED, cv::Mat(sub, false)),
+            src, true, metric, indices);
     }
-    else
+
+    if (!m_proj)
     {
-        if (!m_proj)
-        {
-            E_ERROR << "missing projection model";
-            return false;
-        }
-
-        cv::Mat proj;
-        m_proj->Project(g, ProjectionModel::EUCLIDEAN_2D).Reshape(Geometry::PACKED).mat.convertTo(proj, CV_32F);
-
-        data.src = g;
-        data.dst = Geometry(Geometry::PACKED, interp(src32F, proj, m_interp));
+        E_ERROR << "missing projection model";
+        return false;
     }
 
-    data.metric = metric;
-    data.indices = indices;
+    Geometry p = m_proj->Project(g, ProjectionModel::EUCLIDEAN_2D).Reshape(Geometry::PACKED);
+    p.mat.convertTo(p.mat, CV_32F);
 
-    return SetData(data);
+    return SetData(g, p, src, false, metric, indices);
 }
 
 cv::Mat PhotometricObjective::operator() (const EuclideanTransform& tf) const
@@ -382,6 +389,14 @@ cv::Mat PhotometricObjective::operator() (const EuclideanTransform& tf) const
     jac.mat = dI; // the new metric will be in 1D space
 
     Metric::ConstOwn d = m_data.metric->Transform(tf, jac);
+
+    /////////////////////////////////////////////////////////////////////////////////////////
+    // PersistentMat(d->ToMahalanobis()->GetCovariance().mat.clone()).Store(Path("jac.bin"));
+    // PersistentMat(x.mat).Store(Path("x.bin"));
+    // PersistentMat(y.mat).Store(Path("y.bin"));
+    // PersistentMat(m_data.dst.mat.clone()).Store(Path("y0.bin"));
+    /////////////////////////////////////////////////////////////////////////////////////////
+
     return (*d)(m_data.dst, y).mat;
 }
 
@@ -395,7 +410,7 @@ PhotometricObjective::GradientImage::GradientImage(const cv::Mat& im, int depth)
 
 //==[ RigidObjective ]========================================================//
 
-AlignmentObjective::Own RigidObjective::GetSubObjective(const Indices& indices) const
+AlignmentObjective::Own RigidObjective::GetSubObjective(const IndexList& indices) const
 {
     RigidObjective* sub = new RigidObjective();
     sub->m_data = m_data[indices];
@@ -606,10 +621,10 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
     const size_t population = GetPopulation();
     const size_t minInliers = static_cast<size_t>(population * m_minInlierRatio);
     const double logOneMinusConfidence = std::log(1 - m_confidence);
+    const size_t iter = std::min(m_maxIter, n > 0 ? static_cast<size_t>(std::ceil(logOneMinusConfidence / std::log(1 - std::pow(m_minInlierRatio, n)))) : 1);
     size_t numInliers = 0;
 
-    Speedometre solveMetre;
-    Speedometre evalMetre;
+    Speedometre solve, eval;
 
     if (m_verbose)
     {
@@ -628,23 +643,24 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
         IndexLists outliers;
     };
 
-    for (size_t k = 0, iter = m_maxIter; k < iter; k++)
+    //for (size_t k = 0, iter = m_maxIter; k < iter; k++)
+    for (size_t k = 0; k < iter; k++)
     {
-        Indices idx = DrawSamples(m, n);
+        IndexList idx = DrawSamples(m, n);
         GeometricMapping samples = mapping[idx];
         PoseEstimator::Estimate trial;
         Result result;
         size_t hits = 0;
 
-        solveMetre.Start();
+        solve.Start();
         if (!f(samples, trial))
         {
             E_ERROR << "inner pose estimator failed";
             return false;
         }
-        solveMetre.Stop(1);
+        solve.Stop(1);
 
-        evalMetre.Start();
+        eval.Start();
         if (!m_threaded)
         {
             BOOST_FOREACH(const AlignmentObjective::InlierSelector& g, m_selectors)
@@ -696,15 +712,15 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
                 hits += rs.accepted.size();
             }
         }
-        evalMetre.Stop(1);
+        eval.Stop(1);
 
         if (m_verbose)
         {
             E_TRACE << std::setw(6)  << std::right << (k + 1)
                     << std::setw(12) << std::right << hits       << " (" << std::setw(3) << std::right << (100*hits/population)       << "%)"
                     << std::setw(12) << std::right << numInliers << " (" << std::setw(3) << std::right << (100*numInliers/population) << "%)"
-                    << std::setw(15) << std::right << (solveMetre.GetElapsedSeconds() * 1000) << " ms"
-                    << std::setw(15) << std::right << (evalMetre .GetElapsedSeconds() * 1000) << " ms";
+                    << std::setw(15) << std::right << (solve.GetElapsedSeconds() * 1000) << " ms"
+                    << std::setw(15) << std::right << (eval .GetElapsedSeconds() * 1000) << " ms";
         }
 
         if (hits < numInliers) continue;
@@ -718,7 +734,7 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
         if (hits < minInliers) continue;
 
         // convergence control
-        iter = std::min(iter, static_cast<size_t>(std::ceil(logOneMinusConfidence / std::log(1 - std::pow(hits / population, n)))));
+        //iter = std::min(iter, static_cast<size_t>(std::ceil(logOneMinusConfidence / std::log(1 - std::pow(hits / population, n)))));
     }
 
     const bool success = numInliers >= minInliers;
@@ -728,7 +744,7 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
         const int inlierRate = (int) (std::round(100 * numInliers / population));
         const int targetRate = (int) (std::round(100 * minInliers / population));
 
-        E_WARNING << "unable to find enough inliers in " << m_maxIter << " iteration(s)";
+        E_WARNING << "unable to find enough inliers in " << iter << " iteration(s)";
         E_WARNING << "the best trial achieves " << inlierRate << "% inliers while " << targetRate << "% is required";
     }
 
@@ -736,6 +752,7 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
     if (success && m_optimisation)
     {
         MultiObjectivePoseEstimation refinement;
+        refinement.SetDifferentiationStep(1e-3);
         refinement.SetPose(estimate.pose);
 
         size_t i = 0;
@@ -795,7 +812,7 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
 
         BOOST_FOREACH (const AlignmentObjective::InlierSelector& g, m_selectors)
         {
-            Indices accepted, rejected;
+            IndexList accepted, rejected;
 
             g(estimate.pose, accepted, rejected);
 
@@ -826,17 +843,17 @@ size_t ConsensusPoseEstimator::GetPopulation() const
     return n;
 }
 
-Indices ConsensusPoseEstimator::DrawSamples(size_t population, size_t samples)
+IndexList ConsensusPoseEstimator::DrawSamples(size_t population, size_t samples)
 {
     if (population < samples)
     {
         E_ERROR << "insufficient population (n=" << population << ") for " << samples << " sample(s)";
-        return Indices();
+        return IndexList();
     }
 
     if (samples == 0)
     {
-        return Indices();
+        return IndexList();
     }
 
     std::vector<size_t> idx(population);
@@ -847,7 +864,7 @@ Indices ConsensusPoseEstimator::DrawSamples(size_t population, size_t samples)
 
     std::random_shuffle(idx.begin(), idx.end());
 
-    return Indices(idx.begin(), std::next(idx.begin(), samples));
+    return IndexList(idx.begin(), std::next(idx.begin(), samples));
 }
 
 void ConsensusPoseEstimator::EvalThread(const AlignmentObjective::InlierSelector& g, const EuclideanTransform& tf, EvalResult& result)
@@ -918,7 +935,7 @@ size_t MultiObjectivePoseEstimation::GetConds() const
 
 //==[ StructureEstimation::Estimate ]=========================================//
 
-StructureEstimation::Estimate StructureEstimation::Estimate::operator[] (const Indices& indices) const
+StructureEstimation::Estimate StructureEstimation::Estimate::operator[] (const IndexList& indices) const
 {
     Estimate estimate(structure.shape);
     estimate.structure = structure[indices];
@@ -1105,6 +1122,7 @@ StructureEstimation::Estimate TwoViewTriangulation::operator() (const GeometricM
         }
     }
 
+    // do error propagation from motion estimate
     if (M01.metric)
     {
         Geometry jacpos = GetPoseJacobian(m.src, m.dst, g);
@@ -1117,11 +1135,20 @@ StructureEstimation::Estimate TwoViewTriangulation::operator() (const GeometricM
             if (pmetric)
             {
                 cv::Mat covpos = pmetric->GetFullCovMat();
-                cv::add(cov, covpos, cov);
+                cv::add(cov, covpos, cov); // the pose-derived covariance is independent to the image-derived one
+
+                for (int i = 0; i < covpos.rows; i++)
+                {
+                    if (covpos.at<double>(i, 0) == 0)
+                    {
+                        // E_TRACE << "nullified entry " << i;
+                        cov.row(i).setTo(0.0f);
+                    }
+                }
             }
             else
             {
-                E_WARNING << "error obtaining pose metric as a Mahalanobis one";
+                E_WARNING << "error obtaining pose metric as a Mahalanobis metric";
             }
         }
         else
@@ -1129,6 +1156,20 @@ StructureEstimation::Estimate TwoViewTriangulation::operator() (const GeometricM
             E_WARNING << "error evaluating Jacobian with respect to the pose";
         }
     }
+
+    ////////////////////////////////////////////////////////////////////////
+    // cv::Mat det(cov.rows, 1, cov.depth());
+    // for (int i = 0; i < ROWS; i++)
+    // {
+    //     det.at<double>(i) = cv::determinant(symmat(cov.row(i), 3));
+    // }
+    // PersistentMat(m.src.mat.clone()).Store(Path("x0.bin"));
+    // PersistentMat(m.dst.mat.clone()).Store(Path("x1.bin"));
+    // PersistentMat(g.mat).Store(Path("g.bin"));
+    // PersistentMat(cov).Store(Path("cov.bin"));
+    // PersistentMat(M01.pose.GetTransformMatrix()).Store(Path("M01.bin"));
+    // PersistentMat(det).Store(Path("det.bin"));
+    ////////////////////////////////////////////////////////////////////////
 
     // remove points behind
     for (int i = 0; i < ROWS; i++)
@@ -1147,7 +1188,7 @@ StructureEstimation::Estimate TwoViewTriangulation::operator() (const GeometricM
 
 Geometry TwoViewTriangulation::GetJacobian(const Geometry& x0, const Geometry& x1, const Geometry& g) const
 {
-    const double dx = 1e0;
+    const double dx = 1e-2;
     cv::Mat J(static_cast<int>(g.GetElements()), g.mat.cols * 4, g.mat.type());
 
     for (size_t i = 0; i < 4; i++)

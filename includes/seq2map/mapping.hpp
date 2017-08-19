@@ -108,6 +108,11 @@ namespace seq2map
          */
         std::map<size_t, ImageFeatureSet> augmentedFeaturs;
 
+        /**
+         * Compute the ratio of landmarks shared with another frame.
+         */
+        double GetCovisibility(const Frame& tj) const;
+
         PoseEstimator::Estimate pose;
 
     protected:
@@ -125,8 +130,8 @@ namespace seq2map
     class Source : public HitNode::Dimension<2>
     {
     public:
-        FeatureStore::ConstOwn store; ///< the source store
-        DisparityStore::ConstOwn dpm;
+        FeatureStore::ConstOwn store; ///< the source feature store
+        DisparityStore::ConstOwn dpm; ///< the source disparity store
 
     protected:
         friend class Map3<Hit, Landmark, Frame, Source>;
@@ -269,7 +274,7 @@ namespace seq2map
             ObjectiveBuilder(AlignmentObjective::InlierSelector::Stats& stats, bool reduceMetric = false)
             : stats(stats), reduceMetric(reduceMetric) {}
 
-            virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx) = 0;
+            virtual bool AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx) = 0;
             virtual PoseEstimator::Own GetSolver() const = 0;
             virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma) = 0;
             virtual String ToString() const = 0;
@@ -281,7 +286,7 @@ namespace seq2map
         MultiObjectiveOutlierFilter(size_t maxIterations, double minInlierRatio, double confidence, double sigma)
         : maxIterations(maxIterations), minInlierRatio(minInlierRatio), confidence(confidence), optimisation(true), sigma(sigma) {}
 
-        virtual bool operator() (ImageFeatureMap& map, Indices& inliers);
+        virtual bool operator() (ImageFeatureMap& map, IndexList& inliers);
 
         std::vector<ObjectiveBuilder::Own> builders;
         PoseEstimator::Estimate motion;
@@ -322,7 +327,8 @@ namespace seq2map
      */
     class FeatureTracker
     : public Map::BinaryOperator,
-      public Parameterised
+      public Parameterised,
+      public Named
     {
     public:
         /**
@@ -376,16 +382,16 @@ namespace seq2map
          */
         struct OutlierRejectionOptions
         {
-            OutlierRejectionOptions(int scheme)
-            : scheme(scheme), maxIterations(30), minInlierRatio(0.5), confidence(0.5), epipolarEps(1e3), sigma(1.0f), fastMetric(false) {}
+            OutlierRejectionOptions(int model)
+            : model(model), maxIterations(30), minInlierRatio(0.5), confidence(0.5), epipolarEps(1e3), sigma(1.0f), fastMetric(false) {}
 
-            int scheme;            ///< strategies to identify the outliers from noisy feature matches
+            int model;             ///< strategies to identify outliers from noisy feature matches
             size_t maxIterations;  ///< the upper bound of trials
             double minInlierRatio; ///< the percentage of inliers minimally required to accept a motion hypothesis
-            double confidence;     ///< probability that a random sample contains only inliers
+            double confidence;     ///< desired confidence to obtain a valid result, from zero to one
             double epipolarEps;    ///< threshold of the epipolar objective, in the normalised image pixel
             double sigma;          ///< threshold to determine if a model is fit or not
-            bool fastMetric;       ///< reduce Mahalanobis metric to weighted Euclidean one for acceleration
+            bool fastMetric;       ///< reduce Mahalanobis metric to a weighted Euclidean one for acceleration
         };
 
         /**
@@ -394,12 +400,12 @@ namespace seq2map
         struct InlierInjectionOptions
         {
             InlierInjectionOptions(int scheme)
-            : scheme(scheme), blockSize(5), levels(3), bidirectionalEps(0), epipolarEps(1e3), extractDescriptor(false) {}
+            : scheme(scheme), blockSize(5), levels(3), bidirectionalTol(1), epipolarEps(1e3), extractDescriptor(false) {}
 
             int scheme;              ///< Strategies to recover missing features.
             size_t blockSize;        ///< Size of search window.
             size_t levels;           ///< Level of pyramid for optical flow computation.
-            double bidirectionalEps; ///< Threshold of the forward-backward flow error, in image pixels. Set to a non-positive value to disable the test.
+            double bidirectionalTol; ///< Threshold of the forward-backward flow error, in image pixels. Set to a non-positive value to disable the test.
             double epipolarEps;      ///< Threshold of the epipolar objective to decide if a flow is valid, in normalised image pixel.
             double searchRange;      ///< Maximum distance between a prediction and a match hypothesis, applicable to BACKWARD_FLOW and EPIPOLAR_SEARCH.
             bool extractDescriptor;  ///< Recompute descriptor for each recovered landmark, set to false to re-use a previously extracted descriptor.
@@ -420,7 +426,7 @@ namespace seq2map
             size_t removed;  ///< number of removed landmarks
             size_t injected; ///< number of recovered landmarks
             ObjectiveStats objectives;      ///< per outlier model stats
-            PoseEstimator::Estimate motion; ///< ego-motion
+            PoseEstimator::Estimate motion; ///< egomotion
             GeometricMapping flow;          ///< feature flow
         };
 
@@ -435,7 +441,7 @@ namespace seq2map
                 double epsilon, AlignmentObjective::InlierSelector::Stats& stats)
             : pi(pi), pj(pj), epsilon(epsilon), ObjectiveBuilder(stats) {}
 
-            virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
+            virtual bool AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
             virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma);
             virtual PoseEstimator::Own GetSolver() const { return PoseEstimator::Own(new EssentialMatrixDecomposer(pi, pj)); }
             virtual String ToString() const { return "EPIPOLAR"; }
@@ -460,7 +466,7 @@ namespace seq2map
                 bool forward, bool reduceMetric, AlignmentObjective::InlierSelector::Stats& stats)
             : p(p), g(g), forward(forward), ObjectiveBuilder(stats, reduceMetric) {}
 
-            virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
+            virtual bool AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
             virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma);
             virtual PoseEstimator::Own GetSolver() const;
 
@@ -472,7 +478,7 @@ namespace seq2map
 
         private:
             GeometricMapping::WorldToImageBuilder m_builder;
-            Indices m_idx;
+            IndexList m_idx;
         };
 
         /**
@@ -486,7 +492,7 @@ namespace seq2map
                 const cv::Mat& Ii, const cv::Mat& Ij, bool reduceMetric, AlignmentObjective::InlierSelector::Stats& stats)
             : pj(pj), gi(gi), Ii(Ii), Ij(Ij), ObjectiveBuilder(stats, reduceMetric) {}
 
-            virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
+            virtual bool AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
             virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma);
             virtual PoseEstimator::Own GetSolver() const { return PoseEstimator::Own(); } // photometric objective has no closed-form solver
             
@@ -498,8 +504,9 @@ namespace seq2map
             const cv::Mat Ij;
 
         private:
-            Indices m_idx;
+            IndexList m_idx;
             std::vector<size_t> m_localIdx;
+            Points2F m_imagePoints;
         };
 
         /**
@@ -513,7 +520,7 @@ namespace seq2map
                 bool reduceMetric, AlignmentObjective::InlierSelector::Stats& stats)
             : gi(gi), gj(gj), ObjectiveBuilder(stats, reduceMetric) {}
 
-            virtual void AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
+            virtual bool AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
             virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma);
             virtual PoseEstimator::Own GetSolver() const { return PoseEstimator::Own(new QuatAbsOrientationSolver()); }
 
@@ -524,8 +531,8 @@ namespace seq2map
 
         private:
             GeometricMapping::WorldToWorldBuilder m_builder;
-            Indices m_idx0;
-            Indices m_idx1;
+            IndexList m_idx0;
+            IndexList m_idx1;
         };
 
         /**
@@ -538,10 +545,6 @@ namespace seq2map
           triangulation(OPTIMAL),
           matcher(true, true, false, 0.8f, true)
         {}
-
-        bool StringToOutlierRejectionScheme(const String& flag, int& scheme);
-        bool StringToInlierInjectionScheme(const String& flow, int& scheme);
-        bool StringToTriangulationMethod(const String& triangulation, TriangulationMethod& method);
 
         /**
          * Get features' 3D coordinates and error covariances from a dense structure.
@@ -560,7 +563,7 @@ namespace seq2map
          * \param imageSize size of image plane.
          * \resutn Indices of feature in image plane.
          */
-        Indices GetFeatureImageIndices(const ImageFeatureSet& f, const cv::Size& imageSize) const;
+        IndexList GetFeatureImageIndices(const ImageFeatureSet& f, const cv::Size& imageSize) const;
 
         /**
          * Find features in the next frame using optical flow.
@@ -573,7 +576,7 @@ namespace seq2map
          * \param tracked Input/output array of booleans to indicate the status of each feature's tracking.
          * \return Mapping of tracked feature from source frame to the target.
          */
-        GeometricMapping FindLostFeaturesFlow(const cv::Mat& Ii, const cv::Mat& Ij, const ImageFeatureSet& fi, AlignmentObjective::Own& eval, const EuclideanTransform& pose, std::vector<bool>& tracked);
+        GeometricMapping FindFeaturesFlow(const cv::Mat& Ii, const cv::Mat& Ij, const ImageFeatureSet& fi, AlignmentObjective::Own& eval, const EuclideanTransform& pose, std::vector<bool>& tracked);
 
         /**
          * Augment a target feature set by means of a feature flow from the source set.
@@ -614,6 +617,13 @@ namespace seq2map
         TriangulationMethod     triangulation;    ///< triangulation method
 
     private:
+        static bool StringToAlignment(const String& flag, int& model);
+        static bool StringToFlow(const String& flow, int& scheme);
+        static bool StringToTriangulation(const String& triangulation, TriangulationMethod& method);
+        static String AlignmentToString(int model);
+        static String FlowToString(int scheme);
+        static String TriangulationToString(TriangulationMethod method);
+
         String m_alignString;
         String m_flowString;
         String m_triangulation;

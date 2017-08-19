@@ -15,9 +15,9 @@ class CalibGraphBundler : public LeastSquaresProblem
 public:
     typedef boost::shared_ptr<CalibGraphBundler> Ptr;
 
-    static Ptr Create(const CalibGraph& graph, const Indices& camIdx, const Indices& viewIdx);
+    static Ptr Create(const CalibGraph& graph, const IndexList& camIdx, const IndexList& viewIdx);
     virtual ~CalibGraphBundler() {}
-    void Apply(CalibGraph& graph, const Indices& camIdx, const Indices& viewIdx) const;
+    void Apply(CalibGraph& graph, const IndexList& camIdx, const IndexList& viewIdx) const;
 
     // Inherited via LeastSquaresProblem
     virtual VectorisableD::Vec Initialise() { return m_params.ToVector(); }
@@ -36,7 +36,7 @@ private:
         virtual bool Store(Vec& v) const;
         virtual bool Restore(const Vec& v);
         virtual size_t GetDimension() const;
-        Indices MakeVarList() const;
+        IndexList MakeVarList() const;
 
         std::vector<BouguetModel> intrinsics;
         EuclideanTransforms extrinsics;
