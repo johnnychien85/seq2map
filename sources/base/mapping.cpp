@@ -342,6 +342,8 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, IndexList& 
 
         BOOST_FOREACH (ObjectiveBuilder::Own builder, builders)
         {
+            if (builder->Prebuilt()) continue;
+
             if (builder->AddData(m.srcIdx, m.dstIdx, k, Fi[m.srcIdx], Fj[m.dstIdx], idx))
             {
                 rec[idx].refs++;
@@ -427,22 +429,24 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, IndexList& 
     {
         const AlignmentObjective::InlierSelector& sel = estimator.GetSelectors()[s];
         const std::vector<size_t>& idmap = sel.objective->GetData().indices;
-
+        
         /////////////////////////////////////////////////////////////////////////////////
-        // std::stringstream ss; ss << "M" << s << ".bin";
-        // std::stringstream ss2; ss2 << "I" << s << ".bin";
-        // PersistentMat(sel.objective->operator()(estimate.pose)).Store(Path(ss.str()));
-        // std::vector<int> idmap2(idmap.size());
-        // for (size_t k = 0; k < idmap.size(); k++) idmap2[k] = (int) idmap[k];
-        // PersistentMat(cv::Mat(idmap2, false)).Store(Path(ss2.str()));
+        std::stringstream ss; ss << "M" << s << ".bin";
+        std::stringstream ss2; ss2 << "I" << s << ".bin";
+        PersistentMat(sel.objective->operator()(estimate.pose)).Store(Path(ss.str()));
+        std::vector<int> idmap2(idmap.size());
+        for (size_t k = 0; k < idmap.size(); k++) idmap2[k] = (int) idmap[k];
+        PersistentMat(cv::Mat(idmap2, false)).Store(Path(ss2.str()));
         /////////////////////////////////////////////////////////////////////////////////
 
         if (stats[s] != NULL)
         {
-            stats[s]->population = idmap.size();
+            stats[s]->population = sel.objective->GetData().GetSize(); // idmap.size();
             stats[s]->inliers = survived[s].size();
             stats[s]->secs += sel.metre.GetElapsedSeconds();
         }
+
+        if (idmap.empty()) continue;
 
         BOOST_FOREACH (size_t j, survived[s])
         {
@@ -539,8 +543,8 @@ bool FeatureTracker::StringToFlow(const String& flow, int& type)
 
 String FeatureTracker::FlowToString(int scheme)
 {
-    bool forward  = scheme & InlierInjectionScheme::FORWARD_FLOW;
-    bool backward = scheme & InlierInjectionScheme::BACKWARD_FLOW;
+    bool forward  = (scheme & InlierInjectionScheme::FORWARD_FLOW ) != 0;
+    bool backward = (scheme & InlierInjectionScheme::BACKWARD_FLOW) != 0;
 
     if (forward && backward) return "BIDIRECTION";
     else if (forward)        return "FORWARD";
@@ -850,9 +854,25 @@ bool FeatureTracker::operator() (Map& map, Source& si, Frame& ti, Source& sj, Fr
         {
             if (pj)
             {
-                filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
-                    new PhotometricObjectiveBuilder(pj, gi, Ii, Ij, outlierRejection.fastMetric, stats.objectives[PHOTOMETRIC_ALIGN])
-                ));
+                MultiObjectiveOutlierFilter::ObjectiveBuilder::Own builder =
+                    MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
+                        new PhotometricObjectiveBuilder(pj, gi, Ii, Ij, outlierRejection.fastMetric, stats.objectives[PHOTOMETRIC_ALIGN])
+                    );
+
+                for (size_t k = 0; k < fi.GetSize(); k++)
+                {
+                    ImageFeature fi_k = fi[k];
+                    builder->AddData(
+                        k,
+                        INVALID_INDEX, // not used
+                        INVALID_INDEX, // not used
+                        fi_k,
+                        fi_k,          // not used
+                        INVALID_INDEX  // not used
+                    );
+                }
+
+                filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(builder));
             }
             else
             {
@@ -1454,7 +1474,7 @@ bool FeatureTracker::PhotometricObjectiveBuilder::Build(GeometricMapping& data, 
     StructureEstimation::Estimate g = gi[m_idx];
     Geometry p(Geometry::PACKED, cv::Mat(m_imagePoints, false));
 
-    if (!objective->SetData(g.structure, p, Ii, false, reduceMetric && g.metric ? g.metric->Reduce() : g.metric, m_localIdx))
+    if (!objective->SetData(g.structure, p, Ii, false, reduceMetric && g.metric ? g.metric->Reduce() : g.metric/*, m_localIdx*/))
     {
         E_WARNING << "error setting photometric constraints for \"" << ToString() << "\"";
         return false;

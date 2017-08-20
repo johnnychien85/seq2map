@@ -271,12 +271,37 @@ namespace seq2map
         class ObjectiveBuilder : public Referenced<ObjectiveBuilder>
         {
         public:
+            /**
+             * ...
+             */
             ObjectiveBuilder(AlignmentObjective::InlierSelector::Stats& stats, bool reduceMetric = false)
             : stats(stats), reduceMetric(reduceMetric) {}
 
+            /**
+             * ...
+             */
             virtual bool AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx) = 0;
+
+            /**
+             * ...
+             */
             virtual PoseEstimator::Own GetSolver() const = 0;
+
+            /**
+             * ...
+             */
             virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma) = 0;
+
+            /**
+             * A method internally used to determine if the builder uses prebuilt data rather than the
+             * correspondences established by a FeatureMatcher. Currently only PhotometricObjectiveBuilder
+             * uses pre-built data term.
+             */
+            virtual bool Prebuilt() const { return false; }
+
+            /**
+             * ...
+             */
             virtual String ToString() const = 0;
 
             AlignmentObjective::InlierSelector::Stats& stats;
@@ -495,7 +520,8 @@ namespace seq2map
             virtual bool AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
             virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma);
             virtual PoseEstimator::Own GetSolver() const { return PoseEstimator::Own(); } // photometric objective has no closed-form solver
-            
+
+            virtual bool Prebuilt() const { return true; }
             virtual String ToString() const { return "PHOTOMETRIC"; }
 
             const ProjectionModel::ConstOwn pj;

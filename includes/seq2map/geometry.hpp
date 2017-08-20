@@ -5,8 +5,6 @@
 
 namespace seq2map
 {
-    cv::Mat skewsymat(const cv::Mat& x);
-
     /**
      * A geometry matrix wraps a cv::Mat that stores coordinates of n-dimensional elements.
      */

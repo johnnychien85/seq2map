@@ -2,30 +2,55 @@
 
 using namespace seq2map;
 
-namespace seq2map
+cv::Mat skewsymat(const cv::Mat& x)
 {
-    cv::Mat skewsymat(const cv::Mat& x)
+    assert(x.total() == 3);
+
+    cv::Mat x64f;
+    x.convertTo(x64f, CV_64F);
+
+    // normalisation to make sure ||x|| = 1
+    x64f /= cv::norm(x64f);
+
+    double* v = x64f.ptr<double>();
+
+    cv::Mat y64f = (cv::Mat_<double>(3, 3) <<
+            0.0f, -v[2],  v[1],
+            v[2],  0.0f, -v[0],
+           -v[1],  v[0],  0.0f);
+
+    cv::Mat y;
+    y64f.convertTo(y, x.type());
+
+    return y;
+}
+
+cv::Mat jacmul(const cv::Mat& jac, const cv::Mat& A)
+{
+    // J' = J * A
+    // J: D2 x D1
+    // A: D1 x D0
+    const int D0 = A.cols;
+    const int D1 = A.rows;
+    const int D2 = jac.cols / D1;
+
+    assert(jac.cols == D1 * D2);
+
+    cv::Mat mul = cv::Mat::zeros(jac.rows, D0*D2, jac.type());
+
+    for (int i = 0; i < D2; i++)
     {
-        assert(x.total() == 3);
-
-        cv::Mat x64f;
-        x.convertTo(x64f, CV_64F);
-
-        // normalisation to make sure ||x|| = 1
-        x64f /= cv::norm(x64f);
-
-        double* v = x64f.ptr<double>();
-
-        cv::Mat y64f = (cv::Mat_<double>(3, 3) <<
-             0.0f,  -v[2],  v[1],
-             v[2],   0.0f, -v[0],
-            -v[1],   v[0], 0.0f);
-
-        cv::Mat y;
-        y64f.convertTo(y, x.type());
-
-        return y;
+        for (int k = 0; k < D0; k++)
+        {
+            cv::Mat dst = mul.col(k * D2 + i);
+            for (int j = 0; j < D1; j++)
+            {
+                cv::add(jac.col(j * D2 + i) * A.row(j).col(k), dst, dst);
+            }
+        }
     }
+
+    return mul;
 }
 
 //==[ Geometry ]==============================================================//
@@ -373,8 +398,6 @@ WeightedEuclideanMetric::WeightedEuclideanMetric(cv::Mat weights, double scale)
     {
         E_ERROR << "weights has to be a non-empty row vector, while the given matrix is "
             << weights.rows << "x" << weights.cols << "x" << weights.channels();
-
-        throw std::exception("!!");
     }
 }
 
@@ -542,6 +565,11 @@ Metric::Own MahalanobisMetric::operator+ (const Metric& metric) const
 
 Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform, const Geometry& jac) const
 {
+    if (!jac.IsEmpty() && jac.shape != Geometry::ROW_MAJOR)
+    {
+        return Transform(tform, jac.Reshape(Geometry::ROW_MAJOR));
+    }
+
     const bool jacobianOnly = tform.IsIdentity();
 
     if (!jacobianOnly && dims != 3)
@@ -553,16 +581,11 @@ Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform, const 
     const size_t d0 = dims;
     const size_t d1 = jac.IsEmpty() ? d0 : jac.GetDimension() / dims;
     const size_t n0 = m_cov.GetElements();
-    const size_t n1 = jac.GetElements();
+    const size_t n1 = jac.IsEmpty() ? 1 : jac.GetElements();
     // const int dtype = jac.IsEmpty() ? m_cov.mat.depth() : jac.mat.depth();
 
     if (!jac.IsEmpty())
     {
-        if (jac.shape != Geometry::ROW_MAJOR)
-        {
-            return Transform(tform, jac.Reshape(Geometry::ROW_MAJOR));
-        }
-
         if (n0 != 1 && n1 != 1 && n0 != n1)
         {
             E_ERROR << "given Jacobian is for " << n1 << " element(s) while the metric has " << n0;
@@ -577,17 +600,17 @@ Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform, const 
     }
     else if (jacobianOnly)
     {
-        return Clone();
+        return Clone(); // no transformation no Jacobian : identity
     }
 
     const int D0 = static_cast<int>(d0);
     const int D1 = static_cast<int>(d1);
-    const int N1 = static_cast<int>(n0 == 1 ? n1 : n0);
+    const int N1 = static_cast<int>(n0 > n1 ? n0 : n1);
     const int DIMS = static_cast<int>(dims);
 
     MahalanobisMetric* metric = new MahalanobisMetric(ANISOTROPIC_ROTATED, D1);
     const cv::Mat cov0 = GetFullCovMat();
-    /***/ cv::Mat cov1 = cv::Mat(N1, static_cast<int>(metric->GetCovMatCols()), cov0.depth());
+    /***/ cv::Mat cov1 = cv::Mat::zeros(N1, static_cast<int>(metric->GetCovMatCols()), cov0.depth());
     cv::Mat R = !jacobianOnly ? tform.GetRotation().ToMatrix() : cv::Mat();
 
     if (!R.empty() && R.depth() != cov0.depth()) 
@@ -595,6 +618,97 @@ Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform, const 
         R.convertTo(R, cov0.depth());
     }
 
+#if 1 // fast upper-triangular column-wise computation
+    // C' = (J * R) * C * (R' * J') = A * C * A' = B * A'
+    // C : D0 x D0
+    // A : D1 x D0
+    // B : D1 x D0
+    // C': D1 x D1
+    const cv::Mat A = jac.IsEmpty() ? R.reshape(1, 1) : (R.empty() ? jac.mat : jacmul(jac.mat, R)); // A = J * R
+    /***/ cv::Mat B = cv::Mat::zeros(N1, D0*D1, cov1.depth()); // B = A * C
+
+    if (n0 == 1) // one covariance via one or many Jacobians
+    {
+        for (int k = 0; k < D0; k++)
+        {
+            for (int j = 0; j < D0; j++)
+            {
+                cv::Mat Ckj = cov0.col(sub2symind(k, j, D0)); // 1-by-1 scalar
+                for (int i = 0; i < D1; i++)
+                {
+                    cv::Mat Aik = A.col(k * D1 + i);
+                    cv::Mat Bij = B.col(i * D0 + j);
+                    cv::add(Aik*Ckj, Bij, Bij);
+                }
+            }
+        }
+    }
+    else if (n1 == 1) // many covariances via one Jacobian
+    {
+        for (int k = 0; k < D0; k++)
+        {
+            for (int j = 0; j < D0; j++)
+            {
+                cv::Mat Ckj = cov0.col(sub2symind(k, j, D0));
+                for (int i = 0; i < D1; i++)
+                {
+                    cv::Mat Aik = A.col(k * D1 + i); // 1-by-1 scalar
+                    cv::Mat Bij = B.col(i * D0 + j);
+                    cv::add(Ckj*Aik, Bij, Bij);
+                }
+            }
+        }
+    }
+    else // many covariances via many Jacobians (per-element operation)
+    {
+        for (int k = 0; k < D0; k++)
+        {
+            for (int j = 0; j < D0; j++)
+            {
+                cv::Mat Ckj = cov0.col(sub2symind(k, j, D0));
+                for (int i = 0; i < D1; i++)
+                {
+                    cv::Mat Aik = A.col(k * D1 + i);
+                    cv::Mat Bij = B.col(i * D0 + j);
+                    cv::add(Aik.mul(Ckj), Bij, Bij);
+                }
+            }
+        }
+    }
+    
+    if (n1 == 1) // many covariances via one Jacobian
+    {
+        for (int i = 0; i < D1; i++)
+        {
+            for (int j = i; j < D1; j++)
+            {
+                cv::Mat Cij = cov1.col(sub2symind(i, j, D1));
+                for (int k = 0; k < D0; k++) // Cij = Bik * A'kj = Bik * Ajk
+                {
+                    cv::Mat Bik = B.col(i * D0 + k);
+                    cv::Mat Ajk = A.col(k * D1 + j);
+                    cv::add(Bik * Ajk, Cij, Cij);
+                }
+            }
+        }
+    }
+    else
+    {
+        for (int i = 0; i < D1; i++)
+        {
+            for (int j = i; j < D1; j++)
+            {
+                cv::Mat Cij = cov1.col(sub2symind(i, j, D1));
+                for (int k = 0; k < D0; k++) // Cij = Bik * A'kj = Bik * Ajk
+                {
+                    cv::Mat Bik = B.col(i * D0 + k);
+                    cv::Mat Ajk = A.col(k * D1 + j);
+                    cv::add(Bik.mul(Ajk), Cij, Cij);
+                }
+            }
+        }
+    }
+#else // explicit slice extraction
     if (jac.IsEmpty())
     {
         cv::Mat Rt = R.t();
@@ -701,7 +815,7 @@ Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform, const 
             symmat(Ci).copyTo(cov1.row(i));
         }
     }
-
+#endif
     metric->SetCovarianceMat(cov1);
 
     return Metric::Own(metric);
@@ -936,12 +1050,15 @@ bool MahalanobisMetric::SetCovarianceMat(const cv::Mat& cov)
 
     const int DIMS = static_cast<int>(dims);
 
-    for (int i = 0; i < cov.rows; i++)
+    if (type == ANISOTROPIC_ROTATED)
     {
-        if (/*cov.at<double>(i,0) != 0 &&*/ !checkPositiveDefinite(symmat(cov.row(i), DIMS)))
+        for (int i = 0; i < cov.rows; i++)
         {
-            E_TRACE << "entry " << i << " is not positive-definite or nearly singular";
-            m_cov.mat.row(i).setTo(0.0f); // nullify the entry
+            if (/*cov.at<double>(i,0) != 0 &&*/ !checkPositiveDefinite(symmat(cov.row(i), DIMS)))
+            {
+                E_TRACE << "entry " << i << " is not positive-definite or nearly singular";
+                m_cov.mat.row(i).setTo(0.0f); // nullify the entry
+            }
         }
     }
 

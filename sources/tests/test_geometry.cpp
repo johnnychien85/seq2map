@@ -78,11 +78,16 @@ BOOST_AUTO_TEST_CASE(mahalanobis)
 {
     const double EPSILON = 1e-12;
 
-    cv::Mat gmat0 = (cv::Mat_<double>(4, 3) << 68, 76, 74, 39, 66, 17, 71,  3, 28,  5, 10, 82);
-    cv::Mat gmat1 = (cv::Mat_<double>(4, 3) << 69, 32, 95,  3, 44, 38, 77, 80, 19, 49, 45, 65);
-    cv::Mat cvar0 = (cv::Mat_<double>(4, 1) << 1, 3, 5, 7);
-    cv::Mat cvar1 = (cv::Mat_<double>(4, 3) << 1, 1, 1, 3, 3, 3, 5, 5, 5, 7, 7, 7);
-    cv::Mat cvar2 = (cv::Mat_<double>(4, 6) << 1, 0, 0, 1, 0, 1, 3, 0, 0, 3, 0, 3, 5, 0, 0, 5, 0, 5, 7, 0, 0, 7, 0, 7);
+    const cv::Mat gmat0 = (cv::Mat_<double>(4, 3) << 68, 76, 74, 39, 66, 17, 71,  3, 28,  5, 10, 82);
+    const cv::Mat gmat1 = (cv::Mat_<double>(4, 3) << 69, 32, 95,  3, 44, 38, 77, 80, 19, 49, 45, 65);
+    const cv::Mat cvar0 = (cv::Mat_<double>(4, 1) << 1, 3, 5, 7);
+    const cv::Mat cvar1 = (cv::Mat_<double>(4, 3) << 1, 1, 1, 3, 3, 3, 5, 5, 5, 7, 7, 7);
+    const cv::Mat cvar2 = (cv::Mat_<double>(4, 6) << 1, 0, 0, 1, 0, 1, 3, 0, 0, 3, 0, 3, 5, 0, 0, 5, 0, 5, 7, 0, 0, 7, 0, 7);
+    const cv::Mat cvar3 = (cv::Mat_<double>(4, 6) << 47, 42, 39, 98, 66, 70, 48, 57, 51, 74, 66, 61, 56, 48, 55, 48, 48, 56, 33, 25, 46, 20, 35, 66);
+    const cv::Mat tform = (cv::Mat_<double>(4, 6) << 40,  8, 24, 12, 18, 24, 21,  3, 45, 47, 25, 25, 17, 45, 19,  6, 39, 20, 19, 32,  8, 10, 75, 77);
+    const cv::Mat cvar4 = (cv::Mat_<double>(4, 3) << 348152, 197056, 118496, 379092, 209904, 117408, 348224, 186928, 100736, 230184, 140136,  85632);
+    const cv::Mat cvar5 = (cv::Mat_<double>(4, 3) << 348152, 197056, 118496, 531757, 476305, 433449, 332089, 264150, 235423, 620107, 700211, 793670);
+    const cv::Mat cvar6 = (cv::Mat_<double>(4, 3) << 348152, 197056, 118496, 518923, 444013, 380847, 293762, 282625, 273968, 565143, 639472, 723694);
 
     Geometry g0(Geometry::ROW_MAJOR, gmat0);
     Geometry g1(Geometry::ROW_MAJOR, gmat1);
@@ -92,7 +97,7 @@ BOOST_AUTO_TEST_CASE(mahalanobis)
     MahalanobisMetric m2(MahalanobisMetric::ANISOTROPIC_ROTATED,    3);
 
     // test covariance matrix setter
-    E_INFO << "expected to see 6 warnings below..";
+    E_INFO << "expect to see 6 warnings below..";
     BOOST_CHECK( m0.SetCovarianceMat(cvar0));
     BOOST_CHECK(!m0.SetCovarianceMat(cvar1));
     BOOST_CHECK(!m0.SetCovarianceMat(cvar2));
@@ -102,6 +107,7 @@ BOOST_AUTO_TEST_CASE(mahalanobis)
     BOOST_CHECK(!m2.SetCovarianceMat(cvar0));
     BOOST_CHECK(!m2.SetCovarianceMat(cvar1));
     BOOST_CHECK( m2.SetCovarianceMat(cvar2));
+    E_INFO << "expect to see 6 warnings above..";
 
     // test distance measuring
     Geometry d0 = ((Metric&)m0)(g0, g1);
@@ -131,17 +137,39 @@ BOOST_AUTO_TEST_CASE(mahalanobis)
     for (int i = 0; i < kal.rows; i++)
     {
         const int DIMS = static_cast<int>(m4.dims);
+        const cv::Mat K = kal.row(i).reshape(1, DIMS);
 
         for (int d0 = 0; d0 < DIMS; d0++)
         {
             for (int d1 = d0; d1 < DIMS; d1++)
             {
-                const int j = sub2symind(d0, d1, DIMS);
-                const double Kij = kal.at<double>(i, j);
+                const double Kij = K.at<double>(d0, d1);
 
                 if (d0 == d1) BOOST_REQUIRE_CLOSE(Kij, 0.5f, EPSILON);
                 else          BOOST_REQUIRE_SMALL(Kij, EPSILON);
             }
         }
     }
+
+    // test transformation
+    MahalanobisMetric m5(MahalanobisMetric::ANISOTROPIC_ROTATED, 3);
+    MahalanobisMetric m6(MahalanobisMetric::ANISOTROPIC_ROTATED, 3);
+    Geometry jac0(Geometry::ROW_MAJOR, tform.row(0));
+    Geometry jac1(Geometry::ROW_MAJOR, tform);
+
+    BOOST_CHECK(m5.SetCovarianceMat(cvar3.row(0)));
+    BOOST_CHECK(m6.SetCovarianceMat(cvar3));
+
+    // many-via-one transformation
+    Metric::Own m7 = m6.Transform(EuclideanTransform::Identity, jac0);
+
+    // one-via-many transformation
+    Metric::Own m8 = m5.Transform(EuclideanTransform::Identity, jac1);
+
+    // many-via-many transformation
+    Metric::Own m9 = m6.Transform(EuclideanTransform::Identity, jac1);
+
+    BOOST_CHECK(cv::norm(static_cast<MahalanobisMetric*>(m7.get())->GetFullCovMat() - cvar4) == 0);
+    BOOST_CHECK(cv::norm(static_cast<MahalanobisMetric*>(m8.get())->GetFullCovMat() - cvar5) == 0);
+    BOOST_CHECK(cv::norm(static_cast<MahalanobisMetric*>(m9.get())->GetFullCovMat() - cvar6) == 0);
 }
