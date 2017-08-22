@@ -439,20 +439,28 @@ namespace seq2map
         /**
          * Feature tracking statistics updated each time the operator is in action.
          */
-        struct Stats
+        class Stats
         {
+        public:
             typedef std::map<int, AlignmentObjective::InlierSelector::Stats> ObjectiveStats;
 
-            Stats() : spawned(0), tracked(0), joined(0), removed(0), injected(0) { motion.valid = false; }
+            Stats() : spawned(0), tracked(0), joined(0), removed(0), injected(0), accumulated(0) { motion.valid = false; }
+            String ToString() const;
+            void Render(const cv::Mat& canvas, String& tracker, Map& map, const EuclideanTransform& tform);
 
             size_t spawned;  ///< number of newly discovered landmarks
             size_t tracked;  ///< number of tracked landmarks
             size_t joined;   ///< number of joined landmarks
             size_t removed;  ///< number of removed landmarks
             size_t injected; ///< number of recovered landmarks
+            size_t accumulated; ///< number of accumulated landmarks
             ObjectiveStats objectives;      ///< per outlier model stats
             PoseEstimator::Estimate motion; ///< egomotion
             GeometricMapping flow;          ///< feature flow
+            cv::Mat im;
+
+        private:
+            void PutTextLine(cv::Mat im, const String& text, int face, double scale, const cv::Scalar& colour, int thickness, cv::Point& pt);
         };
 
         /**
@@ -565,10 +573,11 @@ namespace seq2map
          *
          */
         FeatureTracker()
-        : policy(KEEP_BOTH),
+        : policy(REMOVE_BOTH),
           outlierRejection(FORWARD_PROJ_ALIGN),
           inlierInjection(0),
           triangulation(OPTIMAL),
+          rendering(true),
           matcher(true, true, false, 0.8f, true)
         {}
 
@@ -641,6 +650,7 @@ namespace seq2map
         OutlierRejectionOptions outlierRejection; ///< outlier rejection options
         InlierInjectionOptions  inlierInjection;  ///< inlier recovery options
         TriangulationMethod     triangulation;    ///< triangulation method
+        bool rendering;
 
     private:
         static bool StringToAlignment(const String& flag, int& model);

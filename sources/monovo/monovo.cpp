@@ -164,6 +164,7 @@ bool MyApp::Execute()
         bool success = m_tracker(map, src, map.GetFrame(ti), src, map.GetFrame(tj));
         metre.Stop(1);
 
+        /*
         E_INFO << "Frame " << ti << " -> " << tj << ": "
             << stats.spawned  << " spawned, "
             << stats.tracked  << " tracked, "
@@ -171,16 +172,16 @@ bool MyApp::Execute()
             << stats.removed  << " removed, "
             << stats.joined   << " joined, "
             << map.GetLandmarks() << " accumulated";
-
+        */
         E_INFO << "Matcher: " << m_tracker.matcher.Report();
-
+        /*
         BOOST_FOREACH (FeatureTracker::Stats::ObjectiveStats::value_type pair, stats.objectives)
         {
             E_INFO << "Outlier model " << std::setw(2) << pair.first << ": "
                 << std::setw(5) << pair.second.inliers << " / " << std::setw(5) << pair.second.population
                 << " (" << pair.second.secs << " secs)";
         }
-
+        */
         if (!success)
         {
             E_ERROR << "error tracking frame " << ti << " -> " << tj;

@@ -28,8 +28,9 @@ cv::Mat skewsymat(const cv::Mat& x)
 cv::Mat jacmul(const cv::Mat& jac, const cv::Mat& A)
 {
     // J' = J * A
-    // J: D2 x D1
-    // A: D1 x D0
+    // J : D2 x D1
+    // A : D1 x D0
+    // J': D2 x D0
     const int D0 = A.cols;
     const int D1 = A.rows;
     const int D2 = jac.cols / D1;
@@ -40,12 +41,12 @@ cv::Mat jacmul(const cv::Mat& jac, const cv::Mat& A)
 
     for (int i = 0; i < D2; i++)
     {
-        for (int k = 0; k < D0; k++)
+        for (int j = 0; j < D0; j++)
         {
-            cv::Mat dst = mul.col(k * D2 + i);
-            for (int j = 0; j < D1; j++)
+            cv::Mat dst = mul.col(j * D2 + i);
+            for (int k = 0; k < D1; k++)
             {
-                cv::add(jac.col(j * D2 + i) * A.row(j).col(k), dst, dst);
+                cv::add(jac.col(k * D2 + i) * A.row(k).col(j), dst, dst);
             }
         }
     }
@@ -618,13 +619,13 @@ Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform, const 
         R.convertTo(R, cov0.depth());
     }
 
-#if 1 // fast upper-triangular column-wise computation
+#if 1 // faster upper-triangular column-wise computation
     // C' = (J * R) * C * (R' * J') = A * C * A' = B * A'
     // C : D0 x D0
     // A : D1 x D0
     // B : D1 x D0
     // C': D1 x D1
-    const cv::Mat A = jac.IsEmpty() ? R.reshape(1, 1) : (R.empty() ? jac.mat : jacmul(jac.mat, R)); // A = J * R
+    const cv::Mat A = jac.IsEmpty() ? cv::Mat(R.t()).reshape(1, 1) : (R.empty() ? jac.mat : jacmul(jac.mat, R)); // A = J * R
     /***/ cv::Mat B = cv::Mat::zeros(N1, D0*D1, cov1.depth()); // B = A * C
 
     if (n0 == 1) // one covariance via one or many Jacobians
@@ -708,7 +709,7 @@ Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform, const 
             }
         }
     }
-#else // explicit slice extraction
+#else // explicit matrix multiplication by slice extraction
     if (jac.IsEmpty())
     {
         cv::Mat Rt = R.t();
@@ -811,7 +812,6 @@ Metric::Own MahalanobisMetric::Transform(const EuclideanTransform& tform, const 
             }
 
             Ci = Ai * Ci * Ai.t(); // Ci becomes D1 x D1, was D0 x D0
-
             symmat(Ci).copyTo(cov1.row(i));
         }
     }

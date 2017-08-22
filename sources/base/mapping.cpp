@@ -33,7 +33,7 @@ void Map::RemoveLandmark(Landmark& l)
         Frame& t = h.GetContainer<1, Frame>();
         const Source& c = h.GetContainer<2, Source>();
 
-        t.featureLandmarkLookup[c.GetIndex()][hit.index] = NULL;
+        t.featureLandmarkLookup[c.store->GetIndex()][hit.index] = NULL;
     }
 
     l.clear();
@@ -431,12 +431,12 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, IndexList& 
         const std::vector<size_t>& idmap = sel.objective->GetData().indices;
         
         /////////////////////////////////////////////////////////////////////////////////
-        std::stringstream ss; ss << "M" << s << ".bin";
-        std::stringstream ss2; ss2 << "I" << s << ".bin";
-        PersistentMat(sel.objective->operator()(estimate.pose)).Store(Path(ss.str()));
-        std::vector<int> idmap2(idmap.size());
-        for (size_t k = 0; k < idmap.size(); k++) idmap2[k] = (int) idmap[k];
-        PersistentMat(cv::Mat(idmap2, false)).Store(Path(ss2.str()));
+        // std::stringstream ss; ss << "M" << s << ".bin";
+        // std::stringstream ss2; ss2 << "I" << s << ".bin";
+        // PersistentMat(sel.objective->operator()(estimate.pose)).Store(Path(ss.str()));
+        // std::vector<int> idmap2(idmap.size());
+        // for (size_t k = 0; k < idmap.size(); k++) idmap2[k] = (int) idmap[k];
+        // PersistentMat(cv::Mat(idmap2, false)).Store(Path(ss2.str()));
         /////////////////////////////////////////////////////////////////////////////////
 
         if (stats[s] != NULL)
@@ -1120,6 +1120,7 @@ bool FeatureTracker::operator() (Map& map, Source& si, Frame& ti, Source& sj, Fr
     }
 
     stats.flow = flow.Build();
+    stats.accumulated = map.GetLandmarks();
 
     if (triangulation != DISABLED && mi.valid && stats.motion.valid)
     {
@@ -1132,40 +1133,21 @@ bool FeatureTracker::operator() (Map& map, Source& si, Frame& ti, Source& sj, Fr
         );
     }
 
-    cv::Mat im = imfuse(Ii, Ij);
-    cv::Mat overlay = cv::Mat::zeros(im.rows, im.cols, im.type());
-    ColourMap cmap(255);
-
-    for (size_t i = 0; i < stats.flow.GetSize(); i++)
+    if (rendering)
     {
-        static const double zmin = 0;
-        static const double zmax = 100;
-        const size_t k = stats.flow.indices[i];
+        stats.Render(imfuse(Ii, Ij), GetName(), map, mi.pose);
 
-        const Landmark& lk = map.GetLandmark(k);
-        Point3D gk = lk.position;
-        double  wk = sqrt(lk.cov.xx + lk.cov.yy + lk.cov.zz);
+        std::stringstream ss;
+        cv::Mat im;
 
-        double zk = mi.pose(gk).z;
-        Point2D xk = stats.flow.src.mat.reshape(2).at<Point2D>(static_cast<int>(i));
-        Point2D yk = stats.flow.dst.mat.reshape(2).at<Point2D>(static_cast<int>(i));
-        int mk = wk > 0 ? 5 * (1 / (1 + wk)) + 1 : 1;
+        ss << GetName() << "." << std::setw(5) << std::setfill('0') << ti.GetIndex() << ".jpg";
+        cv::imwrite(ss.str(), stats.im);
+        //cv::vconcat(stats.im, fmap.Draw(Ii, Ij), im);
+        //cv::imwrite(ss.str(), im);
 
-        const double d = std::sqrt((xk.x - yk.x) * (xk.x - yk.x) + (xk.y - yk.y) * (xk.y - yk.y));
-        cv::line(overlay, xk, yk, cmap.GetColour(zk, zmin, zmax), std::min(mk,5));
+        cv::imshow("Feature Tracking [" + GetName() + "]", stats.im);
+        cv::waitKey(1);
     }
-
-    cv::add(im, 0.9f * overlay, im);
-
-    //std::stringstream ss;
-    //ss << "frame-" << ti.GetIndex() << ".png";
-    //cv::hconcat(im, fmap.Draw(Ii, Ij), im);
-    //cv::imwrite(ss.str(), im);
-    cv::imshow("Feature Tracking", im);
-    cv::waitKey(1);
-
-    std::stringstream ss; ss << std::setw(5) << std::setfill('0') << ti.GetIndex() << ".jpg";
-    cv::imwrite(ss.str(), im);
 
     return true;
 }
@@ -1338,7 +1320,7 @@ bool FeatureTracker::AugmentFeatures(
     }
 
     FeatureExtractor::ConstOwn xtor = boost::dynamic_pointer_cast<const FeatureExtractor, const FeatureDetextractor>(si.store->GetFeatureDetextractor());
-    bool copyDesc = true;
+    const bool copyDesc = true;
 
     if (inlierInjection.extractDescriptor && xtor)
     {
@@ -1373,6 +1355,87 @@ bool FeatureTracker::AugmentFeatures(
     }
 
     return true;
+}
+
+//==[ FeatureTracker::EpipolarOutlierModel ]=================================//
+
+String FeatureTracker::Stats::ToString() const
+{
+    std::stringstream ss;
+    ss << spawned     << " spawned, "
+       << tracked     << " tracked, "
+       << injected    << " injected, "
+       << removed     << " removed, "
+       << joined      << " joined, "
+       << accumulated << " accumulated";
+
+    return ss.str();
+}
+
+void FeatureTracker::Stats::Render(const cv::Mat& canvas, String& tracker, Map& map, const EuclideanTransform& tform)
+{
+    cv::Mat overlay = cv::Mat::zeros(canvas.rows, canvas.cols, canvas.type());
+    ColourMap cmap(255);
+    const int fontFace = cv::FONT_HERSHEY_PLAIN;
+    const double fontScale = 0.8f;
+    const cv::Scalar fontColour(230, 230, 230);
+    const int thickness = 1;
+
+    const cv::Mat src = flow.src.mat.reshape(2);
+    const cv::Mat dst = flow.dst.mat.reshape(2);
+
+    for (size_t i = 0; i < flow.GetSize(); i++)
+    {
+        static const double zmin = 0;
+        static const double zmax = 100;
+        const size_t k = flow.indices[i];
+
+        const Landmark& lk = map.GetLandmark(k);
+        Point3D gk = lk.position;
+        double  wk = sqrt(lk.cov.xx + lk.cov.yy + lk.cov.zz);
+
+        double zk = tform(gk).z;
+        Point2D xk = src.at<Point2D>(static_cast<int>(i));
+        Point2D yk = dst.at<Point2D>(static_cast<int>(i));
+        int mk = wk > 0 ? 5 * (1 / (1 + wk)) + 1 : 1;
+
+        const double d = std::sqrt((xk.x - yk.x) * (xk.x - yk.x) + (xk.y - yk.y) * (xk.y - yk.y));
+        cv::line(overlay, xk, yk, cmap.GetColour(zk, zmin, zmax), std::min(mk, 5));
+    }
+
+    cv::add(canvas, 0.9f * overlay, im);
+
+    std::stringstream ss;
+    cv::Point pt(2, 16);
+
+    // ss << "[" << tracker << "]";
+    // PutTextLine(im, ss.str(), fontFace, fontScale, fontColour, thickness, pt);
+    // ss.str("");
+
+    ss << "Stats: " << ToString();
+    PutTextLine(im, ss.str(), fontFace, fontScale, fontColour, thickness, pt);
+    ss.str("");
+
+    BOOST_FOREACH (FeatureTracker::Stats::ObjectiveStats::value_type pair, objectives)
+    {
+        ss << "Outlier model " << std::setw(2) << pair.first << ": "
+            << std::setw(5) << pair.second.inliers << " / " << std::setw(5) << pair.second.population
+            << " (" << pair.second.secs << " secs)";
+        PutTextLine(im, ss.str(), fontFace, fontScale, fontColour, thickness, pt);
+        ss.str("");
+    }
+}
+
+void FeatureTracker::Stats::PutTextLine(cv::Mat im, const String& text, int face, double scale, const cv::Scalar& colour, int thickness, cv::Point& pt)
+{
+    const int margin = 2;
+    int baseline;
+
+    cv::Size box = cv::getTextSize(text, face, scale, thickness, &baseline);
+    cv::rectangle(im, pt + cv::Point(0, baseline), pt + cv::Point(box.width, -box.height-margin), cv::Scalar(0, 0, 96), cv::FILLED);
+    cv::putText(im, text, pt, face, scale, colour);
+
+    pt.y += box.height + margin * 2;
 }
 
 //==[ FeatureTracker::EpipolarOutlierModel ]=================================//

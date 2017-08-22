@@ -116,6 +116,18 @@ function seq = loadSequenceKITTI(seqPath)
 	lid2cam = cal(:,:,5)';
 	lid = []; % TODO: process LiDAR data when it's available
 	
+    %
+    % 4. Motion
+    %
+    if exist(paths.imuPath,'file') > 0
+        cam(1).M = txt2mot(paths.imuPath);
+        for k = 1 : size(cam(1).M,3)
+            cam(1).M(:,:,k) = invmot(cam(1).M(:,:,k));
+        end
+        
+        fprintf('..pose loaded from %s\n',paths.imuPath);
+    end
+    
 	seq = struct(...
         'Grabber',  'KITTI',...
         'Paths',    paths,  ...
@@ -210,7 +222,7 @@ function seq = loadSequenceKITTIRaw(seqPath)
             cam(i).P = cam(i).K * cam(i).E(1:3,:);
         end
         cam(i).ParamsObject = cam2obj(cam(i));
-        cam(i).E(1:3,4) = cam(i).E(1:3,4) * 100;
+        % cam(i).E(1:3,4) = cam(i).E(1:3,4) * 100;
     end
     if rectified, fprintf('..camera intrinsics loaded, %d rectified camera(s) found\n',   cams);
     else          fprintf('..camera intrinsics loaded, %d UNRECTIFIED camera(s) found\n', cams); end
@@ -227,7 +239,7 @@ function seq = loadSequenceKITTIRaw(seqPath)
     lid(1).Format = 'XYZI'; % KITTI stores LiDAR readings as (x,y,z,intensity) tuples
     lid(1).DataFiles = fdir(paths.lidPath, '*.bin');
     lid(1).E = lid2cam;
-    lid(1).E(1:3,4) = lid(1).E(1:3,4) * 100;
+    % lid(1).E(1:3,4) = lid(1).E(1:3,4) * 100;
 
     % check the number of LiDAR frames
     if ~isempty(lid(1).DataFiles), assert(numel(lid(1).DataFiles) == frames); end
@@ -241,7 +253,7 @@ function seq = loadSequenceKITTIRaw(seqPath)
         assert(numel(pose) == frames);
 
         for t = 1 : frames, cam(1).M(:,:,t) = imu2cam * inv(pose{t}) * cam2imu; end
-        cam(1).M(1:3,4,:) = cam(1).M(1:3,4,:) * 100;
+        % cam(1).M(1:3,4,:) = cam(1).M(1:3,4,:) * 100;
     end
     
     seq = struct(...

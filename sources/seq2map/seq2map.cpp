@@ -179,6 +179,18 @@ bool Mapper::operator() (Map& map, size_t t, size_t n)
     {
         TrackingPath& tr = tracking[i];
         if (tr.InScope(t, n) && !tracking[i](map, t)) return false;
+
+        FeatureTracker::Stats& stats = tr.tracker.stats;
+        /*
+        E_INFO 
+            << stats.spawned  << " spawned, "
+            << stats.tracked  << " tracked, "
+            << stats.injected << " injected, "
+            << stats.removed  << " removed, "
+            << stats.joined   << " joined, "
+            << map.GetLandmarks() << " accumulated";
+        */
+        E_INFO << "Matcher: " << tr.tracker.matcher.Report();
     }
 
     return true;
@@ -385,7 +397,9 @@ bool MyApp::Execute()
         
         if (!ti.pose.valid || !tj.pose.valid)
         {
-            E_ERROR << "motion from " << ti.GetIndex() << " to " << tj.GetIndex() << " unknown!";
+            E_ERROR << "motion from " << ti.GetIndex() << " to " << tj.GetIndex() << " not solved!";
+            mot.Store(Path("mot.failed.txt"));
+
             return false;
         }
 
