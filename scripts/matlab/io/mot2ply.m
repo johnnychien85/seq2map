@@ -7,7 +7,7 @@ function mot2ply(mot,filename,color)
 	
 	tn = size(mot,3);
 	n = size(TA,1);
-	r = 30;
+	r = 0.25;
 	nVertices = tn * (n + 1);
 	nFaces = n * tn + n * (tn - 1);
 

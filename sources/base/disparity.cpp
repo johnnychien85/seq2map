@@ -239,7 +239,6 @@ void SemiGlobalBlockMatcher::ApplyParams()
     if (m_p1 == 0) m_p1 = 8  * m_blockSize * m_blockSize;
     if (m_p2 == 0) m_p2 = 32 * m_blockSize * m_blockSize;
 
-
     m_matcher->setMode           (String2Mode(m_mode));
     m_matcher->setPreFilterCap   (m_preFilterCap);
     m_matcher->setUniquenessRatio(m_uniquenessRatio);
@@ -256,8 +255,8 @@ Parameterised::Options SemiGlobalBlockMatcher::GetOptions(int flag)
         ("mode",             po::value<String>(&m_mode           )->default_value(Mode2String(m_matcher->getMode())), "SGBM, SGBM3, or FULL")
         ("pre-filter-cap",   po::value<int>   (&m_preFilterCap   )->default_value(m_matcher->getPreFilterCap()     ), "Truncation value for the prefiltered image pixels. The algorithm first computes x-derivative at each pixel and clips its value by [-preFilterCap, preFilterCap] interval. The result values are passed to the Birchfield-Tomasi pixel cost function.")
         ("uniqueness-ratio", po::value<int>   (&m_uniquenessRatio)->default_value(m_matcher->getUniquenessRatio()  ), "Margin in percentage by which the best (minimum) computed cost function value should \"win\" the second best value to consider the found match correct. Normally, a value within the 5-15 range is good enough.")
-        ("p1",               po::value<int>   (&m_p1             )->default_value(                                0), "The first parameter controlling the disparity smoothness.")
-        ("p2",               po::value<int>   (&m_p2             )->default_value(                                0), "The second parameter controlling the disparity smoothness.");
+        ("p1",               po::value<int>   (&m_p1             )->default_value(                                0), "The first parameter controlling the disparity smoothness. Set to zero to use 8 times W2 where W2 is the squared block size.")
+        ("p2",               po::value<int>   (&m_p2             )->default_value(                                0), "The second parameter controlling the disparity smoothness. Set to zero to use 32 times W2.");
 
     return g.add(o);
 }

@@ -101,14 +101,15 @@ add_executable(calibn      sources/calibn/args.hpp               # Multi-camera 
                            sources/calibn/calibgraph_report.cpp  # 
                            sources/calibn/calibgraphbuilder.cpp  # 
                            sources/calibn/calibgraphbundler.cpp )# 
+add_executable(dpvo        sources/dpvo/dpvo.cpp                )# Disparity-based VO implementation
 add_executable(im2disp     sources/im2disp/im2disp.cpp          )# Stereo matcher-based disparity map computation
 add_executable(im2flow     sources/im2flow/im2flow.cpp          )# Optical flow computation
 add_executable(im2kpts     sources/im2kpts/im2kpts.cpp          )# Image feature detection and extraction
-add_executable(monovo      sources/monovo/monovo.cpp            )# Monocular VO implementation
 add_executable(raw2seq     sources/raw2seq/builder.hpp           # Process raw data to build structured sequence profiles
                            sources/raw2seq/builder.cpp           # 
                            sources/raw2seq/raw2seq.cpp          )# 
 add_executable(seq2map     sources/seq2map/seq2map.cpp          )# Motion recovery and mapping
+add_executable(map2map     sources/map2map/map2map.cpp          )# Registration of multiple sequences
 add_executable(vggrab      sources/vggrab/recorder.hpp           # Software synchronised multi-camera frame grabber
                            sources/vggrab/recorder.cpp           # 
                            sources/vggrab/grabber.hpp            # 
@@ -140,9 +141,10 @@ target_link_libraries(calibn   base)
 target_link_libraries(im2kpts  base)
 target_link_libraries(im2disp  base)
 target_link_libraries(im2flow  base)
-target_link_libraries(monovo   base)
+target_link_libraries(dpvo     base)
 target_link_libraries(raw2seq  base)
 target_link_libraries(seq2map  base)
+target_link_libraries(map2map  base)
 target_link_libraries(vggrab   base)
 target_link_libraries(disp2pts base)
 target_link_libraries(imcvt    base)
@@ -181,9 +183,10 @@ if(OpenCV_VERSION AND NOT OpenCV_VERSION_MAJOR LESS 3)
 	target_link_libraries(im2disp  ${OpenCV_LIBS})
 	target_link_libraries(im2kpts  ${OpenCV_LIBS})
 	target_link_libraries(im2flow  ${OpenCV_LIBS})
-    target_link_libraries(monovo   ${OpenCV_LIBS})
+    target_link_libraries(dpvo     ${OpenCV_LIBS})
 	target_link_libraries(raw2seq  ${OpenCV_LIBS})
     target_link_libraries(seq2map  ${OpenCV_LIBS})
+    target_link_libraries(map2map  ${OpenCV_LIBS})
 	target_link_libraries(vggrab   ${OpenCV_LIBS})
 	target_link_libraries(disp2pts ${OpenCV_LIBS})
 	target_link_libraries(imcvt    ${OpenCV_LIBS})
@@ -214,9 +217,10 @@ if(Boost_FOUND)
 	target_link_libraries(im2kpts  ${Boost_LIBRARIES})
 	target_link_libraries(im2disp  ${Boost_LIBRARIES})
 	target_link_libraries(im2flow  ${Boost_LIBRARIES})
-    target_link_libraries(monovo   ${Boost_LIBRARIES})
+    target_link_libraries(dpvo     ${Boost_LIBRARIES})
 	target_link_libraries(raw2seq  ${Boost_LIBRARIES})
 	target_link_libraries(seq2map  ${Boost_LIBRARIES})
+    target_link_libraries(map2map  ${Boost_LIBRARIES})
 	target_link_libraries(vggrab   ${Boost_LIBRARIES})
 	target_link_libraries(disp2pts ${Boost_LIBRARIES})
 	target_link_libraries(imcvt    ${Boost_LIBRARIES})

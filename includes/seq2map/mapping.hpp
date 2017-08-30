@@ -142,7 +142,9 @@ namespace seq2map
      * A Map contains sets of Landmark, Frame and Source.
      * The these classes are connected by Hits, which are internally stored as a sparse data structure.
      */
-    class Map : protected Map3<Hit, Landmark, Frame, Source>
+    class Map
+    : protected Map3<Hit, Landmark, Frame, Source>,
+      public Persistent<Path>
     {
     public:
         /**
@@ -192,6 +194,16 @@ namespace seq2map
          *
          */
         Landmark& AddLandmark();
+
+        /**
+         *
+         */
+        void AddKeyframe(size_t index) { m_keyframes.insert(index); }
+
+        /**
+         *
+         */
+        inline size_t GetLastKeyframe() const { return m_keyframes.empty() ? INVALID_INDEX : *m_keyframes.rbegin(); }
 
         /**
          * Remove a landmark from the map.
@@ -252,11 +264,23 @@ namespace seq2map
         /**
          * Retrieve a source.
          */
-        inline Source& GetSource (size_t index) { return Dim2(index); }
+        inline Source& GetSource(size_t index) { return Dim2(index); }
+
+        inline void SetSequencePath(const Path& path) { m_seqPath = path; }
+
+        void Clear();
+
+        //
+        // Persistent
+        //
+        bool Store(Path& path) const;
+        bool Restore(const Path& path);
 
     private:
+        Path m_seqPath;
         size_t m_newLandmarkId;
         size_t m_newSourcId;
+        std::set<size_t> m_keyframes;
     };
 
     /**

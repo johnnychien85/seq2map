@@ -408,8 +408,8 @@ namespace seq2map
         void Clear();
         size_t ScanStores();
 
-        Path   m_rawPath;
-        Path   m_seqPath;
+        Path m_rawPath;
+        Path m_seqPath;
 
         String m_seqName;
         String m_vehicleName;

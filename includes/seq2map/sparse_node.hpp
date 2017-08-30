@@ -117,7 +117,7 @@ namespace seq2map
             //
             // Constructor
             //
-            Dimension(size_t idx) : Container(idx) {}
+            Dimension(size_t idx) : Container(idx), m_nodes(0) {}
 
             //
             // Accessor
@@ -421,6 +421,7 @@ namespace seq2map
                 }
 
                 UpdateIndex(node);
+                m_nodes++;
             }
 
             virtual void erase(NodePtr node)
@@ -471,6 +472,7 @@ namespace seq2map
                 }
 
                 // E_TRACE << "node " << node->ToString() << " erased in dimension " << dim;
+                m_nodes--;
             }
 
             /**
@@ -532,6 +534,9 @@ namespace seq2map
                 return lb;
             }
 
+        private:
+            size_t m_nodes;
+
         public: // STL-compliance members
             typedef T value_type;
 
@@ -575,6 +580,7 @@ namespace seq2map
             typedef Iterator<NodePtr, ValueType, ValueRef> iterator;
             typedef Iterator<ConstNodePtr, ConstValueType, ConstValueRef> const_iterator;
 
+            inline size_t size() const { return m_nodes; }
             iterator begin() { return iterator(m_head); }
             iterator end()   { return iterator(m_tail); }
 
@@ -652,11 +658,15 @@ namespace seq2map
     class Map3
     {
     public:
+        typedef std::map<size_t, D0> S0;
+        typedef std::map<size_t, D1> S1;
+        typedef std::map<size_t, D2> S2;
+
         Map3() {}
 
         virtual ~Map3()
         {
-            m_dim0.clear();
+            Clear();
         }
 
         D0& Dim0(size_t i) { return Dim<D0, S0>(m_dim0, i); }
@@ -666,6 +676,14 @@ namespace seq2map
         inline size_t GetSize0() const { return m_dim0.size(); }
         inline size_t GetSize1() const { return m_dim1.size(); }
         inline size_t GetSize2() const { return m_dim2.size(); }
+
+        typename S0::const_iterator Begin0() const { return m_dim0.cbegin(); }
+        typename S1::const_iterator Begin1() const { return m_dim1.cbegin(); }
+        typename S2::const_iterator Begin2() const { return m_dim2.cbegin(); }
+
+        typename S0::const_iterator End0() const { return m_dim0.cend(); }
+        typename S1::const_iterator End1() const { return m_dim1.cend(); }
+        typename S2::const_iterator End2() const { return m_dim2.cend(); }
 
         inline T& Insert(size_t i, size_t j, size_t k, const T& value)
         {
@@ -677,11 +695,14 @@ namespace seq2map
             return Dim0(i).Insert(value, d12);
         }
 
-    private:
-        typedef std::map<size_t, D0> S0;
-        typedef std::map<size_t, D1> S1;
-        typedef std::map<size_t, D2> S2;
+        inline void Clear()
+        {
+            m_dim0.clear();
+            m_dim1.clear();
+            m_dim2.clear();
+        }
 
+    private:
         template<typename D, typename S>
         D& Dim(S& dims, size_t idx)
         {

@@ -306,15 +306,32 @@ namespace seq2map
     };
 
     /**
+     * An interface to represent any class that can be stored to T.
+     */
+    template<class T> class Storable
+    {
+    public:
+        virtual bool Store(T& to) const = 0;
+    };
+
+    /**
+     * An interface to represent any class that can be restored from T.
+     */
+    template<class T> class Restorable
+    {
+    public:
+        virtual bool Restore(const T& from) = 0;
+    };
+
+    /**
      * An interface to represent any class that is storable to and later
      * restorable from type T1 and T2 respectively.
      */
     template<class T1, class T2 = T1>
     class Persistent
+    : public Storable<T1>,
+      public Restorable<T2>
     {
-    public:
-        virtual bool Store(T1& to) const = 0;
-        virtual bool Restore(const T2& from) = 0;
     };
 
     /**
@@ -494,7 +511,7 @@ namespace seq2map
  */
 namespace cv
 {
-    static void write(FileStorage& fs, const cv::String& bane, size_t value)
+    static void write(FileStorage& fs, const cv::String& nane, size_t value)
     {
         fs << static_cast<int>(value);
     }

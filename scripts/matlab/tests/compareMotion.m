@@ -2,7 +2,7 @@ function [ER,Et,Tr,Ta,milestones,fig] = compareMotion(m0,m1,lbl,mks,tn,unit)
 	if ~iscell(m1), m1 = {m1}; end;
 	if nargin < 3 || isempty(lbl), for k = 0 : numel(m1), lbl{k+1} = sprintf('M%d', k); end; end
 	if nargin < 4 || isempty(mks), for k = 0 : numel(m1), mks{k+1} = '-';               end; end
-    if nargin < 5 || isinf(tn), tn = size(m0,3); end
+    if nargin < 5 || isinf(tn),    tn = min(cellfun(@(x)size(x,3),m1));   end
     if nargin < 6, unit = 1;        end
 
 	% divie into 10 equally spaced intervals

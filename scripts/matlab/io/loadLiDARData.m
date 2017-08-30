@@ -13,7 +13,7 @@ function [ld,idx] = loadLiDARData(lid, frame, varargin)
             end
         case 'XYZI'
             ld.data   = loadXYZI(lid.DataFiles{frame});
-            ld.points = ld.data(:,1:3) * 100; % metre to cm
+            ld.points = ld.data(:,1:3);
             ld.reflx  = ld.data(:,4);
             ld.valid  = true(size(ld.points,1),1);
         otherwise error 'unknown LiDAR model';
@@ -27,12 +27,18 @@ function [ld,idx] = loadLiDARData(lid, frame, varargin)
     else
         idx = reshape(1:numel(ld.valid),size(ld.valid));
     end
+    
+    if po.ApplyTransform
+        ld.points = eucl2eucl(ld.points,lid.E);
+    end
 end
 
 function po = parseArgs(varargin)
     po = inputParser;
     addParameter(po, 'ReshapePoints',    true);
     addParameter(po, 'ValidPointsOnly', false);
+    addParameter(po, 'ApplyTransform',  false);
+
     parse(po, varargin{:});
     po = po.Results;
 end

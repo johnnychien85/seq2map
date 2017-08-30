@@ -212,6 +212,15 @@ void Map::SetStructure(const Landmark::Ptrs& u, const StructureEstimation::Estim
     */
 }
 
+void Map::Clear()
+{
+    m_newSourcId = 0;
+    m_newLandmarkId = 0;
+    m_keyframes.clear();
+
+    Map3::Clear();
+}
+
 StructureEstimation::Estimate Map::UpdateStructure(const Landmark::Ptrs& u, const StructureEstimation::Estimate& g, const EuclideanTransform& ref)
 {
     if (u.empty())
@@ -233,6 +242,302 @@ StructureEstimation::Estimate Map::UpdateStructure(const Landmark::Ptrs& u, cons
     SetStructure(u, g0);                 // write back the extracted structure
 
     return g0.Transform(ref);
+}
+
+bool Map::Store(Path & path) const
+{
+    Path idxPath = path / "index.yml";
+    Path lmkPath = path / "landmarks.dat";
+    Path hitPath = path / "hits.dat";
+    Path augPath = path / "aug";
+
+    if (!makeOutDir(path))
+    {
+        E_ERROR << "error creating directory " << path;
+        return false;
+    }
+
+    if (!makeOutDir(augPath))
+    {
+        E_ERROR << "error creating directory for augmented features " << augPath;
+        return false;
+    }
+
+    cv::FileStorage fs(idxPath.string(), cv::FileStorage::WRITE);
+    std::ofstream os;
+
+    if (!fs.isOpened())
+    {
+        E_ERROR << "error opening " << idxPath << " for writing";
+        return false;
+    }
+
+    // landmarks
+    os.open(lmkPath.string().c_str(), std::ios::out | std::ios::binary);
+    if (!os.is_open())
+    {
+        E_ERROR << "error writing landmarks to " << lmkPath;
+        return false;
+    }
+    size_t landmarks = 0;
+    for (S0::const_iterator itr = Begin0(); itr != End0(); itr++)
+    {
+        const Landmark& l = itr->second;
+
+        os.write((char*)&l.position, sizeof l.position);
+        os.write((char*)&l.cov,      sizeof l.cov);
+
+        landmarks++;
+    }
+    assert(landmarks == GetSize0());
+    E_TRACE << landmarks << " landmark(s) written to " << lmkPath;
+    os.close();
+
+    // hits
+    os.open(hitPath.string(), std::ios::out | std::ios::binary);
+    if (!os.is_open())
+    {
+        E_ERROR << "error writing hits to " << hitPath;
+        return false;
+    }
+    size_t hits = 0;
+    for (S0::const_iterator itr = Begin0(); itr != End0(); itr++)
+    {
+        const Landmark& l = itr->second;
+        size_t i = l.GetIndex();
+
+        for (Landmark::const_iterator h = l.cbegin(); h != l.cend(); h++)
+        {
+            size_t j = h.GetContainer<1, Frame> ().GetIndex();
+            size_t k = h.GetContainer<2, Source>().GetIndex();
+
+            os.write((char*)&i, sizeof i);
+            os.write((char*)&j, sizeof j);
+            os.write((char*)&k, sizeof k);
+            os.write((char*)&h->index, sizeof h->index);
+            os.write((char*)&h->proj,  sizeof h->proj );
+        }
+    }
+    os.close();
+
+    // augmented image feature sets
+
+    fs << "sequence" << m_seqPath;
+    fs << "sources" << "[";
+    for (S2::const_iterator itr = Begin2(); itr != End2(); itr++)
+    {
+        const Source& s = itr->second;
+        fs << "{";
+        fs << "keypoints" << s.store->GetIndex();
+        fs << "disparity" << (s.dpm ? s.dpm->GetIndex() : INVALID_INDEX);
+        fs << "}";
+    }
+    fs << "]";
+    fs << "frames" << "[";
+    for (S1::const_iterator itr = Begin1(); itr != End1(); itr++)
+    {
+        const Frame& t = itr->second;
+        fs << "{";
+        fs << "index" << t.GetIndex();
+        fs << "hits"  << t.size();
+        fs << "pose"  << t.pose.pose.GetTransformMatrix();
+        fs << "augmentedFeatureSet" << "{";
+        for (std::map<size_t, ImageFeatureSet>::const_iterator aug = t.augmentedFeaturs.begin(); aug != t.augmentedFeaturs.end(); aug++)
+        {
+            std::stringstream ss;
+            ss << std::setfill('0') << std::setw(5) << t.GetIndex() << "." << std::setfill('0') << std::setw(2) << aug->first << ".dat";
+
+            Path saveTo = augPath / ss.str();
+
+            if (!aug->second.Store(saveTo))
+            {
+                E_ERROR << "error writing augmented feature set to " << saveTo;
+                return false;
+            }
+
+            fs << "store" << aug->first;
+            fs << "items" << aug->second.GetSize();
+            fs << "src" << saveTo;
+        }
+        fs << "}";
+        fs << "}";
+    }
+    fs << "]";
+    fs << "landmarks" << "{";
+    fs << "src"   << lmkPath;
+    fs << "items" << GetSize0();
+    fs << "}";
+
+    fs << "hits" << "{";
+    fs << "items" << hits;
+    fs << "src"   << hitPath;
+    fs << "}";
+
+    fs << "keyframes" << "[";
+    BOOST_FOREACH (size_t kf, m_keyframes)
+    {
+        fs << kf;
+    }
+    fs << "]";
+
+    return true;
+}
+
+bool Map::Restore(const Path & path)
+{
+    // reset everything first..
+    Clear();
+
+    const Path idxPath = path / "index.yml";
+    cv::FileStorage fs(idxPath.string(), cv::FileStorage::READ);
+    std::ifstream is;
+
+    if (!fs.isOpened())
+    {
+        E_ERROR << "error reading from " << idxPath;
+        return false;
+    }
+
+    fs["sequence"] >> m_seqPath;
+
+    Sequence seq;
+    if (!seq.Restore(m_seqPath))
+    {
+        E_ERROR << "error restoring sequence from " << m_seqPath;
+        return false;
+    }
+
+    cv::FileNode sources = fs["sources"];
+    for (cv::FileNodeIterator itr = sources.begin(); itr != sources.end(); itr++)
+    {
+        size_t keypoints, disparity;
+        (*itr)["keypoints"] >> keypoints;
+        (*itr)["disparity"] >> disparity;
+        
+        FeatureStore::ConstOwn store = seq.GetFeatureStore(keypoints);
+        DisparityStore::ConstOwn dpm = disparity == INVALID_INDEX ? DisparityStore::ConstOwn() : seq.GetDisparityStore(disparity);
+
+        if (!store)
+        {
+            E_ERROR << "missing feature store" << keypoints;
+            return false;
+        }
+
+        if (!dpm && disparity != INVALID_INDEX)
+        {
+            E_ERROR << "missing disparity store " << disparity;
+            return false;
+        }
+
+        AddSource(store, dpm);
+    }
+
+    cv::FileNode frames = fs["frames"];
+    for (cv::FileNodeIterator itr = frames.begin(); itr != frames.end(); itr++)
+    {
+        size_t index;
+        (*itr)["index"] >> index;
+
+        Frame& t = GetFrame(index);
+        cv::Mat tform;
+
+        (*itr)["pose"] >> tform;
+
+        if (!t.pose.pose.SetTransformMatrix(tform))
+        {
+            E_ERROR << "error setting pose matrix";
+            return false;
+        }
+
+        cv::FileNode aug = fs["augmentedFeatureSet"];
+        for (cv::FileNodeIterator a = aug.begin(); a != aug.end(); a++)
+        {
+            size_t store;
+            Path from;
+
+            fs["store"] >> store;
+            fs["src"]   >> from;
+
+            if (!t.augmentedFeaturs[store].Restore(from))
+            {
+                E_ERROR << "error restoring augmented feature store from " << from;
+                return false;
+            }
+        }
+    }
+
+    // keyframes
+    cv::FileNode kf = fs["keyframes"];
+    for (cv::FileNodeIterator itr = kf.begin(); itr != kf.end(); itr++)
+    {
+        size_t index;
+        (*itr) >> index;
+        m_keyframes.insert(index);
+    }
+
+    // landmarks
+    cv::FileNode landmarks = fs["landmarks"];
+    Path lmkPath;
+    landmarks["src"] >> lmkPath;
+
+    is.open(lmkPath.string().c_str(), std::ios::in | std::ios::binary);
+    if (!is.is_open())
+    {
+        E_ERROR << "error loading landmarks from " << lmkPath;
+        return false;
+    }
+
+    while (!is.eof())
+    {
+        Landmark& l = AddLandmark();
+        is.read((char*)&l.position, sizeof l.position);
+        is.read((char*)&l.cov,      sizeof l.cov);
+    }
+
+    is.close();
+    E_INFO << GetLandmarks() << " landmark(s) loaded from " << fullpath(lmkPath);
+
+    // hits
+    cv::FileNode hits = fs["hits"];
+    Path hitPath;
+    
+    hits["src"] >> hitPath;
+    
+    is.open(hitPath.string(), std::ios::in | std::ios::binary);
+    if (!is.is_open())
+    {
+        E_ERROR << "error loading hits from " << hitPath;
+        return false;
+    }
+
+    while (!is.eof())
+    {
+        size_t i, j, k;
+        size_t index;
+        Point2F proj;
+
+        is.read((char*)&i, sizeof i);
+        is.read((char*)&j, sizeof j);
+        is.read((char*)&k, sizeof k);
+        is.read((char*)&index, sizeof index);
+        is.read((char*)&proj,  sizeof proj );
+
+        Landmark& l = GetLandmark(i);
+        Frame&    t = GetFrame(j);
+        Source&   s = GetSource(k);
+        
+        l.Hit(t, s, index).proj = proj;
+        Landmark::Ptrs& u = t.featureLandmarkLookup[s.store->GetIndex()];
+        if (u.empty())
+        {
+            const size_t features = (*s.store)[k].GetSize() + t.augmentedFeaturs[s.store->GetIndex()].GetSize();
+            u.resize(features, NULL);
+        }
+
+        u[index] = &l; // update the feature-landmark table
+    }
+
+    return true;
 }
 
 Landmark::Ptrs Map::GetLandmarks(std::vector<size_t> indices)

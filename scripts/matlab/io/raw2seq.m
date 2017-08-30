@@ -60,7 +60,8 @@ function seq = loadSequenceKITTI(seqPath)
         'seqPath', seqPath,                                       ...
 		'calPath', fullfile(seqPath,'calib.txt'),                 ...
         'imuPath', fullfile(seqPath,'../','../','poses',poseFile),...
-        'imgPath', fullfile(seqPath,'image_*')                    ...
+        'imgPath', fullfile(seqPath,'image_*'),                   ...
+        'lidPath', fullfile(seqPath,'velodyne')                   ...
     );
 	
 	%
@@ -83,9 +84,9 @@ function seq = loadSequenceKITTI(seqPath)
 	d = dir(paths.imgPath);
 	cams = numel(d);
 
-	if     cams == 2, fprintf('..2 greyscale cameras are found!\n');
-	elseif cams == 4, fprintf('..2 greyscale + 2 colour cameras are found!!\n');
-	else,             error 'something wrong with the number of image folders!!';
+	if     cams == 2, fprintf('..2 greyscale cameras found!\n');
+	elseif cams == 4, fprintf('..2 greyscale + 2 colour cameras found!!\n');
+	else,             error 'something wrong with the number of image folders.';
 	end
 
 	for k = 1 : cams
@@ -114,8 +115,15 @@ function seq = loadSequenceKITTI(seqPath)
 	% 3. LiDAR..
 	%
 	lid2cam = cal(:,:,5)';
-	lid = []; % TODO: process LiDAR data when it's available
+    lid(1) = makeLiDARStruct();
+    lid(1).Format = 'XYZI'; % KITTI stores LiDAR readings as (x,y,z,intensity) tuples
+    lid(1).DataFiles = fdir(paths.lidPath, '*.bin');
+    lid(1).E = [lid2cam;0,0,0,1];
 	
+    if ~isempty(lid(1).DataFiles)
+        fprintf('..found %d Velodyne LiDAR data\n',numel(lid(1).DataFiles));
+    end
+    
     %
     % 4. Motion
     %
@@ -239,7 +247,6 @@ function seq = loadSequenceKITTIRaw(seqPath)
     lid(1).Format = 'XYZI'; % KITTI stores LiDAR readings as (x,y,z,intensity) tuples
     lid(1).DataFiles = fdir(paths.lidPath, '*.bin');
     lid(1).E = lid2cam;
-    % lid(1).E(1:3,4) = lid(1).E(1:3,4) * 100;
 
     % check the number of LiDAR frames
     if ~isempty(lid(1).DataFiles), assert(numel(lid(1).DataFiles) == frames); end
@@ -249,11 +256,10 @@ function seq = loadSequenceKITTIRaw(seqPath)
 		cam(1).M = zeros(4,4,frames);
         oxts = loadOxtsliteData(seqPath);
         pose = convertOxtsToPose(oxts);
-
         assert(numel(pose) == frames);
-
-        for t = 1 : frames, cam(1).M(:,:,t) = imu2cam * inv(pose{t}) * cam2imu; end
-        % cam(1).M(1:3,4,:) = cam(1).M(1:3,4,:) * 100;
+        for t = 1 : frames
+            cam(1).M(:,:,t) = imu2cam * inv(pose{t}) * cam2imu;
+        end
     end
     
     seq = struct(...

@@ -1,13 +1,16 @@
 % borrowed from triangulateMidPoint in cameraPose.m
 function [g,e,k,rpe] = triangulatePoints(x0,x1,P0,P1)
+    if size(x0,2) == 2, x0 = eucl2homo(x0); end
+    if size(x1,2) == 2, x1 = eucl2homo(x1); end
+
 	assert(numel(x0) == numel(x1));
 
 	[KR0,c0] = pmat2krc(P0);
 	[KR1,c1] = pmat2krc(P1);
 
 	% normalised image coordinates
-	n0 = eucl2homo(x0) * inv(KR0)';
-	n1 = eucl2homo(x1) * inv(KR1)';
+	n0 = x0 * inv(KR0)';
+	n1 = x1 * inv(KR1)';
 
 	t = c1 - c0;
 	m = c0 + c1;
