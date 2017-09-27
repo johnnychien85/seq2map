@@ -54,6 +54,8 @@ namespace seq2map
     typedef std::vector<size_t> Indices;
     const size_t INVALID_INDEX = (size_t)-1;
     IndexList makeIndices(size_t start, size_t end);
+
+    typedef std::map<size_t, bool> FlagTable;
 }
 
 /**

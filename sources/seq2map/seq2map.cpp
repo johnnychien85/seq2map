@@ -33,7 +33,7 @@ public:
     /**
      *
      */
-    bool operator() (Map& map, size_t t);
+    bool operator() (Map& map, size_t t, size_t& ti, size_t& tj);
 
     /**
      *
@@ -44,6 +44,11 @@ public:
      *
      */
     inline bool IsOkay() const { return m_okay; }
+
+    /**
+     *
+     */
+    inline bool IsSynched() const { return m_source.frame == m_target.frame; }
 
     //
     // Persistence
@@ -128,11 +133,11 @@ bool TrackingPath::Check()
     return m_okay;
 }
 
-bool TrackingPath::operator() (Map& map, size_t t)
+bool TrackingPath::operator() (Map& map, size_t t, size_t& ti, size_t& tj)
 {
     return m_okay && tracker(map,
-        map.GetSource(m_source.source), map.GetFrame(m_source.frame + t),
-        map.GetSource(m_target.source), map.GetFrame(m_target.frame + t)
+        map.GetSource(m_source.source), map.GetFrame(ti = m_source.frame + t),
+        map.GetSource(m_target.source), map.GetFrame(tj = m_target.frame + t)
     );
 }
 
@@ -167,6 +172,8 @@ bool TrackingPath::Restore(const cv::FileNode& fn)
         return false;
     }
 
+    tracker.rendering = false;
+
     fn["source"]["source"] >> m_source.source;
     fn["source"]["frame"]  >> m_source.frame;
     fn["target"]["source"] >> m_target.source;
@@ -180,9 +187,11 @@ bool Mapper::operator() (Map& map, size_t t, size_t n)
     for (size_t i = 0; i < tracking.size(); i++)
     {
         TrackingPath& tr = tracking[i];
-        if (tr.InScope(t, n) && !tracking[i](map, t)) return false;
+        const FeatureTracker::Stats& stats = tr.tracker.stats;
+        size_t ti, tj;
+        
+        if (tr.InScope(t, n) && !tr(map, t, ti, tj)) return false;
 
-        FeatureTracker::Stats& stats = tr.tracker.stats;
         /*
         E_INFO 
             << stats.spawned  << " spawned, "
@@ -194,6 +203,92 @@ bool Mapper::operator() (Map& map, size_t t, size_t n)
         */
         //E_INFO << "Matcher: " << tr.tracker.matcher.Report();
     }
+
+    return true;
+
+    // if (i != tracking.size() - 1) continue;
+    // pose-only bundle adjustment
+    // if (!stats.fresh && !tr.IsSynched() && (tj == optimised.GetIndex() || ti == optimised.GetIndex()))
+    Frame& optimised = map.GetFrame(t+1);
+    if (tracking.size() > 1 && optimised.size() > 0)
+    {
+        typedef std::map<size_t, GeometricMapping::WorldToImageBuilder> BuilderMap;
+        typedef std::map<size_t, Landmark::Ptrs> LandmarkMap;
+
+        BuilderMap  builders;
+        LandmarkMap lmks;
+
+        for (Frame::const_iterator hit = optimised.cbegin(); hit != optimised.cend(); hit++)
+        {
+            Landmark& lmk = hit.GetContainer<0, Landmark>();
+            Frame&    frm = hit.GetContainer<1, Frame   >();
+            Source&   src = hit.GetContainer<2, Source  >();
+
+            if (lmk.size() == 1 || lmk.position.z == 0) continue; // skip one-time observation
+
+            // E_INFO << "lmk=" << lmk.GetIndex() << ",frm=" << frm.GetIndex() << ",src=" << src.GetIndex() << ",idx=" << src.store->GetIndex() << ",pos=" << lmk.position << ",proj=" << hit->proj;
+            builders[src.GetIndex()].Add(lmk.position, hit->proj, lmk.GetIndex());
+            lmks[src.GetIndex()].push_back(&lmk);
+        }
+
+        ConsensusPoseEstimator estimator;
+        PoseEstimator::Estimate estimate;
+        //PoseEstimator::ConstOwn solver = PoseEstimator::ConstOwn(new DummyPoseEstimator(optimised.pose.pose));
+        PoseEstimator::ConstOwn solver;
+        GeometricMapping solverData;
+
+        for (BuilderMap::const_iterator itr = builders.begin(); itr != builders.end(); itr++)
+        {
+            ProjectionModel::ConstOwn proj = map.GetSource(itr->first).store->GetCamera()->GetPosedProjection();
+            AlignmentObjective::Own obj = AlignmentObjective::Own(new ProjectionObjective(proj));
+
+            GeometricMapping data = itr->second.Build();
+            data.metric = map.GetStructure(lmks[itr->first]).metric->Reduce();
+
+            if (!obj->SetData(data))
+            {
+                E_ERROR << "error setting 3D-to-2D perspective constraint(s) for source " << itr->first;
+                return false;
+            }
+
+            if (!solver)
+            {
+                solver = PoseEstimator::ConstOwn(new PerspevtivePoseEstimator(proj));
+                solverData = data;
+            }
+
+            estimator.AddSelector(obj->GetSelector(5.0f));
+        }
+
+        estimator.SetStrategy(ConsensusPoseEstimator::RANSAC);
+        estimator.SetMaxIterations(10);
+        estimator.SetMinInlierRatio(0.1f);
+        estimator.SetConfidence(0.99f);
+        estimator.SetSolver(solver);
+        estimator.SetVerbose(true);
+        estimator.EnableOptimisation();
+
+        std::vector<IndexList> survived, eliminated;
+
+        if (!estimator(solverData, estimate, survived, eliminated))
+        {
+            E_WARNING << "error optimising frame pose of frame " << optimised.GetIndex();
+
+            PersistentMat(solverData.src.mat).Store(Path("src.bin"));
+            PersistentMat(solverData.dst.mat).Store(Path("dst.bin"));
+            PersistentMat(cv::Mat(solverData.indices)).Store(Path("idx.bin"));
+            PersistentMat(optimised.pose.pose.GetTransformMatrix()).Store(Path("mot.bin"));
+
+            map.Store(Path("dump"));
+
+            return false;
+        }
+        else
+        {
+            optimised.pose = estimate;
+        }
+    }
+
 
     return true;
 }
@@ -401,6 +496,7 @@ bool MyApp::Execute()
             << std::fixed << std::setprecision(2) << ((double)(until - t) / fps) << "s left";
 
         const Frame& ti = map.GetFrame(t);
+        const Frame& tj = map.GetFrame(t + 1);
         const size_t kf = map.GetLastKeyframe();
         const double covis = kf == INVALID_INDEX ? 0.0f : map.GetFrame(kf).GetCovisibility(ti);
 
@@ -435,7 +531,7 @@ bool MyApp::Execute()
         if (!ti.pose.valid || !tj.pose.valid)
         {
             E_ERROR << "motion from " << ti.GetIndex() << " to " << tj.GetIndex() << " not solved!";
-            mot.Store(Path("mot.failed.txt"));
+            mot.Store(Path(outPath) / "mot.failed.txt");
 
             return false;
         }
@@ -443,9 +539,10 @@ bool MyApp::Execute()
         mot.Update(ti.pose.pose.GetInverse() >> tj.pose.pose);
     }
 
-    Path motPath = Path(outPath) / Path(mapperPath);
-    motPath.replace_extension(".txt");
+    Path motPath = Path(outPath) / "mot.txt";
     mot.Store(motPath);
+
+    E_INFO << "motion saved to " << motPath;
 
     return true;
 }

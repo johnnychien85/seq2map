@@ -115,16 +115,17 @@ cv::Mat EpipolarObjective::operator() (const EuclideanTransform& tform) const
     cv::Mat x0 = m_data.src.mat;
     cv::Mat x1 = m_data.dst.mat;
 
-    cv::Mat F = tform.ToEssentialMatrix();
+    const EuclideanTransform M = M0.GetInverse() >> tform >> M1;
+    const cv::Mat F = M.ToEssentialMatrix();
 
-    cv::Mat Fx0 = x0 * F.t();
-    cv::Mat Fx00 = Fx0.col(0);
-    cv::Mat Fx01 = Fx0.col(1);
-    cv::Mat Fx02 = Fx0.col(2);
+    const cv::Mat Fx0 = x0 * F.t();
+    const cv::Mat Fx00 = Fx0.col(0);
+    const cv::Mat Fx01 = Fx0.col(1);
+    const cv::Mat Fx02 = Fx0.col(2);
 
-    cv::Mat xFx = Fx00.mul(x1.col(0)) + Fx01.mul(x1.col(1)) + Fx02; 
-    //      xFx = Fx00.mul(x1.col(0)) + Fx01.mul(x1.col(1)) + Fx02.mul(x1.col(2));
-    //                                                   should be one ^^^^^^^^^
+    const cv::Mat xFx = Fx00.mul(x1.col(0)) + Fx01.mul(x1.col(1)) + Fx02; 
+    //            xFx = Fx00.mul(x1.col(0)) + Fx01.mul(x1.col(1)) + Fx02.mul(x1.col(2));
+    //                                                         should be one ^^^^^^^^^
 
     if (m_distType == ALGEBRAIC)
     {
@@ -363,17 +364,27 @@ cv::Mat PhotometricObjective::operator() (const EuclideanTransform& tf) const
     // source 3D geometry
     Geometry x = m_data.src;
 
-    // project to the 2D image plane as packed 2D points (for interpolation)
-    cv::Mat proj;
-    m_proj->Project(tf(x, true), ProjectionModel::EUCLIDEAN_2D).Reshape(Geometry::PACKED).mat.convertTo(proj, CV_32F);
+    // project to the 2D image plane
+    Geometry p = m_proj->Project(tf(x, true), ProjectionModel::EUCLIDEAN_2D);
+
+    // convert the projected image coordinates to packed points for interpolation
+    cv::Mat p32f;
+    p.Reshape(Geometry::PACKED).mat.convertTo(p32f, CV_32F);
 
     // find mapped pixel values
-    Geometry y = Geometry(Geometry::PACKED, interp(m_dst, proj, m_interp));
+    Geometry y = Geometry(Geometry::PACKED, interp(m_dst, p32f, m_interp));
 
-    // metric conversion
-    Geometry jac = m_proj->GetJacobian(x, y);
-    cv::Mat dx = interp(m_gradient.Ix, proj, m_interp);
-    cv::Mat dy = interp(m_gradient.Iy, proj, m_interp);
+    const MahalanobisMetric* m = dynamic_cast<const MahalanobisMetric*>(m_data.metric.get());
+
+    if (!m)
+    {
+        return (*m_data.metric)(m_data.dst, y).mat;
+    }
+
+    // error propagation for Mahalanobis metric 
+    Geometry jac = m_proj->GetJacobian(x, p);
+    cv::Mat dx = interp(m_gradient.Ix, p32f, m_interp);
+    cv::Mat dy = interp(m_gradient.Iy, p32f, m_interp);
     cv::Mat dI = cv::Mat(jac.mat.rows, 3, jac.mat.depth());
 
     // propagate 3D -> 2D error metric to image manifold (2D -> 1D)
@@ -752,26 +763,36 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
     if (success && m_optimisation)
     {
         MultiObjectivePoseEstimation refinement;
-        refinement.SetDifferentiationStep(1e-3);
+        refinement.SetDifferentiationStep(1e-2);
         refinement.SetPose(estimate.pose);
+        std::vector<Indices> inliersOptim;
 
         size_t i = 0;
+        inliersOptim.resize(m_selectors.size());
+
         BOOST_FOREACH (const AlignmentObjective::InlierSelector& g, m_selectors)
         {
-            AlignmentObjective::Own sub = g.objective->GetSubObjective(inliers[i++]);
+            const IndexList& idx = inliers[i];
+            AlignmentObjective::Own sub = g.objective->GetSubObjective(idx);
 
             if (!sub)
             {
-                E_WARNING << "error building sub-objective for model " << (i-1);
-                continue;
+                E_WARNING << "error building sub-objective for model " << i;
+            }
+            else if (sub->GetData().GetSize() > 0)
+            {
+                refinement.AddObjective(AlignmentObjective::ConstOwn(sub));
+                inliersOptim[i].insert(inliersOptim[i].end(), idx.begin(), idx.end());
             }
 
-            refinement.AddObjective(AlignmentObjective::ConstOwn(sub));
+            i++;
         }
 
         LeastSquaresSolver::State state;
         LevenbergMarquardtAlgorithm levmar;
+
         levmar.SetVervbose(m_verbose);
+        levmar.SetInitialDamp(1e-2);
 
         if (!levmar.Solve(refinement, state))
         {
@@ -793,12 +814,13 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
 
         if (!checkPositiveDefinite(state.hessian))
         {
-            E_ERROR << "return Hessian is not positive definite";
+            E_ERROR << "returned Hessian is not positive definite";
             E_ERROR << mat2string(state.hessian, "H");
 
             return false;
         }
 
+        EuclideanTransform initPose = estimate.pose;
         cv::Mat cov; cv::invert(state.hessian, cov);
 
         estimate.pose = refinement.GetPose();
@@ -825,6 +847,42 @@ bool ConsensusPoseEstimator::operator() (const GeometricMapping& mapping, Estima
         if (numInliers < minInliers)
         {
             E_WARNING << "the optimised model results in too few inliers (" << numInliers << " < " << minInliers << ")";
+            E_WARNING << "begin of analysis..";
+
+            size_t i = 0;
+            BOOST_FOREACH(const AlignmentObjective::InlierSelector& g, m_selectors)
+            {
+                cv::Mat err = (*g.objective)(estimate.pose);
+                const Indices& idx = inliersOptim[i];
+
+                E_WARNING << "objective " << i << " : " << idx.size() << " -> " << inliers[i].size() << " / " << outliers[i].size() << " (rmse=" << rms(err) << ")";
+
+                const GeometricMapping& data = g.objective->GetData();
+                std::stringstream ss; ss << "obj" << i;
+
+                PersistentMat(data.src.mat.clone()).Store(Path(ss.str() + ".src.bin"));
+                PersistentMat(data.dst.mat.clone()).Store(Path(ss.str() + ".dst.bin"));
+                PersistentMat(err).Store(Path(ss.str() + ".err.bin"));
+
+                if (!idx.empty())
+                {
+                    PersistentMat(cv::Mat(idx)).Store(Path(ss.str() + ".idx.bin"));
+                }
+
+                const WeightedEuclideanMetric* we = dynamic_cast<const WeightedEuclideanMetric*>(data.metric.get());
+
+                if (we)
+                {
+                    PersistentMat(we->GetWeights().clone()).Store(Path(ss.str() + ".we.bin"));
+                }
+
+                i++;
+            }
+            
+            PersistentMat(initPose.GetTransformMatrix()).Store(Path("pose.init.bin"));
+            PersistentMat(estimate.pose.GetTransformMatrix()).Store(Path("pose.optm.bin"));
+
+            E_WARNING << "..end of analysis";
         }
     }
 
@@ -1176,6 +1234,8 @@ StructureEstimation::Estimate TwoViewTriangulation::operator() (const GeometricM
     {
         if (g.mat.at<double>(i, 2) < 0)
         {
+            // E_TRACE << "lmk=" << m.indices.at(i) << ",pos=" << g.mat.row(i);
+
             g.mat.row(i).setTo(0.0f);
             cov.row(i).setTo(0.0f);
         }
@@ -1277,7 +1337,9 @@ void MidPointTriangulation::DecomposeProjMatrix(const cv::Mat& P, cv::Mat& KRinv
 
 Geometry MidPointTriangulation::operator() (const Geometry& x0, const Geometry& x1, const EuclideanTransform& tform) const
 {
-    const PosedProjection Q1(tform, P1.Clone());
+    // const PosedProjection Q1(tform, P1.Clone());
+    const EuclideanTransform PQ = tform >> P1.pose;
+    const PosedProjection Q1(PQ, P1.proj->Clone());
 
     cv::Mat c0 = P0.pose.GetInverse().GetTranslation();
     cv::Mat c1 = Q1.pose.GetInverse().GetTranslation();

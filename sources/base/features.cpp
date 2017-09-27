@@ -124,7 +124,7 @@ bool seq2map::ImageFeatureSet::Store(Path& path) const
         return false;
     }
 
-    static String type = PersistentMat::CvDepthToString(m_descriptors.type());
+    const String type = PersistentMat::CvDepthToString(m_descriptors.depth());
 
     // write the magic number first
     os << s_fileMagicNumber;
@@ -469,7 +469,7 @@ IndexList ImageFeatureMap::Select(int mask) const
     return indices;
 }
 
-void ImageFeatureMap::Draw(Mat& canvas)
+void ImageFeatureMap::Draw(Mat& canvas) const
 {
     const KeyPoints& src = m_src.GetKeyPoints();
     const KeyPoints& dst = m_dst.GetKeyPoints();
@@ -489,7 +489,7 @@ void ImageFeatureMap::Draw(Mat& canvas)
     }
 }
 
-Mat ImageFeatureMap::Draw(const cv::Mat& src, const cv::Mat& dst)
+Mat ImageFeatureMap::Draw(const cv::Mat& src, const cv::Mat& dst) const
 {
     Mat canvas = imfuse(src, dst);
     Draw(canvas);
@@ -601,6 +601,20 @@ cv::Mat FeatureMatcher::NormaliseDescriptors(const cv::Mat& desc)
     return normalised;
 }
 
+float FeatureMatcher::GetDistanceThreshold(float ratio, int metric, size_t d)
+{
+    switch (metric)
+    {
+    case NORM_L1:       return (float)(ratio * 4);                        break;
+    case NORM_L2:       return (float)(ratio * 2 * std::sqrt((double)d)); break;
+    case NORM_L2SQR:    return (float)(ratio * 2 * (double)d);            break;
+    case NORM_HAMMING:  return (float)(ratio * 8 * (double)d);            break;
+    }
+
+    E_ERROR << "unsupported metric " << ImageFeatureSet::NormType2String(metric);
+    return ratio;
+}
+
 FeatureMatches FeatureMatcher::MatchDescriptors(const Mat& src, const Mat& dst, int metric, bool ratioTest)
 {
     FeatureMatches matches;
@@ -634,11 +648,15 @@ FeatureMatches FeatureMatcher::MatchDescriptors(const Mat& src, const Mat& dst, 
         }
     }
 
+    const float distTreshold = GetDistanceThreshold(m_maxDistance, metric, src.cols);
+
     if (ratioTest)
     {
         AutoSpeedometreMeasure measure(m_ratioTestMetre, knn.size());
         BOOST_FOREACH(const std::vector<DMatch>& match, knn)
         {
+            if (match[0].distance > distTreshold) continue;
+
             float ratio = match[0].distance / match[1].distance;
             int flag = ratio <= m_maxRatio ? FeatureMatch::INLIER : FeatureMatch::RATIO_TEST_FAILED;
 
@@ -649,6 +667,7 @@ FeatureMatches FeatureMatcher::MatchDescriptors(const Mat& src, const Mat& dst, 
     {
         BOOST_FOREACH(const std::vector<DMatch>& match, knn)
         {
+            if (match[0].distance > distTreshold) continue;
             matches.push_back(FeatureMatch(match[0].queryIdx, match[0].trainIdx, match[0].distance));
         }
     }

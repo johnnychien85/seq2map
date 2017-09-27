@@ -45,7 +45,7 @@ void MyApp::SetOptions(Options& o, Options& h, Positional& p)
 
     o.add_options()
         ("feature-store,f",   po::value<size_t>(&m_kptsStoreId  )->default_value(    0), "Source feature store")
-        ("disparity-store,d", po::value<int>   (&m_dispStoreId  )->default_value(   -1), "Optional disparity store, set to -1 to disable using disparity maps.")
+        ("disparity-store,d", po::value<int>   (&m_dispStoreId  )->default_value(    0), "Optional disparity store, set to -1 to disable using disparity maps.")
         ("start",             po::value<int>   (&m_start        )->default_value(    0), "Start frame.")
         ("until",             po::value<int>   (&m_until        )->default_value(   -1), "Last frame. Set to negative number to go through the whole sequence.")
         ("seed",              po::value<int>   (&m_seed         )->default_value(   -1), "Seed for random number generation. Set to a negative number to use system time as seed.")

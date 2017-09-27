@@ -133,6 +133,11 @@ namespace seq2map
         FeatureStore::ConstOwn store; ///< the source feature store
         DisparityStore::ConstOwn dpm; ///< the source disparity store
 
+        /**
+         * Table to trace feature-disparity association
+         */
+        std::map<size_t, FlagTable> frameFeatureDisparityUse;
+
     protected:
         friend class Map3<Hit, Landmark, Frame, Source>;
         Source(size_t index = INVALID_INDEX) : Dimension(index) {}
@@ -204,6 +209,11 @@ namespace seq2map
          *
          */
         inline size_t GetLastKeyframe() const { return m_keyframes.empty() ? INVALID_INDEX : *m_keyframes.rbegin(); }
+
+        /**
+         *
+         */
+        inline const std::set<size_t>& GetKeyframes() const { return m_keyframes; }
 
         /**
          * Remove a landmark from the map.
@@ -321,7 +331,7 @@ namespace seq2map
              * correspondences established by a FeatureMatcher. Currently only PhotometricObjectiveBuilder
              * uses pre-built data term.
              */
-            virtual bool Prebuilt() const { return false; }
+            virtual bool IsPrebuilt() const { return false; }
 
             /**
              * ...
@@ -385,11 +395,13 @@ namespace seq2map
          */
         enum OutlierRejectionScheme
         {
-            EPIPOLAR_ALIGN      = 1 << 0, ///< Epipolar constraints
-            FORWARD_PROJ_ALIGN  = 1 << 1, ///< projective constraints when 3D-to-2D correspondences are available
-            BACKWARD_PROJ_ALIGN = 1 << 2, ///< projective constraints when 2D-to-3D correspondences are available
-            RIGID_ALIGN         = 1 << 3, ///< rigid alignment when 3D-to-3D correspondences are available
-            PHOTOMETRIC_ALIGN   = 1 << 4  ///< photometric alignment when intensity data are available
+            EPIPOLAR_ALIGN       = 1 << 0, ///< Epipolar constraints
+            FORWARD_PROJ_ALIGN   = 1 << 1, ///< projective constraints when 3D-to-2D correspondences are available
+            BACKWARD_PROJ_ALIGN  = 1 << 2, ///< projective constraints when 2D-to-3D correspondences are available
+            RIGID_ALIGN          = 1 << 3, ///< rigid alignment when 3D-to-3D correspondences are available
+            PHOTOMETRIC_ALIGN    = 1 << 4, ///< photometric alignment when intensity data are available
+            XFORWARD_PROJ_ALIGN  = 1 << 7 | FORWARD_PROJ_ALIGN, ///< extra forward projective constraints for egomotion refinement
+            XBACKWARD_PROJ_ALIGN = 1 << 7 | BACKWARD_PROJ_ALIGN ///< extra backward projective constraints for egomotion refinement
         };
 
         /**
@@ -432,15 +444,23 @@ namespace seq2map
         struct OutlierRejectionOptions
         {
             OutlierRejectionOptions(int model)
-            : model(model), maxIterations(30), minInlierRatio(0.5), confidence(0.5), epipolarEps(1e3), sigma(1.0f), fastMetric(false) {}
+            : model(model),
+              maxIterations  (30   ),
+              minInlierRatio ( 0.50),
+              confidence     ( 0.50),
+              epipolarEps    ( 1e3 ),
+              sigma          ( 1.0f),
+              fastMetric     (false),
+              photometricDamp( 1.0f) {}
 
-            int model;             ///< strategies to identify outliers from noisy feature matches
-            size_t maxIterations;  ///< the upper bound of trials
-            double minInlierRatio; ///< the percentage of inliers minimally required to accept a motion hypothesis
-            double confidence;     ///< desired confidence to obtain a valid result, from zero to one
-            double epipolarEps;    ///< threshold of the epipolar objective, in the normalised image pixel
-            double sigma;          ///< threshold to determine if a model is fit or not
-            bool fastMetric;       ///< reduce Mahalanobis metric to a weighted Euclidean one for acceleration
+            int model;              ///< strategies to identify outliers from noisy feature matches
+            size_t maxIterations;   ///< the upper bound of trials
+            double minInlierRatio;  ///< the percentage of inliers minimally required to accept a motion hypothesis
+            double confidence;      ///< desired confidence to obtain a valid result, from zero to one
+            double epipolarEps;     ///< threshold of the epipolar objective, in the normalised image pixel
+            double sigma;           ///< threshold to determine if a model is fit or not
+            bool fastMetric;        ///< reduce Mahalanobis metric to a weighted Euclidean one for acceleration
+            double photometricDamp; ///< damping factor for photometric alignment model
         };
 
         /**
@@ -468,10 +488,11 @@ namespace seq2map
         public:
             typedef std::map<int, AlignmentObjective::InlierSelector::Stats> ObjectiveStats;
 
-            Stats() : spawned(0), tracked(0), joined(0), removed(0), injected(0), accumulated(0) { motion.valid = false; }
+            Stats() : fresh(false), spawned(0), tracked(0), joined(0), removed(0), injected(0), accumulated(0) { motion.valid = false; }
             String ToString() const;
             void Render(const cv::Mat& canvas, String& tracker, Map& map, const EuclideanTransform& tform);
 
+            bool fresh;      ///< is it the first time the relative pose between source and target frames is being solved
             size_t spawned;  ///< number of newly discovered landmarks
             size_t tracked;  ///< number of tracked landmarks
             size_t joined;   ///< number of joined landmarks
@@ -494,7 +515,7 @@ namespace seq2map
         {
         public:
             EpipolarObjectiveBuilder(
-                const ProjectionModel::ConstOwn& pi, const ProjectionModel::ConstOwn& pj,
+                const boost::shared_ptr<const PosedProjection>& pi, const boost::shared_ptr<const PosedProjection>& pj,
                 double epsilon, AlignmentObjective::InlierSelector::Stats& stats)
             : pi(pi), pj(pj), epsilon(epsilon), ObjectiveBuilder(stats) {}
 
@@ -503,8 +524,8 @@ namespace seq2map
             virtual PoseEstimator::Own GetSolver() const { return PoseEstimator::Own(new EssentialMatrixDecomposer(pi, pj)); }
             virtual String ToString() const { return "EPIPOLAR"; }
 
-            const ProjectionModel::ConstOwn pi;
-            const ProjectionModel::ConstOwn pj;
+            const boost::shared_ptr<const PosedProjection> pi;
+            const boost::shared_ptr<const PosedProjection> pj;
 
             double epsilon;
 
@@ -520,14 +541,15 @@ namespace seq2map
         public:
             PerspectiveObjectiveBuilder(
                 const ProjectionModel::ConstOwn& p, const StructureEstimation::Estimate& g,
-                bool forward, bool reduceMetric, AlignmentObjective::InlierSelector::Stats& stats)
-            : p(p), g(g), forward(forward), ObjectiveBuilder(stats, reduceMetric) {}
+                bool forward, bool reduceMetric, bool prebuilt, AlignmentObjective::InlierSelector::Stats& stats)
+            : p(p), g(g), forward(forward), ObjectiveBuilder(stats, reduceMetric), m_prebuilt(prebuilt) {}
 
             virtual bool AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
             virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma);
             virtual PoseEstimator::Own GetSolver() const;
 
             virtual String ToString() const { return forward ? "FORWARD PROJECTION" : "BACKWARD PROJECTION"; }
+            virtual bool IsPrebuilt() const { return m_prebuilt; }
 
             const ProjectionModel::ConstOwn p;
             const StructureEstimation::Estimate& g;
@@ -536,6 +558,7 @@ namespace seq2map
         private:
             GeometricMapping::WorldToImageBuilder m_builder;
             IndexList m_idx;
+            const bool m_prebuilt;
         };
 
         /**
@@ -546,14 +569,14 @@ namespace seq2map
         public:
             PhotometricObjectiveBuilder(
                 const ProjectionModel::ConstOwn& pj, const StructureEstimation::Estimate& gi,
-                const cv::Mat& Ii, const cv::Mat& Ij, bool reduceMetric, AlignmentObjective::InlierSelector::Stats& stats)
-            : pj(pj), gi(gi), Ii(Ii), Ij(Ij), ObjectiveBuilder(stats, reduceMetric) {}
+                const cv::Mat& Ii, const cv::Mat& Ij, bool reduceMetric, double damp, AlignmentObjective::InlierSelector::Stats& stats)
+            : pj(pj), gi(gi), Ii(Ii), Ij(Ij), m_damp(damp > 0 ? damp : 1.0f), ObjectiveBuilder(stats, reduceMetric) {}
 
             virtual bool AddData(size_t i, size_t j, size_t k, const ImageFeature& fi, const ImageFeature& fj, size_t localIdx);
             virtual bool Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma);
             virtual PoseEstimator::Own GetSolver() const { return PoseEstimator::Own(); } // photometric objective has no closed-form solver
 
-            virtual bool Prebuilt() const { return true; }
+            virtual bool IsPrebuilt() const { return true; }
             virtual String ToString() const { return "PHOTOMETRIC"; }
 
             const ProjectionModel::ConstOwn pj;
@@ -565,6 +588,7 @@ namespace seq2map
             IndexList m_idx;
             std::vector<size_t> m_localIdx;
             Points2F m_imagePoints;
+            double m_damp;
         };
 
         /**
@@ -614,6 +638,11 @@ namespace seq2map
          * \return Structure estimate of the given features
          */
         StructureEstimation::Estimate GetFeatureStructure(const ImageFeatureSet& f, const StructureEstimation::Estimate& structure);
+
+        /**
+         * Erase features' 3D coordinates by a mask.
+         */
+        void NullifyFeatureStructure(const Landmark::Ptrs& u, StructureEstimation::Estimate& structure, FlagTable& mask);
 
         /**
          * Get features' 1D indices from their 2D image subscripts.

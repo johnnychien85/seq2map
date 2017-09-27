@@ -332,7 +332,7 @@ namespace seq2map
             }
 
             //
-            // for debuging
+            // for debugging
             //
             void Dump()
             {
@@ -582,10 +582,10 @@ namespace seq2map
 
             inline size_t size() const { return m_nodes; }
             iterator begin() { return iterator(m_head); }
-            iterator end()   { return iterator(m_tail); }
+            iterator end()   { return iterator(NULL); }
 
             const_iterator cbegin() const { return const_iterator(m_head); }
-            const_iterator cend()   const { return const_iterator(m_tail); }
+            const_iterator cend()   const { return const_iterator(NULL); }
 
         }; // end of Dimension
 

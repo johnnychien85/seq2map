@@ -1608,6 +1608,12 @@ EuclideanTransform::EuclideanTransform(const cv::Mat& rotation, const cv::Mat& t
     SetTranslation(tvec);
 }
 
+EuclideanTransform& EuclideanTransform::operator= (const EuclideanTransform& tform)
+{
+    SetTransformMatrix(tform.m_matrix);
+    return *this;
+}
+
 EuclideanTransform EuclideanTransform::operator<<(const EuclideanTransform& tform) const
 {
     cv::Mat R0 = m_rotation.ToMatrix();

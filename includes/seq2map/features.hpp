@@ -248,8 +248,8 @@ namespace seq2map
     public:
         inline FeatureMatch& operator[] (size_t idx) { return m_matches[idx]; }
         IndexList Select(int mask) const;
-        void Draw(cv::Mat& canvas);
-        cv::Mat Draw(const cv::Mat& src, const cv::Mat& dst);
+        void Draw(cv::Mat& canvas) const;
+        cv::Mat Draw(const cv::Mat& src, const cv::Mat& dst) const;
         inline const ImageFeatureSet& From() const { return m_src; }
         inline const ImageFeatureSet& To()   const { return m_dst; }
         inline const FeatureMatches& GetMatches() const { return m_matches; }
@@ -288,7 +288,8 @@ namespace seq2map
          *
          */
         FeatureMatcher(bool exhaustive = true, bool uniqueness = true, bool symmetric = false, float maxRatio = 0.6f, bool useGpu = true)
-        : m_exhaustive(exhaustive), m_uniqueness(uniqueness), m_symmetric(symmetric), m_maxRatio(maxRatio), m_useGpu(useGpu),
+        : m_exhaustive(exhaustive), m_uniqueness(uniqueness), m_symmetric(symmetric),
+          m_maxRatio(maxRatio), m_useGpu(useGpu), m_maxDistance(0.01f),
           m_descMatchingMetre("DMatching",     "features/s"),
           m_ratioTestMetre   ("Ratio Test",    "matches/s"),
           m_symmetryTestMetre("Symmetry Test", "matches/s"),
@@ -317,6 +318,9 @@ namespace seq2map
         inline void SetMaxRatio(float ratio)   { m_maxRatio = ratio; }
         inline double GetMaxRatio() const      { return m_maxRatio;  }
 
+        inline void SetDistanceThreshold(float threshold) { m_maxDistance = threshold; }
+        inline float GetDistanceThreshold() const         { return m_maxDistance; }
+
         /**
          *
          */
@@ -341,6 +345,7 @@ namespace seq2map
         bool  m_uniqueness;
         bool  m_symmetric;
         bool  m_useGpu;
+        float m_maxDistance;
         float m_maxRatio;
         Speedometre m_descMatchingMetre;
         Speedometre m_ratioTestMetre;
@@ -350,6 +355,7 @@ namespace seq2map
     private:
         static void RunUniquenessTest(FeatureMatches& forward);
         static void RunSymmetryTest(FeatureMatches& forward, const FeatureMatches& backward, const std::vector<size_t>& idmap, size_t maxSrcIdx);
+        float GetDistanceThreshold(float ratio, int metric, size_t d);
     };
 
     class FundamentalMatrixFilter : public FeatureMatcher::Filter

@@ -19,7 +19,7 @@ function y = computeEpipolarError(x0,x1,F,method)
 	Fx1 = x1 * F ; nx1 = Fx1(:,1).^2 + Fx1(:,2).^2;
 	
 	if sampson
-		y = (xFx.^2)./(nx0+nx1);
+		y = sqrt((xFx.^2)./(nx0+nx1));
 	else
 		y = [xFx./sqrt(nx1),xFx./sqrt(nx0)];
 	end

@@ -105,6 +105,9 @@ namespace seq2map
         //
         virtual cv::Mat operator() (const EuclideanTransform& tform) const;
 
+        EuclideanTransform M0;
+        EuclideanTransform M1;
+
     private:
         ProjectionModel::ConstOwn m_src;
         ProjectionModel::ConstOwn m_dst;
@@ -165,7 +168,7 @@ namespace seq2map
         //
         // Constructor and destructor
         //
-        PhotometricObjective(const ProjectionModel::ConstOwn& proj, const cv::Mat& dst, int type = CV_32F, int interp = cv::INTER_LINEAR)
+        PhotometricObjective(const ProjectionModel::ConstOwn& proj, const cv::Mat& dst, int type = CV_64F, int interp = cv::INTER_LINEAR)
         : m_type(type), m_interp(interp), ProjectionObjective(proj), m_gradient(dst, CV_64F)
         { dst.convertTo(m_dst, m_type); }
 
@@ -441,9 +444,9 @@ namespace seq2map
         // Accessors
         //
         inline void AddObjective(AlignmentObjective::ConstOwn& objective) { m_objectives.push_back(objective); }
-        EuclideanTransform  GetPose() const         { return m_tform; }
-        EuclideanTransform& GetPose()               { return m_tform; }
-        void SetPose(const EuclideanTransform pose) { m_tform = pose; }
+        EuclideanTransform  GetPose() const          { return m_tform; }
+        EuclideanTransform& GetPose()                { return m_tform; }
+        void SetPose(const EuclideanTransform& pose) { m_tform = pose; }
 
         //
         // Least-squares problem

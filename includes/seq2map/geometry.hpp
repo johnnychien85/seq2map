@@ -622,6 +622,11 @@ namespace seq2map
         EuclideanTransform(const cv::Mat& rotation, const cv::Mat& tvec);
 
         /**
+         * Copy constructor
+         */
+        EuclideanTransform(const EuclideanTransform& tform) : EuclideanTransform() { *this = tform;}
+
+        /**
          * Destructor
          */
         virtual ~EuclideanTransform() {}
@@ -629,6 +634,11 @@ namespace seq2map
         //
         // Binary operators
         //
+
+        /**
+         * Assignment
+         */
+        EuclideanTransform& operator= (const EuclideanTransform& tform);
 
         /**
          * Append a transform to the current one and return the reulstant transform.

@@ -184,6 +184,8 @@ void Map::SetStructure(const Landmark::Ptrs& u, const StructureEstimation::Estim
 
         lk.position = mat.at<Point3D>(static_cast<int>(k));
         lk.cov      = cov.at<Covar6D>(static_cast<int>(k));
+
+        // E_TRACE << "lmk=" << lk.GetIndex() << ",pos=" << lk.position;
     }
 
     /*
@@ -306,16 +308,22 @@ bool Map::Store(Path & path) const
         const Landmark& l = itr->second;
         size_t i = l.GetIndex();
 
+        // E_INFO << "lmk=" << i << ",size=" << l.size();
+
         for (Landmark::const_iterator h = l.cbegin(); h != l.cend(); h++)
         {
             size_t j = h.GetContainer<1, Frame> ().GetIndex();
             size_t k = h.GetContainer<2, Source>().GetIndex();
+
+            // E_INFO << "lmk=" << i << ",frm=" << j << ",src=" << k << ",idx=" << h->index;
 
             os.write((char*)&i, sizeof i);
             os.write((char*)&j, sizeof j);
             os.write((char*)&k, sizeof k);
             os.write((char*)&h->index, sizeof h->index);
             os.write((char*)&h->proj,  sizeof h->proj );
+
+            hits++;
         }
     }
     os.close();
@@ -341,7 +349,7 @@ bool Map::Store(Path & path) const
         fs << "index" << t.GetIndex();
         fs << "hits"  << t.size();
         fs << "pose"  << t.pose.pose.GetTransformMatrix();
-        fs << "augmentedFeatureSet" << "{";
+        fs << "augmentedFeatureSet" << "[";
         for (std::map<size_t, ImageFeatureSet>::const_iterator aug = t.augmentedFeaturs.begin(); aug != t.augmentedFeaturs.end(); aug++)
         {
             std::stringstream ss;
@@ -355,22 +363,24 @@ bool Map::Store(Path & path) const
                 return false;
             }
 
+            fs << "{";
             fs << "store" << aug->first;
             fs << "items" << aug->second.GetSize();
-            fs << "src" << saveTo;
+            fs << "src" << getRelativePath(saveTo, path);
+            fs << "}";
         }
-        fs << "}";
+        fs << "]";
         fs << "}";
     }
     fs << "]";
     fs << "landmarks" << "{";
-    fs << "src"   << lmkPath;
+    fs << "src"   << getRelativePath(lmkPath, path);
     fs << "items" << GetSize0();
     fs << "}";
 
     fs << "hits" << "{";
     fs << "items" << hits;
-    fs << "src"   << hitPath;
+    fs << "src"   << getRelativePath(hitPath, path);
     fs << "}";
 
     fs << "keyframes" << "[";
@@ -383,7 +393,7 @@ bool Map::Store(Path & path) const
     return true;
 }
 
-bool Map::Restore(const Path & path)
+bool Map::Restore(const Path& path)
 {
     // reset everything first..
     Clear();
@@ -449,20 +459,25 @@ bool Map::Restore(const Path & path)
             return false;
         }
 
-        cv::FileNode aug = fs["augmentedFeatureSet"];
+        cv::FileNode aug = (*itr)["augmentedFeatureSet"];
         for (cv::FileNodeIterator a = aug.begin(); a != aug.end(); a++)
         {
             size_t store;
             Path from;
 
-            fs["store"] >> store;
-            fs["src"]   >> from;
+            (*a)["store"] >> store;
+            (*a)["src"]   >> from;
 
-            if (!t.augmentedFeaturs[store].Restore(from))
+            ImageFeatureSet& f = t.augmentedFeaturs[store];
+            from = fullpath(path / from);
+
+            if (!f.Restore(from))
             {
                 E_ERROR << "error restoring augmented feature store from " << from;
                 return false;
             }
+
+            E_TRACE << "augmented feature set of " << f.GetSize() << " feature(s) restored from " << from;
         }
     }
 
@@ -478,7 +493,9 @@ bool Map::Restore(const Path & path)
     // landmarks
     cv::FileNode landmarks = fs["landmarks"];
     Path lmkPath;
+
     landmarks["src"] >> lmkPath;
+    lmkPath = fullpath(path / lmkPath);
 
     is.open(lmkPath.string().c_str(), std::ios::in | std::ios::binary);
     if (!is.is_open())
@@ -487,21 +504,22 @@ bool Map::Restore(const Path & path)
         return false;
     }
 
+    E_TRACE << "loading landmark data from " << lmkPath;
     while (!is.eof())
     {
         Landmark& l = AddLandmark();
         is.read((char*)&l.position, sizeof l.position);
         is.read((char*)&l.cov,      sizeof l.cov);
     }
-
     is.close();
-    E_INFO << GetLandmarks() << " landmark(s) loaded from " << fullpath(lmkPath);
+    E_TRACE << GetLandmarks() << " landmark(s) loaded from " << lmkPath;
 
     // hits
     cv::FileNode hits = fs["hits"];
     Path hitPath;
     
     hits["src"] >> hitPath;
+    hitPath = fullpath(path / hitPath);
     
     is.open(hitPath.string(), std::ios::in | std::ios::binary);
     if (!is.is_open())
@@ -510,11 +528,12 @@ bool Map::Restore(const Path & path)
         return false;
     }
 
+    E_TRACE << "loading hit records from " << hitPath;
     while (!is.eof())
     {
         size_t i, j, k;
         size_t index;
-        Point2F proj;
+        Point2D proj;
 
         is.read((char*)&i, sizeof i);
         is.read((char*)&j, sizeof j);
@@ -528,10 +547,15 @@ bool Map::Restore(const Path & path)
         
         l.Hit(t, s, index).proj = proj;
         Landmark::Ptrs& u = t.featureLandmarkLookup[s.store->GetIndex()];
+
         if (u.empty())
         {
-            const size_t features = (*s.store)[k].GetSize() + t.augmentedFeaturs[s.store->GetIndex()].GetSize();
+            const size_t strFeatures = (*s.store)[j].GetSize();
+            const size_t augFeatures = t.augmentedFeaturs[s.store->GetIndex()].GetSize();
+            const size_t features = strFeatures + augFeatures;
             u.resize(features, NULL);
+
+            E_TRACE << "initialised feature-landmark table of frame " << j << " with " << strFeatures << " + " << augFeatures << " entries";
         }
 
         u[index] = &l; // update the feature-landmark table
@@ -647,7 +671,7 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, IndexList& 
 
         BOOST_FOREACH (ObjectiveBuilder::Own builder, builders)
         {
-            if (builder->Prebuilt()) continue;
+            if (builder->IsPrebuilt()) continue;
 
             if (builder->AddData(m.srcIdx, m.dstIdx, k, Fi[m.srcIdx], Fj[m.dstIdx], idx))
             {
@@ -669,7 +693,7 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, IndexList& 
     // to trace the population and inliers in each model
     std::vector<AlignmentObjective::InlierSelector::Stats*> stats;
 
-    if (motion.valid)
+    if (motion.valid && !optimisation)
     {
         solver = PoseEstimator::ConstOwn(new DummyPoseEstimator(motion.pose));
     }
@@ -706,13 +730,13 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, IndexList& 
     }
 
     estimator.SetStrategy(ConsensusPoseEstimator::RANSAC);
-    estimator.SetMaxIterations(motion.valid ? 1 : maxIterations);
+    estimator.SetMaxIterations(motion.valid && !optimisation ? 1 : maxIterations);
     estimator.SetMinInlierRatio(minInlierRatio);
     estimator.SetConfidence(confidence);
     estimator.SetSolver(solver);
     estimator.SetVerbose(true);
 
-    if (optimisation && !motion.valid)
+    if (optimisation)
     {
         estimator.EnableOptimisation();
     }
@@ -726,6 +750,9 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, IndexList& 
     if (!estimator(solverData, estimate, survived, eliminated))
     {
         E_ERROR << "consensus outlier detection failed";
+
+        motion.valid = false;
+        return false;
     }
 
     // aggregate all inliers from all the selectors
@@ -762,7 +789,7 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, IndexList& 
     IndexList::iterator itr = inliers.begin();
     for (std::vector<Record>::const_iterator h = rec.begin(); h != rec.end(); h++)
     {
-        if (h->hits < h->refs)
+        if (/*h->hits == 0*/ h->hits < h->refs)
         {
             fmap[*itr].Reject(FeatureMatch::GEOMETRIC_TEST_FAILED);
             inliers.erase(itr++);
@@ -774,7 +801,7 @@ bool MultiObjectiveOutlierFilter::operator() (ImageFeatureMap& fmap, IndexList& 
     }
 
     // estimate.pose might be useful..
-    if (estimate.valid && !motion.valid)
+    if (estimate.valid)
     {
         motion = estimate;
     }
@@ -792,6 +819,7 @@ bool FeatureTracker::StringToAlignment(const String& flag, int& model)
     {
         switch (flag[i])
         {
+        case 'F': model |= OutlierRejectionScheme::FORWARD_PROJ_ALIGN;  break;
         case 'B': model |= OutlierRejectionScheme::BACKWARD_PROJ_ALIGN; break;
         case 'P': model |= OutlierRejectionScheme::PHOTOMETRIC_ALIGN;   break;
         case 'R': model |= OutlierRejectionScheme::RIGID_ALIGN;         break;
@@ -808,6 +836,8 @@ bool FeatureTracker::StringToAlignment(const String& flag, int& model)
 String FeatureTracker::AlignmentToString(int model)
 {
     std::stringstream ss;
+
+    if (model & OutlierRejectionScheme::FORWARD_PROJ_ALIGN)  ss << "F";
     if (model & OutlierRejectionScheme::BACKWARD_PROJ_ALIGN) ss << "B";
     if (model & OutlierRejectionScheme::PHOTOMETRIC_ALIGN)   ss << "P";
     if (model & OutlierRejectionScheme::RIGID_ALIGN)         ss << "R";
@@ -909,6 +939,7 @@ void FeatureTracker::WriteParams(cv::FileStorage& fs) const
         fs << "sigma" << outlierRejection.sigma;
         // fs << "epipolarEps" << outlierRejection.epipolarEps;
         fs << "fastMetric" << outlierRejection.fastMetric;
+        fs << "photometricDamp" << outlierRejection.photometricDamp;
     }
     fs << "}";
 
@@ -938,6 +969,7 @@ bool FeatureTracker::ReadParams(const cv::FileNode& fn)
     oj["minInliers"]  >> outlierRejection.minInlierRatio;
     oj["sigma"]       >> outlierRejection.sigma;
     oj["fastMetric"]  >> outlierRejection.fastMetric;
+    oj["photometricDamp"] >> outlierRejection.photometricDamp;
 
     ij["flow"]        >> m_flowString;
     ij["blockSize"]   >> inlierInjection.blockSize;
@@ -971,7 +1003,8 @@ void FeatureTracker::ApplyParams()
         E_ERROR << "error applying triangulation setting";
     }
 
-    outlierRejection.model |= OutlierRejectionScheme::FORWARD_PROJ_ALIGN;
+    // need to explicitly specify now
+    // outlierRejection.model |= OutlierRejectionScheme::FORWARD_PROJ_ALIGN;
     outlierRejection.epipolarEps = inlierInjection.epipolarEps = m_epipolarEps;
 
     Strings models;
@@ -1004,18 +1037,20 @@ FeatureTracker::Options FeatureTracker::GetOptions(int flag)
     InlierInjectionOptions&  ij = inlierInjection;
 
     o.add_options()
-        ("align-model,a",  po::value<String>(&m_alignString    )->default_value(   ""), "A string containning flags of alignment models to activate. \"B\" for backward projection, \"P\" for photometric, \"R\" for rigid, and \"E\" for epipolar alignment.")
-        ("triangulation",  po::value<String>(&m_triangulation  )->default_value(   ""), "Pose-motion triangulation method; valid strings are \"MIDPOINT\" and \"OPTIMAL\". Set to empty string to disable the feature.")
-        ("epipolar-eps",   po::value<double>(&m_epipolarEps    )->default_value( 1000), "Threshold for epipolar constraint, as the inverse of the tolerable epipolar distance in normalised pixel. Ths value must be positive.")
-        ("sigma",          po::value<double>(&oj.sigma         )->default_value(1.00f), "Threshold for inlier selection. The value must be positive.")
-        ("ransac-iter",    po::value<size_t>(&oj.maxIterations )->default_value(  100), "Max number of iterations for the RANSAC outlier rejection process.")
-        ("ransac-conf",    po::value<double>(&oj.confidence    )->default_value(0.99f), "The confidence of obtaining a valid estimate at the end of the RANSAC process. The value is used to calculate a required iteration number.")
-        ("ransac-ratio",   po::value<double>(&oj.minInlierRatio)->default_value(0.70f), "Minimum ratio of inliers required to consider a hypothesis valid.")
-        ("flow",           po::value<String>(&m_flowString     )->default_value(   ""), "Optical flow computation option for missed features. Valid strings are \"FORWARD\", \"BACKWARD\" and \"BIDIRECTION\"")
-        ("flow-level",     po::value<size_t>(&ij.levels        )->default_value(    3), "Level of pyramid for optical flow computation.")
-        ("flow-bidir-tol", po::value<double>(&ij.bidirectionalTol)->default_value(  1), "Threshold of the forward-backward flow error, in image pixels. Set to a non-positive value to disable the test.")
-        ("block-size",     po::value<size_t>(&ij.blockSize     )->default_value(    5), "Block size for optical flow computation and epipolar search.")
-        ("fast-metric",    po::bool_switch  (&oj.fastMetric    )->default_value(false), "Apply metric reduction to accelerate error evaluation.")
+        ("align-model,a",    po::value<String>(&m_alignString      )->default_value(  "F"), "A string containning flags of alignment models to activate. \"F\" for forward projective, \"B\" for backward projective, \"P\" for photometric, \"R\" for rigid, and \"E\" for epipolar alignment.")
+        ("triangulation",    po::value<String>(&m_triangulation    )->default_value(   ""), "Pose-motion triangulation method; valid strings are \"MIDPOINT\" and \"OPTIMAL\". Set to empty string to disable the feature.")
+        ("epipolar-eps",     po::value<double>(&m_epipolarEps      )->default_value( 1000), "Threshold for epipolar constraint, as the inverse of the tolerable epipolar distance in normalised pixel. Ths value must be positive.")
+        ("sigma",            po::value<double>(&oj.sigma           )->default_value(1.00f), "Threshold for inlier selection. The value must be positive.")
+        ("ransac-iter",      po::value<size_t>(&oj.maxIterations   )->default_value(  100), "Max number of iterations for the RANSAC outlier rejection process.")
+        ("ransac-conf",      po::value<double>(&oj.confidence      )->default_value(0.99f), "The confidence of obtaining a valid estimate at the end of the RANSAC process. The value is used to calculate a required iteration number.")
+        ("ransac-ratio",     po::value<double>(&oj.minInlierRatio  )->default_value(0.70f), "Minimum ratio of inliers required to consider a hypothesis valid.")
+        ("flow",             po::value<String>(&m_flowString       )->default_value(   ""), "Optical flow computation option for missed features. Valid strings are \"FORWARD\", \"BACKWARD\" and \"BIDIRECTION\"")
+        ("flow-level",       po::value<size_t>(&ij.levels          )->default_value(    3), "Level of pyramid for optical flow computation.")
+        ("flow-bidir-tol",   po::value<double>(&ij.bidirectionalTol)->default_value(    1), "Threshold of the forward-backward flow error, in image pixels. Set to a non-positive value to disable the test.")
+        ("block-size",       po::value<size_t>(&ij.blockSize       )->default_value(    5), "Block size for optical flow computation and epipolar search.")
+        ("fast-metric",      po::bool_switch  (&oj.fastMetric      )->default_value(false), "Apply metric reduction to accelerate error evaluation.")
+        ("photometric-damp", po::value<double>(&oj.photometricDamp )->default_value(1.00f), "Weighting factor for photometric error; effective only for reduced metric.")
+        ("show",             po::bool_switch  (&rendering          )->default_value( true), "Render feature tracking and visualise it.")
         ;
 
     return o;
@@ -1024,6 +1059,47 @@ FeatureTracker::Options FeatureTracker::GetOptions(int flag)
 StructureEstimation::Estimate FeatureTracker::GetFeatureStructure(const ImageFeatureSet& f, const StructureEstimation::Estimate& structure)
 {
     return structure[GetFeatureImageIndices(f, structure.structure.mat.size())];
+}
+
+void FeatureTracker::NullifyFeatureStructure(const Landmark::Ptrs& u, StructureEstimation::Estimate& structure, FlagTable& mask)
+{
+    if (structure.structure.IsEmpty()) return;
+
+    boost::shared_ptr<MahalanobisMetric> metric = boost::dynamic_pointer_cast<MahalanobisMetric, Metric>(structure.metric);
+
+    if (!metric)
+    {
+        E_WARNING << "error retriving metric as mahalanobis";
+        return;
+    }
+
+    size_t n = 0;
+
+    cv::Mat cov = metric->GetCovariance().mat;
+
+    if (cov.rows != u.size())
+    {
+        E_ERROR << "size of landmark table does not match with given structure";
+        return;
+    }
+
+    for (int i = 0; i < cov.rows; i++)
+    {
+        if (u[i] == NULL) continue;
+
+        if (mask[i])
+        {
+            n++;
+            cov.row(i).setTo(0.0f);
+        }
+    }
+
+    // E_INFO << n << " feature(s) nullified";
+
+    if (!metric->SetCovarianceMat(cov))
+    {
+        E_ERROR << "error applying updated covariance matrix";
+    }
 }
 
 IndexList FeatureTracker::GetFeatureImageIndices(const ImageFeatureSet& f, const cv::Size& imageSize) const
@@ -1040,7 +1116,7 @@ IndexList FeatureTracker::GetFeatureImageIndices(const ImageFeatureSet& f, const
         if (i < 0 || i >= imageSize.height || j < 0 || j >= imageSize.width)
         {
             indices.push_back(INVALID_INDEX);
-            E_ERROR << "subscript (" << i << "," << j << ") out of bound";
+            E_WARNING << "subscript (" << i << "," << j << ") out of bound";
 
             continue;
         }
@@ -1049,412 +1125,6 @@ IndexList FeatureTracker::GetFeatureImageIndices(const ImageFeatureSet& f, const
     }
 
     return indices;
-}
-
-bool FeatureTracker::operator() (Map& map, Source& si, Frame& ti, Source& sj, Frame& tj)
-{
-    assert(si.store && sj.store);
-
-    const FeatureStore& Fi = *si.store;
-    const FeatureStore& Fj = *sj.store;
-    ImageFeatureSet fi = Fi[ti.GetIndex()];
-    ImageFeatureSet fj = Fj[tj.GetIndex()];
-    Landmark::Ptrs& ui = ti.featureLandmarkLookup[Fi.GetIndex()];
-    Landmark::Ptrs& uj = tj.featureLandmarkLookup[Fj.GetIndex()];
-
-    Camera::ConstOwn ci = Fi.GetCamera();
-    Camera::ConstOwn cj = Fj.GetCamera();
-    boost::shared_ptr<PosedProjection> pi = ci ? ci->GetPosedProjection() : boost::shared_ptr<PosedProjection>();
-    boost::shared_ptr<PosedProjection> pj = cj ? cj->GetPosedProjection() : boost::shared_ptr<PosedProjection>();
-    cv::Mat Ii = ci ? ci->GetImageStore()[ti.GetIndex()].im : cv::Mat();
-    cv::Mat Ij = cj ? cj->GetImageStore()[tj.GetIndex()].im : cv::Mat();
-    cv::Mat Di = si.dpm ? (*si.dpm)[ti.GetIndex()].im : cv::Mat();
-    cv::Mat Dj = sj.dpm ? (*sj.dpm)[tj.GetIndex()].im : cv::Mat();
-
-    PoseEstimator::Estimate& mi = ti.pose;
-    PoseEstimator::Estimate& mj = tj.pose;
-    StructureEstimation::Estimate gi(Geometry::ROW_MAJOR);
-    StructureEstimation::Estimate gj(Geometry::ROW_MAJOR);
-
-    boost::shared_ptr<MultiObjectiveOutlierFilter> filter;
-    GeometricMapping::ImageToImageBuilder flow;
-
-    // initialise statistics
-    stats = Stats();
-
-    // append augmented feature sets
-    fi.Append(ti.augmentedFeaturs[Fi.GetIndex()]);
-    fj.Append(tj.augmentedFeaturs[Fj.GetIndex()]);
-
-    // initialise frame's feature-landmark lookup table for first time access
-    if (ui.empty()) ui.resize(fi.GetSize(), NULL);
-    if (uj.empty()) uj.resize(fj.GetSize(), NULL);
-
-    // get feature structure from depthmap and transform it to the reference camera's coordinates system
-    if (!Di.empty()) gi = si.dpm->GetStereoPair()->Backproject(Di, cv::Mat(), GetFeatureImageIndices(fi, Di.size())).Transform(ci->GetExtrinsics().GetInverse());
-    if (!Dj.empty()) gj = sj.dpm->GetStereoPair()->Backproject(Dj, cv::Mat(), GetFeatureImageIndices(fj, Dj.size())).Transform(cj->GetExtrinsics().GetInverse());
-
-    // perform pre-motion structure update
-    if (mi.valid) gi = map.UpdateStructure(ui, gi, mi.pose);
-    if (mj.valid) gj = map.UpdateStructure(uj, gj, mj.pose);
-
-    // build the outlier filter and models
-    if (outlierRejection.model)
-    {
-        filter = boost::shared_ptr<MultiObjectiveOutlierFilter>(
-            new MultiObjectiveOutlierFilter(outlierRejection.maxIterations, outlierRejection.minInlierRatio, outlierRejection.confidence, outlierRejection.sigma)
-        );
-
-        if (ti == tj)
-        {
-            filter->motion.pose = EuclideanTransform::Identity;
-            filter->motion.valid = true;
-        }
-        else if (ti.pose.valid && tj.pose.valid)
-        {
-            filter->motion.pose = mi.pose.GetInverse() >> mj.pose;
-            filter->motion.valid = true;
-
-            ////////////////////////////////////////////////////////////////////////////////////////
-            // E_TRACE << GetName() << " uses motion " << ti.GetIndex() << " -> " << tj.GetIndex()";
-            // E_TRACE << mat2string(filter->motion.pose.GetTransformMatrix(),"M");
-            ////////////////////////////////////////////////////////////////////////////////////////
-        }
-
-        if (outlierRejection.model & FORWARD_PROJ_ALIGN)
-        {
-            if (pj)
-            {
-                filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
-                    new PerspectiveObjectiveBuilder(pj, gi, true, outlierRejection.fastMetric, stats.objectives[FORWARD_PROJ_ALIGN])
-                ));
-            }
-            else
-            {
-                E_WARNING << "error adding forward projection objective to the outlier filter due to missing projection model";
-                E_WARNING << "forward projection-based outlier rejection deactivated"; // << ToString();
-
-                outlierRejection.model &= ~FORWARD_PROJ_ALIGN;
-            }
-        }
-
-        if (outlierRejection.model & BACKWARD_PROJ_ALIGN)
-        {
-            if (pi)
-            {
-                filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
-                    new PerspectiveObjectiveBuilder(pi, gj, false, outlierRejection.fastMetric, stats.objectives[BACKWARD_PROJ_ALIGN])
-                ));
-            }
-            else
-            {
-                E_WARNING << "error adding backward projection objective to the outlier filter due to missing projection model";
-                E_WARNING << "backward projection-based outlier rejection deactivated"; // << ToString();
-
-                outlierRejection.model &= ~BACKWARD_PROJ_ALIGN;
-            }
-        }
-
-        if (outlierRejection.model & PHOTOMETRIC_ALIGN)
-        {
-            if (pj)
-            {
-                MultiObjectiveOutlierFilter::ObjectiveBuilder::Own builder =
-                    MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
-                        new PhotometricObjectiveBuilder(pj, gi, Ii, Ij, outlierRejection.fastMetric, stats.objectives[PHOTOMETRIC_ALIGN])
-                    );
-
-                for (size_t k = 0; k < fi.GetSize(); k++)
-                {
-                    ImageFeature fi_k = fi[k];
-                    builder->AddData(
-                        k,
-                        INVALID_INDEX, // not used
-                        INVALID_INDEX, // not used
-                        fi_k,
-                        fi_k,          // not used
-                        INVALID_INDEX  // not used
-                    );
-                }
-
-                filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(builder));
-            }
-            else
-            {
-                E_WARNING << "error adding photometric objective to the outlier filter due to missing projection model";
-                E_WARNING << "photometric outlier rejection deactivated"; // << ToString();
-
-                outlierRejection.model &= ~PHOTOMETRIC_ALIGN;
-            }
-        }
-
-        if (outlierRejection.model & RIGID_ALIGN)
-        {
-            filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
-                new RigidObjectiveBuilder(gi, gj, outlierRejection.fastMetric, stats.objectives[RIGID_ALIGN])
-            ));
-        }
-
-        if (outlierRejection.model & EPIPOLAR_ALIGN)
-        {
-            if (pi && pj)
-            {
-                filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
-                    new EpipolarObjectiveBuilder(pi, pj, outlierRejection.epipolarEps, stats.objectives[EPIPOLAR_ALIGN])
-                ));
-            }
-            else
-            {
-                E_WARNING << "error adding epipolar objective to the outlier filter due to missing projection model(s)";
-                E_WARNING << "epipolar-based outlier rejection deactivated"; // << ToString();
-
-                outlierRejection.model &= ~EPIPOLAR_ALIGN;
-            }
-        }
-
-        matcher.GetFilters().push_back(FeatureMatcher::Filter::Own(filter));
-    }
-
-    ImageFeatureMap fmap = matcher(fi, fj);
-
-    // dispose the outlier filter and apply the solved ego-motion whenever useful
-    if (outlierRejection.model)
-    {
-        matcher.GetFilters().pop_back();
-
-        if (!filter->motion.valid)
-        {
-            E_ERROR << "tracker \"" << GetName() << "\" failed egomotion estimation";
-            return false;
-        }
-
-        ////////////////////////////////////////////////////////////////////////////////////////
-        // E_TRACE << GetName() << " solved motion " << ti.GetIndex() << " -> " << tj.GetIndex();
-        // E_TRACE << mat2string(filter->motion.pose.GetTransformMatrix(), "M");
-        ////////////////////////////////////////////////////////////////////////////////////////
-
-        stats.motion = filter->motion;
-
-        if (ti != tj)
-        {
-            if (mi.valid && !mj.valid)
-            {
-                mj.pose  = mi.pose >> filter->motion.pose;
-                mj.valid = true;
-            }
-
-            if (mj.valid && !mi.valid) // i.e. "else if (mj.valid) .."
-            {
-                mi.pose  = mj.pose >> filter->motion.pose.GetInverse();
-                mi.valid = true;
-            }
-        }
-    }
-
-    // insert the observations into the map
-    std::vector<bool> qi(fi.GetSize());
-    std::vector<bool> qj(fj.GetSize());
-    const FeatureMatches& matches = fmap.GetMatches();
-
-    // E_INFO << matches.size() << " matches..";
-
-    for (size_t k = 0; k < matches.size(); k++)
-    {
-        const FeatureMatch& m = matches[k];
-
-        if (!(m.state & FeatureMatch::INLIER))
-        {
-            continue;
-        }
-
-        qi[m.srcIdx] = qj[m.dstIdx] = true;
-
-        Landmark*& ui_k = ui[m.srcIdx];
-        Landmark*& uj_k = uj[m.dstIdx];
-
-        bool bi = (ui_k == NULL);
-        bool bj = (uj_k == NULL);
-
-        bool firstHit = bi == true && bj == true;
-        bool converge = bi != true && bj != true && ui_k != uj_k;
-
-        if (!converge)
-        {
-            Landmark& lk = firstHit ? map.AddLandmark() : (bj ? *ui_k : *uj_k);
-
-            if (bi) lk.Hit(ti, si, m.srcIdx).proj = fi[m.srcIdx].keypoint.pt;
-            if (bj) lk.Hit(tj, sj, m.dstIdx).proj = fj[m.dstIdx].keypoint.pt;
-
-            ui_k = uj_k = &lk;
-
-            if (firstHit)
-            {
-                stats.spawned++;
-            }
-            else
-            {
-                stats.tracked++;
-            }
-
-            flow.Add(fi[m.srcIdx].keypoint.pt, fj[m.dstIdx].keypoint.pt, lk.GetIndex());
-
-            continue;
-        }
-
-        if (policy == ConflictResolution::NO_MERGE)
-        {
-            continue;
-        }
-
-        Landmark& li = *ui_k;
-        Landmark& lj = *uj_k;
-
-        if (policy == ConflictResolution::KEEP_BOTH || map.IsJoinable(li, lj))
-        {
-            map.JoinLandmark(li, lj);
-            stats.joined++;
-
-            continue;
-        }
-
-        switch (policy)
-        {
-        case ConflictResolution::KEEP_BEST:
-
-            throw std::exception("not implemented");
-            break;
-
-        case ConflictResolution::KEEP_LONGEST:
-
-            throw std::exception("not implemented");
-            break;
-
-        case ConflictResolution::KEEP_SHORTEST:
-
-            throw std::exception("not implemented");
-            break;
-
-        case ConflictResolution::REMOVE_BOTH:
-
-            map.RemoveLandmark(li);
-            map.RemoveLandmark(lj);
-
-            stats.removed += 2;
-
-            break;
-        }
-    }
-
-    // initialise structure for the newly spawned landmarks
-    // if (mi.valid && !gi.structure.IsEmpty()) map.UpdateStructure(ai.u, gi[ai.f], mi.pose);
-    // if (mj.valid && !gj.structure.IsEmpty()) map.UpdateStructure(aj.u, gj[aj.f], mj.pose);
-
-    // post-motion correspondence recovery
-    if (inlierInjection.scheme && stats.motion.valid)
-    {
-        GeometricMapping forward, backward, epipolar;
-
-        if (inlierInjection.scheme & InlierInjectionScheme::FORWARD_FLOW)
-        {
-            if (pi && pj)
-            {
-                AlignmentObjective::Own eval(new EpipolarObjective(pi, pj));
-                forward = FindFeaturesFlow(Ii, Ij, fi, eval, stats.motion.pose, qi);
-            }
-            else
-            {
-                E_WARNING << "projection(s) missing for optical flow feature recovery";
-                E_WARNING << "forward flow-based inlier injection now deactivated.";
-
-                inlierInjection.scheme &= ~InlierInjectionScheme::FORWARD_FLOW;
-            }
-        }
-
-        if (inlierInjection.scheme & InlierInjectionScheme::BACKWARD_FLOW)
-        {
-            if (pi && pj)
-            {
-                AlignmentObjective::Own eval(new EpipolarObjective(pj, pi));
-                backward = FindFeaturesFlow(Ij, Ii, fj, eval, stats.motion.pose.GetInverse(), qj);
-            }
-            else
-            {
-                E_WARNING << "projection(s) missing for optical flow feature recovery";
-                E_WARNING << "backward flow-based inlier injection now deactivated.";
-
-                inlierInjection.scheme &= ~InlierInjectionScheme::BACKWARD_FLOW;
-            }
-        }
-
-        if (inlierInjection.scheme & InlierInjectionScheme::EPIPOLAR_SEARCH)
-        {
-            // do something..
-        }
-
-        if (!AugmentFeatures(forward, fi, fj, map, ti, tj, si, sj, ui, uj, tj.augmentedFeaturs[Fj.GetIndex()], stats.spawned, stats.tracked))
-        {
-            E_ERROR << "error augmenting feature set from forward flow";
-            return false;
-        }
-
-        if (!AugmentFeatures(backward, fj, fi, map, tj, ti, sj, si, uj, ui, ti.augmentedFeaturs[Fi.GetIndex()], stats.spawned, stats.tracked))
-        {
-            E_ERROR << "error augmenting feature set from backward flow";
-            return false;
-        }
-
-        for (size_t i = 0; i < forward.GetSize(); i++)
-        {
-            flow.Add(
-                forward.src.mat.reshape(2).at<Point2D>(static_cast<int>(i)),
-                forward.dst.mat.reshape(2).at<Point2D>(static_cast<int>(i)),
-                ui[forward.indices[i]]->GetIndex()
-            );
-        }
-
-        for (size_t j = 0; j < backward.GetSize(); j++)
-        {
-            flow.Add(
-                backward.dst.mat.reshape(2).at<Point2D>(static_cast<int>(j)),
-                backward.src.mat.reshape(2).at<Point2D>(static_cast<int>(j)),
-                uj[backward.indices[j]]->GetIndex()
-            );
-        }
-
-        stats.injected += forward.GetSize() + backward.GetSize();
-    }
-
-    stats.flow = flow.Build();
-    stats.accumulated = map.GetLandmarks();
-
-    if (triangulation != DISABLED && mi.valid && stats.motion.valid)
-    {
-        map.UpdateStructure(
-            map.GetLandmarks(stats.flow.indices),
-            triangulation == TriangulationMethod::OPTIMAL ? 
-                OptimalTriangulation (*pi, *pj, stats.motion)(stats.flow) :
-                MidPointTriangulation(*pi, *pj, stats.motion)(stats.flow),
-            mi.pose
-        );
-    }
-
-    if (rendering)
-    {
-        stats.Render(imfuse(Ii, Ij), GetName(), map, mi.pose);
-
-        std::stringstream ss;
-        cv::Mat im;
-
-        ss << GetName() << "." << std::setw(5) << std::setfill('0') << ti.GetIndex() << ".jpg";
-        cv::imwrite(ss.str(), stats.im);
-        //cv::vconcat(stats.im, fmap.Draw(Ii, Ij), im);
-        //cv::imwrite(ss.str(), im);
-
-        cv::imshow("Feature Tracking [" + GetName() + "]", stats.im);
-        cv::waitKey(1);
-    }
-
-    return true;
 }
 
 GeometricMapping FeatureTracker::FindFeaturesFlow(const cv::Mat& Ii, const cv::Mat& Ij, const ImageFeatureSet& fi, AlignmentObjective::Own& eval, const EuclideanTransform& pose, std::vector<bool>& tracked)
@@ -1662,6 +1332,529 @@ bool FeatureTracker::AugmentFeatures(
     return true;
 }
 
+bool FeatureTracker::operator() (Map& map, Source& si, Frame& ti, Source& sj, Frame& tj)
+{
+    assert(si.store && sj.store);
+
+    const FeatureStore& Fi = *si.store;
+    const FeatureStore& Fj = *sj.store;
+    ImageFeatureSet fi = Fi[ti.GetIndex()];
+    ImageFeatureSet fj = Fj[tj.GetIndex()];
+    Landmark::Ptrs& ui = ti.featureLandmarkLookup[Fi.GetIndex()];
+    Landmark::Ptrs& uj = tj.featureLandmarkLookup[Fj.GetIndex()];
+    Landmark::Ptrs ui_new, uj_new;
+    FlagTable& ei = si.frameFeatureDisparityUse[ti.GetIndex()];
+    FlagTable& ej = sj.frameFeatureDisparityUse[tj.GetIndex()];
+
+    Camera::ConstOwn ci = Fi.GetCamera();
+    Camera::ConstOwn cj = Fj.GetCamera();
+    boost::shared_ptr<PosedProjection> pi = ci ? ci->GetPosedProjection() : boost::shared_ptr<PosedProjection>();
+    boost::shared_ptr<PosedProjection> pj = cj ? cj->GetPosedProjection() : boost::shared_ptr<PosedProjection>();
+    cv::Mat Ii = ci ? ci->GetImageStore()[ti.GetIndex()].im : cv::Mat();
+    cv::Mat Ij = cj ? cj->GetImageStore()[tj.GetIndex()].im : cv::Mat();
+    cv::Mat Di = si.dpm ? (*si.dpm)[ti.GetIndex()].im : cv::Mat();
+    cv::Mat Dj = sj.dpm ? (*sj.dpm)[tj.GetIndex()].im : cv::Mat();
+
+    PoseEstimator::Estimate& mi = ti.pose;
+    PoseEstimator::Estimate& mj = tj.pose;
+    StructureEstimation::Estimate gi(Geometry::ROW_MAJOR);
+    StructureEstimation::Estimate gj(Geometry::ROW_MAJOR);
+
+    boost::shared_ptr<MultiObjectiveOutlierFilter> filter;
+    GeometricMapping::ImageToImageBuilder flow;
+
+    // initialise statistics
+    stats = Stats();
+    stats.fresh = (!mi.valid || !mj.valid) && ti.GetIndex() != tj.GetIndex();
+
+    // append augmented feature sets
+    fi.Append(ti.augmentedFeaturs[Fi.GetIndex()]);
+    fj.Append(tj.augmentedFeaturs[Fj.GetIndex()]);
+
+    // ...
+    ui_new.resize(fi.GetSize(), NULL);
+    uj_new.resize(fj.GetSize(), NULL);
+
+    // initialise frame's feature-landmark lookup table for first time access
+    if (ui.empty()) ui.resize(fi.GetSize(), NULL);
+    if (uj.empty()) uj.resize(fj.GetSize(), NULL);
+
+    // get feature structure from depthmap and transform it to the reference camera's coordinates system
+    if (!Di.empty()) gi = si.dpm->GetStereoPair()->Backproject(Di, cv::Mat(), GetFeatureImageIndices(fi, Di.size())).Transform(ci->GetExtrinsics().GetInverse());
+    if (!Dj.empty()) gj = sj.dpm->GetStereoPair()->Backproject(Dj, cv::Mat(), GetFeatureImageIndices(fj, Dj.size())).Transform(cj->GetExtrinsics().GetInverse());
+
+    // avoid updating a feature's 3D coordinates using the same disparity map
+    if (!Di.empty()) NullifyFeatureStructure(ui, gi, ei);
+    if (!Dj.empty()) NullifyFeatureStructure(uj, gj, ej);
+
+    // perform pre-motion structure update
+    if (mi.valid) gi = map.UpdateStructure(ui, gi, mi.pose);
+    if (mj.valid) gj = map.UpdateStructure(uj, gj, mj.pose);
+
+    // for refinement of a previously estimated egomotion
+    StructureEstimation::Estimate gij(Geometry::ROW_MAJOR);
+    StructureEstimation::Estimate gji(Geometry::ROW_MAJOR);
+
+    // build the outlier filter and models
+    if (outlierRejection.model)
+    {
+        filter = boost::shared_ptr<MultiObjectiveOutlierFilter>(
+            new MultiObjectiveOutlierFilter(outlierRejection.maxIterations, outlierRejection.minInlierRatio, outlierRejection.confidence, outlierRejection.sigma)
+            );
+
+        if (ti == tj)
+        {
+            filter->motion.pose = EuclideanTransform::Identity;
+            filter->motion.valid = true;
+            filter->optimisation = false;
+        }
+        else if (mi.valid && mj.valid)
+        {
+            filter->motion.pose = mi.pose.GetInverse() >> mj.pose;
+            filter->motion.valid = true;
+            filter->optimisation = true;
+
+            ////////////////////////////////////////////////////////////////////////////////////////
+            // E_TRACE << GetName() << " uses motion " << ti.GetIndex() << " -> " << tj.GetIndex()";
+            // E_TRACE << mat2string(filter->motion.pose.GetTransformMatrix(),"M");
+            ////////////////////////////////////////////////////////////////////////////////////////
+        }
+        else
+        {
+            filter->motion.valid = false;
+            filter->optimisation = true;
+        }
+
+        if (outlierRejection.model & FORWARD_PROJ_ALIGN)
+        {
+            if (pj)
+            {
+                filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
+                    new PerspectiveObjectiveBuilder(pj, gi, true, outlierRejection.fastMetric, false, stats.objectives[FORWARD_PROJ_ALIGN])
+                ));
+
+                // build extra projective constraints for pj for egomotion refinement
+                if (ti != tj && filter->motion.valid && !gj.structure.IsEmpty())
+                {
+                    // transform gj from tj to ti
+                    gji = gj.Transform(filter->motion.pose.GetInverse());
+
+                    MultiObjectiveOutlierFilter::ObjectiveBuilder::Own builder =
+                        MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
+                            new PerspectiveObjectiveBuilder(pj, gji, true, outlierRejection.fastMetric, true, stats.objectives[XFORWARD_PROJ_ALIGN])
+                        );
+
+                    size_t n = 0;
+
+                    for (size_t k = 0; k < fj.GetSize(); k++)
+                    {
+                        const ImageFeature fj_k = fj[k];
+                        const bool added = builder->AddData(
+                            k,
+                            k,
+                            INVALID_INDEX, // not used
+                            fj_k,          // not used
+                            fj_k,
+                            INVALID_INDEX  // not used
+                        );
+
+                        if (added) n++;
+                    }
+
+                    if (n > 0)
+                    {
+                        filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(builder));
+                    }
+                }
+            }
+            else
+            {
+                E_WARNING << "error adding forward projection objective to the outlier filter due to missing projection model";
+                E_WARNING << "forward projection-based outlier rejection deactivated"; // << ToString();
+
+                outlierRejection.model &= ~FORWARD_PROJ_ALIGN;
+            }
+        }
+
+        if (outlierRejection.model & BACKWARD_PROJ_ALIGN)
+        {
+            if (pi)
+            {
+                filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
+                    new PerspectiveObjectiveBuilder(pi, gj, false, outlierRejection.fastMetric, false, stats.objectives[BACKWARD_PROJ_ALIGN])
+                ));
+
+                // build extra projective constraints for pi for egomotion refinement
+                if (ti != tj && filter->motion.valid && !gi.structure.IsEmpty())
+                {
+                    // transform gj from tj to ti
+                    gij = gi.Transform(filter->motion.pose);
+
+                    MultiObjectiveOutlierFilter::ObjectiveBuilder::Own builder =
+                        MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
+                            new PerspectiveObjectiveBuilder(pi, gij, false, outlierRejection.fastMetric, true, stats.objectives[XBACKWARD_PROJ_ALIGN])
+                        );
+
+                    size_t n = 0;
+
+                    for (size_t k = 0; k < fi.GetSize(); k++)
+                    {
+                        const ImageFeature fi_k = fi[k];
+                        const bool added = builder->AddData(
+                            k,
+                            k,
+                            INVALID_INDEX, // not used
+                            fi_k,
+                            fi_k,          // not used
+                            INVALID_INDEX  // not used
+                        );
+
+                        if (added) n++;
+                    }
+
+                    if (n > 0)
+                    {
+                        filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(builder));
+                    }
+                }
+            }
+            else
+            {
+                E_WARNING << "error adding backward projection objective to the outlier filter due to missing projection model";
+                E_WARNING << "backward projection-based outlier rejection deactivated"; // << ToString();
+
+                outlierRejection.model &= ~BACKWARD_PROJ_ALIGN;
+            }
+        }
+
+        if (outlierRejection.model & PHOTOMETRIC_ALIGN)
+        {
+            // build the data prior to feature matching
+            if (pj)
+            {
+                MultiObjectiveOutlierFilter::ObjectiveBuilder::Own builder =
+                    MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
+                        new PhotometricObjectiveBuilder(
+                            pj, gi, Ii, Ij, outlierRejection.fastMetric, outlierRejection.photometricDamp, stats.objectives[PHOTOMETRIC_ALIGN]
+                        )
+                    );
+
+                for (size_t k = 0; k < fi.GetSize(); k++)
+                {
+                    ImageFeature fi_k = fi[k];
+                    builder->AddData(
+                        k,
+                        INVALID_INDEX, // not used
+                        INVALID_INDEX, // not used
+                        fi_k,
+                        fi_k,          // not used
+                        INVALID_INDEX  // not used
+                    );
+                }
+
+                filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(builder));
+            }
+            else
+            {
+                E_WARNING << "error adding photometric objective to the outlier filter due to missing projection model";
+                E_WARNING << "photometric outlier rejection deactivated"; // << ToString();
+
+                outlierRejection.model &= ~PHOTOMETRIC_ALIGN;
+            }
+        }
+
+        if (outlierRejection.model & RIGID_ALIGN)
+        {
+            filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
+                new RigidObjectiveBuilder(gi, gj, outlierRejection.fastMetric, stats.objectives[RIGID_ALIGN])
+            ));
+        }
+
+        if (outlierRejection.model & EPIPOLAR_ALIGN)
+        {
+            if (pi && pj)
+            {
+                filter->builders.push_back(MultiObjectiveOutlierFilter::ObjectiveBuilder::Own(
+                    new EpipolarObjectiveBuilder(pi, pj, outlierRejection.epipolarEps, stats.objectives[EPIPOLAR_ALIGN])
+                ));
+            }
+            else
+            {
+                E_WARNING << "error adding epipolar objective to the outlier filter due to missing projection model(s)";
+                E_WARNING << "epipolar-based outlier rejection deactivated"; // << ToString();
+
+                outlierRejection.model &= ~EPIPOLAR_ALIGN;
+            }
+        }
+
+        matcher.GetFilters().push_back(FeatureMatcher::Filter::Own(filter));
+    }
+
+    ImageFeatureMap fmap = matcher(fi, fj);
+
+    // dispose the outlier filter and apply the solved egomotion whenever useful
+    if (outlierRejection.model)
+    {
+        matcher.GetFilters().pop_back();
+
+        if (!filter->motion.valid)
+        {
+            E_ERROR << "tracker \"" << GetName() << "\" failed egomotion estimation";
+            return false;
+        }
+
+        ////////////////////////////////////////////////////////////////////////////////////////
+        // E_TRACE << GetName() << " solved motion " << ti.GetIndex() << " -> " << tj.GetIndex();
+        // E_TRACE << mat2string(filter->motion.pose.GetTransformMatrix(), "M");
+        ////////////////////////////////////////////////////////////////////////////////////////
+
+        stats.motion = filter->motion;
+
+        if (ti != tj)
+        {
+            if (mi.valid && (!mj.valid || ti < tj))
+            {
+                mj.pose  = mi.pose >> filter->motion.pose;
+                mj.valid = true;
+            }
+
+            if (mj.valid && (!mi.valid || tj < ti)) // i.e. "else if (mj.valid) .."
+            {
+                mi.pose  = mj.pose >> filter->motion.pose.GetInverse();
+                mi.valid = true;
+            }
+        }
+    }
+
+    // insert the observations into the map
+    std::vector<bool> qi(fi.GetSize());
+    std::vector<bool> qj(fj.GetSize());
+    const FeatureMatches& matches = fmap.GetMatches();
+
+    // E_INFO << matches.size() << " matches..";
+
+    for (size_t k = 0; k < matches.size(); k++)
+    {
+        const FeatureMatch& m = matches[k];
+
+        if (!(m.state & FeatureMatch::INLIER))
+        {
+            continue;
+        }
+
+        qi[m.srcIdx] = qj[m.dstIdx] = true;
+
+        Landmark*& ui_k = ui[m.srcIdx];
+        Landmark*& uj_k = uj[m.dstIdx];
+
+        bool bi = (ui_k == NULL);
+        bool bj = (uj_k == NULL);
+
+        bool firstHit = bi == true && bj == true;
+        bool converge = bi != true && bj != true && ui_k != uj_k;
+
+        if (!converge)
+        {
+            Landmark& lk = firstHit ? map.AddLandmark() : (bj ? *ui_k : *uj_k);
+
+            if (bi) lk.Hit(ti, si, m.srcIdx).proj = fi[m.srcIdx].keypoint.pt;
+            if (bj) lk.Hit(tj, sj, m.dstIdx).proj = fj[m.dstIdx].keypoint.pt;
+
+            // if (bi) E_TRACE << "lmk=" << lk.GetIndex() << ",frm=" << ti.GetIndex() << ",src=" << si.GetIndex() << ",idx=" << m.srcIdx;
+            // if (bj) E_TRACE << "lmk=" << lk.GetIndex() << ",frm=" << tj.GetIndex() << ",src=" << sj.GetIndex() << ",idx=" << m.dstIdx;
+
+            if (bi && mi.valid)
+            {
+                ui_new[m.srcIdx] = &lk;
+                ei[m.srcIdx] = true;
+            }
+
+            if (bj && mj.valid)
+            {
+                uj_new[m.dstIdx] = &lk;
+                ej[m.dstIdx] = true;
+            }
+
+            ui_k = uj_k = &lk;
+
+            if (firstHit)
+            {
+                stats.spawned++;
+            }
+            else
+            {
+                stats.tracked++;
+            }
+
+            flow.Add(fi[m.srcIdx].keypoint.pt, fj[m.dstIdx].keypoint.pt, lk.GetIndex());
+
+            continue;
+        }
+
+        if (policy == ConflictResolution::NO_MERGE)
+        {
+            continue;
+        }
+
+        Landmark& li = *ui_k;
+        Landmark& lj = *uj_k;
+
+        if (policy == ConflictResolution::KEEP_BOTH || map.IsJoinable(li, lj))
+        {
+            map.JoinLandmark(li, lj);
+            stats.joined++;
+
+            continue;
+        }
+
+        switch (policy)
+        {
+        case ConflictResolution::KEEP_BEST:
+
+            throw std::exception("not implemented");
+            break;
+
+        case ConflictResolution::KEEP_LONGEST:
+
+            throw std::exception("not implemented");
+            break;
+
+        case ConflictResolution::KEEP_SHORTEST:
+
+            throw std::exception("not implemented");
+            break;
+
+        case ConflictResolution::REMOVE_BOTH:
+
+            map.RemoveLandmark(li);
+            map.RemoveLandmark(lj);
+
+            stats.removed += 2;
+
+            break;
+        }
+    }
+
+    // initialise structure for the newly spawned landmarks
+    if (mi.valid && !Di.empty()) map.UpdateStructure(ui_new, gi, mi.pose);
+    if (mj.valid && !Dj.empty()) map.UpdateStructure(uj_new, gj, mj.pose);
+
+    // post-motion correspondence recovery
+    if (inlierInjection.scheme && stats.motion.valid)
+    {
+        GeometricMapping forward, backward, epipolar;
+
+        if (inlierInjection.scheme & InlierInjectionScheme::FORWARD_FLOW)
+        {
+            if (pi && pj)
+            {
+                EpipolarObjective* eval = new EpipolarObjective(pi, pj);
+                eval->M0 = pi->pose;
+                eval->M1 = pj->pose;
+
+                forward = FindFeaturesFlow(Ii, Ij, fi, AlignmentObjective::Own(eval), stats.motion.pose, qi);
+            }
+            else
+            {
+                E_WARNING << "projection(s) missing for optical flow feature recovery";
+                E_WARNING << "forward flow-based inlier injection now deactivated.";
+
+                inlierInjection.scheme &= ~InlierInjectionScheme::FORWARD_FLOW;
+            }
+        }
+
+        if (inlierInjection.scheme & InlierInjectionScheme::BACKWARD_FLOW)
+        {
+            if (pi && pj)
+            {
+                EpipolarObjective* eval = new EpipolarObjective(pi, pj);
+                eval->M0 = pj->pose;
+                eval->M1 = pi->pose;
+
+                backward = FindFeaturesFlow(Ij, Ii, fj, AlignmentObjective::Own(eval), stats.motion.pose.GetInverse(), qj);
+            }
+            else
+            {
+                E_WARNING << "projection(s) missing for optical flow feature recovery";
+                E_WARNING << "backward flow-based inlier injection now deactivated.";
+
+                inlierInjection.scheme &= ~InlierInjectionScheme::BACKWARD_FLOW;
+            }
+        }
+
+        if (inlierInjection.scheme & InlierInjectionScheme::EPIPOLAR_SEARCH)
+        {
+            // do something..
+        }
+
+        if (!AugmentFeatures(forward, fi, fj, map, ti, tj, si, sj, ui, uj, tj.augmentedFeaturs[Fj.GetIndex()], stats.spawned, stats.tracked))
+        {
+            E_ERROR << "error augmenting feature set from forward flow";
+            return false;
+        }
+
+        if (!AugmentFeatures(backward, fj, fi, map, tj, ti, sj, si, uj, ui, ti.augmentedFeaturs[Fi.GetIndex()], stats.spawned, stats.tracked))
+        {
+            E_ERROR << "error augmenting feature set from backward flow";
+            return false;
+        }
+
+        for (size_t i = 0; i < forward.GetSize(); i++)
+        {
+            flow.Add(
+                forward.src.mat.reshape(2).at<Point2D>(static_cast<int>(i)),
+                forward.dst.mat.reshape(2).at<Point2D>(static_cast<int>(i)),
+                ui[forward.indices[i]]->GetIndex()
+            );
+        }
+
+        for (size_t j = 0; j < backward.GetSize(); j++)
+        {
+            flow.Add(
+                backward.dst.mat.reshape(2).at<Point2D>(static_cast<int>(j)),
+                backward.src.mat.reshape(2).at<Point2D>(static_cast<int>(j)),
+                uj[backward.indices[j]]->GetIndex()
+            );
+        }
+
+        stats.injected += forward.GetSize() + backward.GetSize();
+    }
+
+    stats.flow = flow.Build();
+    stats.accumulated = map.GetLandmarks();
+
+    // post-motion structure estimation & filtering
+    if (triangulation != DISABLED && mi.valid && stats.motion.valid)
+    {
+        map.UpdateStructure(
+            map.GetLandmarks(stats.flow.indices),
+            triangulation == TriangulationMethod::OPTIMAL ? 
+            OptimalTriangulation (*pi, *pj, stats.motion)(stats.flow) :
+            MidPointTriangulation(*pi, *pj, stats.motion)(stats.flow),
+            mi.pose
+        );
+    }
+
+    // state reporting..
+    if (rendering)
+    {
+        stats.Render(imfuse(Ii, Ij), GetName(), map, mi.pose);
+
+        std::stringstream ss;
+        cv::Mat im;
+
+        //ss << GetName() << "." << std::setw(5) << std::setfill('0') << ti.GetIndex() << ".jpg";
+        //cv::imwrite(ss.str(), stats.im);
+        //cv::vconcat(stats.im, fmap.Draw(Ii, Ij), im);
+        //cv::imwrite(ss.str(), im);
+
+        cv::imshow("Feature Tracking [" + GetName() + "]", stats.im);
+        cv::waitKey(1);
+    }
+
+    return true;
+}
+
 //==[ FeatureTracker::EpipolarOutlierModel ]=================================//
 
 String FeatureTracker::Stats::ToString() const
@@ -1753,7 +1946,7 @@ bool FeatureTracker::EpipolarObjectiveBuilder::AddData(size_t i, size_t j, size_
 
 bool FeatureTracker::EpipolarObjectiveBuilder::Build(GeometricMapping& data, AlignmentObjective::InlierSelector& selector, double sigma)
 {
-    AlignmentObjective::Own objective = AlignmentObjective::Own(new EpipolarObjective(pi, pj));
+    boost::shared_ptr<EpipolarObjective> objective = boost::shared_ptr<EpipolarObjective>(new EpipolarObjective(pi, pj));
     
     data = m_builder.Build();
     data.metric = Metric::Own(new EuclideanMetric(epsilon));
@@ -1763,6 +1956,9 @@ bool FeatureTracker::EpipolarObjectiveBuilder::Build(GeometricMapping& data, Ali
         E_WARNING << "error setting epipolar constraints for \"" << ToString() << "\"";
         return false;
     }
+    
+    objective->M0 = pi->pose;
+    objective->M1 = pj->pose;
 
     selector = objective->GetSelector(sigma);
     return true;
@@ -1794,6 +1990,11 @@ bool FeatureTracker::PerspectiveObjectiveBuilder::Build(GeometricMapping& data, 
 
     data = m_builder.Build();
     data.metric = g.metric ? (*g.metric)[m_idx] : Metric::Own();
+
+    if (m_prebuilt) // remove match indices for prebuilt constraints
+    {
+        data.indices.clear();
+    }
 
     if (reduceMetric && data.metric)
     {
@@ -1842,7 +2043,12 @@ bool FeatureTracker::PhotometricObjectiveBuilder::Build(GeometricMapping& data, 
     StructureEstimation::Estimate g = gi[m_idx];
     Geometry p(Geometry::PACKED, cv::Mat(m_imagePoints, false));
 
-    if (!objective->SetData(g.structure, p, Ii, false, reduceMetric && g.metric ? g.metric->Reduce() : g.metric/*, m_localIdx*/))
+    Metric::Own metric = reduceMetric && g.metric ? g.metric->Reduce() : g.metric;
+    EuclideanMetric* e = dynamic_cast<EuclideanMetric*>(metric.get());
+
+    if (e) e->scale = m_damp;
+
+    if (!objective->SetData(g.structure, p, Ii, false, metric /*, m_localIdx*/))
     {
         E_WARNING << "error setting photometric constraints for \"" << ToString() << "\"";
         return false;
