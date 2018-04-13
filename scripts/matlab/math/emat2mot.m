@@ -18,7 +18,7 @@ function M = emat2mot(E,x1,x2)
 	Z = [0 1 0; -1 0 0; 0 0 0];
 
 	% Possible rotation matrices
-	R1 = U * W * V';
+	R1 = U * W  * V';
 	R2 = U * W' * V';
 
 	% Force rotations to be proper, i. e. det(R) = 1

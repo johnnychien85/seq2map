@@ -5,9 +5,13 @@ function seq = raw2seq(seqPath)
 
 	kittiCalibPath = fullfile(seqPath, 'calib.txt');
     kittiIMUPath   = fullfile(seqPath, 'oxts');
+    ccsadSeqPath   = fullfile(seqPath, 'sequence_data.txt');
+    stixelCamPath  = fullfile(seqPath, 'camera.dat');
 
 	if     exist(kittiCalibPath, 'file') > 0, seq = loadSequenceKITTI   (seqPath);
     elseif exist(kittiIMUPath,   'dir' ) > 0, seq = loadSequenceKITTIRaw(seqPath);
+    elseif exist(ccsadSeqPath,   'file') > 0, seq = loadSequenceCCSAD   (seqPath);
+    elseif exist(stixelCamPath,  'file') > 0, seq = loadSequenceStixel  (seqPath);
     else                                      seq = loadSequenceVG      (seqPath); end
 
 	featuresPath = fullfile(seqPath,'kpt');
@@ -139,6 +143,7 @@ function seq = loadSequenceKITTI(seqPath)
 	seq = struct(...
         'Grabber',  'KITTI',...
         'Paths',    paths,  ...
+        'Frames',   frames, ...
         'cam',      cam,    ...
         'lid',      lid     ...
     );
@@ -269,6 +274,175 @@ function seq = loadSequenceKITTIRaw(seqPath)
         'cam',    cam,        ...
         'lid',    lid         ...
     );
+end
+
+%
+% Load a sequence downloaded from http://aplicaciones.cimat.mx/Personal/jbhayet/ccsad-dataset
+% Each sequence comes with stereo images and raw GPS/IMU readings.
+% Currently only rectified frames are supported. Also a manually generated cam.m
+% needs to be present in the sequence folder.
+%
+% The sequences are supposed to be structured in this way:
+%  <SEQUENCE_ROOT>
+%   + cam_calib_data
+%   |  + extrinsics_selected.yml
+%   |  \ intrinsics_selected.yml
+%   + rectified_left_08_bit
+%   |  + left0000.png
+%   |  + left0001.png
+%   |  .
+%   |  .
+%   + rectified_right_08_bit
+%   |  + right0000.png
+%   |  + right0001.png
+%   |  .
+%   |  .
+%   + sensor_data
+%   |  + car_data.csv
+%   |  + gps_data.csv
+%   |  + imu_data.csv
+%   |  \ gpsData.gpx
+%   + sequence_data.txt
+%   \ cam.m  <-- manually generated from "extrinsics_selected.yml"
+%
+function seq = loadSequenceCCSAD(seqPath)
+    fprintf('..this sequence is from Mexico dataset, hola amigo!!\n');
+
+    paths = struct(                                           ...
+        'seqPath', seqPath,                                   ...
+		'calPath', fullfile(seqPath,'cam.m'),                 ...
+        'gpsPath', fullfile(seqPath,'sensor_data','gps_data'),...
+        'imuPath', fullfile(seqPath,'sensor_data','imu_data'),...
+        'imgPath', fullfile(seqPath,'rectified_*_08_bit' )    ...
+    );
+
+	%
+	% 1. Load camera calibration
+	%
+    run(paths.calPath);
+    cam(1) = makeCameraStruct();
+    cam(2) = makeCameraStruct();
+    cam(1).P = P1;
+    cam(2).P = P2;
+    
+    for k = 1 : numel(cam)
+		cam(k).PixelClass = 'uint8';
+        cam(k).K = cam(k).P(1:3,1:3);
+		cam(k).E(1:3,:) = inv(cam(k).K) * cam(k).P(1:3,:);
+        cam(k).E(1:3,4) = cam(k).E(1:3,4) * 1e-3; % mm to m
+	end
+
+	%
+	% 2. Locate image files
+	%
+    [imgs,found] = findImages(paths.imgPath,2,'*.png');
+    frames = size(imgs,2);
+    for k = 1 : numel(cam), cam(k).ImageFiles = imgs(k,:); end
+    fprintf('..image data of %d camera(s) and %d frames located\n',found,frames);
+    
+	seq = struct(...
+        'Grabber', 'CCSAD',...
+        'Paths',   paths,  ...
+        'Frames',  frames, ...
+        'cam',     cam,    ...
+        'lid',     []      ... % no LiDAR :(
+    );
+end
+
+% Ground Truth Stixel Dataset
+% http://www.6d-vision.com/ground-truth-stixel-dataset
+%
+function seq = loadSequenceStixel(seqPath)
+    fprintf('..this sequence is from 6D-Vision Ground Truth Stixel Dataset\n');
+
+    paths = struct(                               ...
+        'seqPath', seqPath,                       ...
+		'calPath', fullfile(seqPath,'camera.dat'),...
+        'imgPath', fullfile(seqPath,'images'),    ...
+        'imuPath', fullfile(seqPath,'vehicle'),   ...
+        'stxPath', fullfile(seqPath,'gt' )        ...
+    );
+
+    for k = 1 : 2
+        cam(k) = makeCameraStruct();
+        cam(k).PixelClass = 'uint16';
+    end
+
+    % parse camera definition
+    tvec = zeros(3,1);
+    rvec = zeros(3,1);
+    baseline = 0;
+    
+    fprintf('..parsing camera definition from %s\n',paths.calPath);
+    f = fopen(paths.calPath,'r');
+    while ~feof(f)
+        line = fgetl(f);
+        segs = strsplit(line,':');
+        
+        if numel(segs) < 2, continue; end
+
+        key = lower(strtrim(segs{1}));
+        val = str2num(strtrim(segs{2}));
+
+        switch key
+            case 'focal length x (px)', cam(1).K(1,1)  = val;
+            case 'focal length y (px)', cam(1).K(2,2)  = val;
+            case 'center x (px)',       cam(1).K(1,3)  = val;
+            case 'center y (px)',       cam(1).K(2,3)  = val;
+            case 'baseline (m)',        baseline = val;
+            case 'position long (m)',   tvec(1) = val;
+            case 'position height (m)', tvec(2) = val;
+            case 'position lat (m)',    tvec(3) = val;
+            case 'tilt angle (rad)',    rvec(1) = val;
+            case 'yaw angle (rad)',     rvec(2) = val;
+            case 'roll angle (rad)',    rvec(3) = val;
+            case {'pixel width','pixel height'}, % unused intrinsics
+            otherwise
+                warning('..unknown key "%s"',key);
+        end
+    end
+
+    cam(1).E(1:3,1:3) = angle2dcm(rvec(1),rvec(2),rvec(3),'YZX');
+    cam(1).E(1:3,4)   = -cam(1).E(1:3,1:3)'*tvec;
+    cam(1).P = cam(1).K * cam(1).E(1:3,:);
+
+    cam(2).K = cam(1).K;
+    cam(2).E = cam(1).E;
+    cam(2).E(1,4) = cam(2).E(1,4) - baseline;
+    cam(2).P = cam(2).K * cam(2).E(1:3,:);
+
+    % find images
+    for k = 1 : 2
+        cam(k).ImageFiles = fdir(paths.imgPath,sprintf('img_c%d_*.pgm',k-1));
+        fprintf('..found %d image(s) for camera %d\n',numel(cam(k).ImageFiles),k);
+    end
+
+    frames = numel(cam(1).ImageFiles);
+    assert(numel(cam(2).ImageFiles) == frames);
+
+    % find stixels
+    stx = [];
+    fprintf('..loading stixel ground truth..');
+    for i = 1 : frames
+        [~,filename,~] = fileparts(cam(1).ImageFiles{i});
+        toks = strsplit(filename,'_');
+        xml = fullfile(paths.stxPath,sprintf('gtStixel_%s.xml',toks{end}));
+        stx{i} = xml2stx(xml);
+        
+        if mod(i,round(frames/10)) == 0, fprintf('..%d',i); end
+    end
+    fprintf('..DONE\n');
+
+    seq = struct(...
+        'Grabber','6D-VISION Stixel',...
+        'Paths',  paths,      ...
+        'Frames', frames,     ...
+        'cam',    cam,        ...
+        'stx',    [],        ...
+        'lid',    []          ...
+    );
+    
+    seq.stx = stx;
 end
 
 %
@@ -455,8 +629,9 @@ function obj = cam2obj(cam)
     end
 
     % convert rotation matrix to vector representation
-    a = vrrotmat2vec(cam.E(1:3,1:3));
-    a = a(1:3) * a(4);
+    % a = vrrotmat2vec(cam.E(1:3,1:3));
+    % a = a(1:3) * a(4);
+    a = rotationMatrixToVector(cam.E(1:3,1:3));
 
     obj = cameraParameters(...
         'IntrinsicMatrix',  cam.K',           ... % intrinsics (fu, fv, uc, vc)
@@ -528,7 +703,7 @@ end
 %
 % Search for files in a directory that match one of the given name patterns
 %
-function f = fdir(root, patterns)
+function f = fdir(root,patterns)
     if ~iscell(patterns), patterns = {patterns}; end
     f = cell(0,1);
     for i = 1 : numel(patterns)

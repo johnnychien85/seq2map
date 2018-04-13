@@ -616,6 +616,77 @@ bool EurocMavBuilder::BuildCamera(const Path& from, Camera::Map& cams, Rectified
     return true;
 }
 
+//==[ CcsadBuilder ]============================================================
+
+bool CcsadBuilder::BuildCamera(const Path& from, Camera::Map& cams, RectifiedStereo::Set& stereo) const
+{
+    static const String calibDirName = "cam_calib_data";
+    static const String calibExtrinsicsFile = "extrinsics_selected.yml";
+    static const String calibIntrinsicsFile = "intrinsics_selected.yml"; // not used
+    static const String imageDirName = "rectified_%s_08_bit";
+
+    Strings camNames;
+    camNames.push_back("left");
+    camNames.push_back("right");
+
+    cv::FileStorage fs;
+    Path calibPath = from / calibDirName / calibExtrinsicsFile;
+    
+    if (!fs.open(calibPath.string(), cv::FileStorage::READ))
+    {
+        E_ERROR << "error parsing camera rectification parameters from " << calibPath.string();
+        return false;
+    }
+
+    E_INFO << "calibration profile loaded from " << calibPath;
+
+    for (size_t k = 0; k < camNames.size(); k++)
+    {
+        Camera::Own cam = Camera::New(k);
+        std::stringstream ss;
+        cv::Mat P;
+
+        ss << "P" << (k+1);
+        fs[ss.str()] >> P;
+
+        if (P.empty())
+        {
+            E_ERROR << "error retrieving node \"" << ss.str() << "\" from " << calibPath;
+            return false;
+        }
+
+        cv::Mat K = P.rowRange(0, 3).colRange(0, 3);
+
+        cam->SetName(camNames[k]);
+        cam->SetModel("Unknown");
+        cam->GetExtrinsics().SetTransformMatrix(K.inv() * P);
+        cam->SetIntrinsics(PinholeModel::Own(new PinholeModel(K)));
+
+        char buf[128];
+        sprintf(buf, imageDirName.c_str(), camNames[k].c_str());
+
+        const Path imageFullPath = from / String(buf);
+        const String imageFileExt = ".png";
+
+        cam->GetImageStore().FromExistingFiles(imageFullPath, imageFileExt);
+        const size_t frames = cam->GetImageStore().GetItems();
+        E_INFO << frames << " image(s) located for camera " << k;
+
+        if (frames == 0)
+        {
+            E_ERROR << "image data not found";
+            return false;
+        }
+
+        cam->SetImageSize(cam->GetImageStore()[0].im.size()); // get image dimension
+        cam->Join(cams); // join the camera to the set
+    }
+
+    stereo.insert(RectifiedStereo::Create(cams[0], cams[1]));
+
+    return true;
+}
+
 //==[ SeqBuilderFactory ]=======================================================
 
 SeqBuilderFactory::SeqBuilderFactory()
@@ -623,4 +694,5 @@ SeqBuilderFactory::SeqBuilderFactory()
     Register<KittiOdometryBuilder>("KITTI_ODOMETRY");
     Register<KittiRawDataBuilder> ("KITTI_RAW");
     Register<EurocMavBuilder>     ("EUROC");
+    Register<CcsadBuilder>        ("CCSAD");
 }

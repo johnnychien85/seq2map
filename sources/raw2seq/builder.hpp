@@ -128,6 +128,25 @@ protected:
     static bool ReadConfig(const Path& fromm, cv::FileStorage& to);
 };
 
+/**
+ * Class to parse CCSAD dataset from Mexico.
+ * Source: http://aplicaciones.cimat.mx/Personal/jbhayet/ccsad-dataset
+ */
+class CcsadBuilder : public Sequence::Builder
+{
+public:
+    virtual void WriteParams(cv::FileStorage& fs) const {}
+    virtual bool ReadParams(const cv::FileNode& fn) { return true; }
+    virtual void ApplyParams() {}
+    virtual Options GetOptions(int flag = 0) { return Options(); }
+
+protected:
+    virtual String GetVehicleName(const Path& from) const { return "MEX CAR"; }
+    virtual bool BuildCamera(const Path& from, Camera::Map& cams, RectifiedStereo::Set& stereo) const;
+
+    friend class KittiRawDataBuilder;
+};
+
 class SeqBuilderFactory : public Factory<String, Sequence::Builder>
 {
 public:
