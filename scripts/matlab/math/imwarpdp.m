@@ -15,15 +15,25 @@ function I0 = imwarpdp(I1,D01,c0,c1,cj)
     I0 = zeros(m,n,k,'like',I1);
 
     if rectified
-        [~,U] = ndgrid(1:m,1:n);
-        for i = 1 : m
-            di = D01(i,:);
-            ji = find(di > 0 & isfinite(di));
-            if numel(ji) < 2, continue; end
-            ui = U(i,ji) - di(ji);
-            idx = find(ui >= 1 & ui <= n);
+        for y = 1 : m
+            % profile of disparity image in y-th row
+            f = D01(y,:);
+
+            % find pixels with valid disparities and their corresponding pixels in I1
+            dst = find(f > 0 & isfinite(f)); % I0
+            src = dst - f(dst);              % I1
+
+            % exclude out-of-range pixels
+            idx = find(src >= 1 & src <= n);
+            src = src(idx);
+            dst = dst(idx);
+
+            % interpolation requires at least two data points
+            if numel(idx) < 2, continue; end
+
+            % apply interpolation for each colour channel
             for d = 1 : k
-                I0(i,ji(idx),d) = interp1(ji,double(I1(i,ji,d)),ui(idx));
+                I0(y,dst,d) = interp1(1:n,double(I1(y,:,d)),src);
             end
         end
         return;

@@ -1,4 +1,6 @@
 function mot2ply(mot,filename,color)
+    if nargin < 3, color = [255,255,0]; end
+
 	TA = [0 1 2; 0 2 3; 0 3 4; 0 4 5; 0 5 1];
 	TB = [7 1 2; 2 7 8; 8 2 3; 3 8 9; 9 3 4; 4 9 10; 10 4 5; 5 10 11; 11 5 1; 1 11 7];
 

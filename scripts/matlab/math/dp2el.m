@@ -1,45 +1,42 @@
 % DP2EL identifies road manifold using DP2STX in the first frame and uses it to
 % build a digital elevation map (DEM) by accumulating transformed 3D points for
 % each disparity map.
-function [dem,z,x] = dp2el(dp,cam0,cam1,mot,weight)
+function [el,zgrid,xgrid,rcs] = dp2el(dp,cam0,cam1,mot,varargin)
+    po = parseArgs(dp,cam0,cam1,mot,varargin{:});
     frames = size(dp,3);
-    assert(frames == size(mot,3));
-
-    if nargin > 4
-        assert(size(weight,3) == frames);
-        assert(size(weight,1) == size(dp,1) & size(weight,2) == size(dp,2));
-    else
-        weight = [];
-    end
 
     t0 = 1;
-    zrange = [0,15]; % scan potholes up to 60m
-    xrange = [-5,5]; % define the width of corrider
-    res = 0.05;      % cell resolution set to 0.1m
 
-    fprintf('Finding road manifold..');
-    tfm = findRoadTransform(dp(:,:,t0),cam0,cam1);
-    fprintf('..DONE\n');
+    if isempty(po.RCS)
+        fprintf('Finding road manifold..');
+        rcs = findRoadTransform(dp(:,:,t0),po);
+        fprintf('..DONE\n');
+    else
+        rcs = po.RCS;
+    end
 
     % accumulate frames
     fprintf('Accumulating depth data..');
     for t = 1 : frames
         % compute the transform from frame t to RCS
-        Mt = tfm * mot(:,:,t0) * invmot(mot(:,:,t));
+        Mt = rcs * mot(:,:,t0) * invmot(mot(:,:,t));
 
         % back-project points to 3D space and apply the transform
-        [x,y,z] = slicearray(eucl2eucl(dp2pts(dp(:,:,1),cam0,cam1),Mt));
+        [x,y,z] = slicearray(eucl2eucl(dp2pts(dp(:,:,t),cam0,cam1),Mt));
 
         % find points within the range of interest
-        if isempty(weight)
-            idx = find(x > xrange(1) & x < xrange(2) & z > zrange(1) & z < zrange(2));
+        if isempty(po.Weight)
+            idx = find(x > po.XLim(1) & x < po.XLim(2) & z > po.ZLim(1) & z < po.ZLim(2));
             G{t} = [x(idx),y(idx),z(idx)];
         else
-            w = weight(:,:,t);
-            idx = find(x > xrange(1) & x < xrange(2) & z > zrange(1) & z < zrange(2) & w > 0);
+            w = po.Weight(:,:,t);
+            idx = find(x > po.XLim(1) & x < po.XLim(2) & z > po.ZLim(1) & z < po.ZLim(2) & w > 0);
             G{t} = [x(idx),y(idx),z(idx)];
             W{t} = w(idx);
         end
+
+        % I0 = im(:,:,t);
+        % pcwrite(pointCloud(G{t},'color',repmat(I0(idx),1,3)),sprintf('pc%02d.ply',t));
 
         fprintf('..%d',t);
     end
@@ -48,36 +45,61 @@ function [dem,z,x] = dp2el(dp,cam0,cam1,mot,weight)
     [x,y,z] = slicearray(cat(1,G{:}));
 
     % transform from the road-centered coordinate system to elevation map
-    i  = round((z-zrange(1))/res)+1;
-    j  = round((x-xrange(1))/res)+1;
-    sz = round([(zrange(2)-zrange(1))/res,(xrange(2)-xrange(1))/res])+1;
+    i  = round((z-po.ZLim(1))/po.ZRes)+1;
+    j  = round((x-po.XLim(1))/po.XRes)+1;
+    sz = round([(po.ZLim(2)-po.ZLim(1))/po.ZRes,(po.XLim(2)-po.XLim(1))/po.XRes])+1;
     
-    if isempty(weight)
-        dem = -accumarray([i,j],y,sz,@mean,NaN);
+    if ~exist('W')
+        el = -accumarray([i,j],y,sz,@mean,-Inf);
     else
-        w = cat(1,W{:});
-        dem = -accumarray([i,j],y.*w,sz,@sum,NaN)./accumarray([i,j],w,sz,@sum);
+        w  = cat(1,W{:});
+        n  = accumarray([i,j],w,sz,@sum);
+        el = -accumarray([i,j],y.*w,sz,@sum,-Inf)./n;
     end
 
-    z = zrange(1):res:zrange(2);
-    x = xrange(1):res:xrange(2);
+    zgrid = po.ZLim(1):po.ZRes:po.ZLim(2);
+    xgrid = po.XLim(1):po.XRes:po.XLim(2);
 end
 
-function tfm = findRoadTransform(dp,cam0,cam1)
-    E = cam1.E * invmot(cam0.E);
-    baseline = -E(1,4);
-    focalLength = cam0.K(1,1);
+function po = parseArgs(dp,cam0,cam1,mot,varargin)
+    camChk = @(x) isfield(x,'P') && isfield(x,'E') && isfield(x,'K');
+    limChk = @(x) numel(x) == 2 && x(1) < x(2);
+    resChk = @(x) isfinite(x) && x > 0;
+    sizChk = @(x) isempty(x) || all(size(x) == size(dp));
+    tfmChk = @(x) isempty(x) || ismot(x);
 
-    [~,rd,~,ub] = dp2stx(dp,     ...
+    p = inputParser;
+    addRequired(p,'dp',@(x)(ndims(dp) == 2 || ndims(dp) == 3) && isfloat(dp));
+    addRequired(p,'c0',camChk);
+    addRequired(p,'c1',camChk);
+    addRequired(p,'mot',@(x) size(mot,3) == size(dp,3));
+    addParameter(p,'ZLim',[5,10],limChk);
+    addParameter(p,'XLim',[-5,5],limChk);
+    addParameter(p,'ZRes',0.01,  resChk);
+    addParameter(p,'XRes',0.01,  resChk);
+    addParameter(p,'Weight',[],  sizChk);
+    addParameter(p,'RCS',[],     tfmChk);
+    
+    parse(p,dp,cam0,cam1,mot,varargin{:});
+    po = p.Results;
+end
+
+function rcs = findRoadTransform(dp,po)
+    E = po.c1.E * invmot(po.c0.E);
+    baseline = -E(1,4);
+    focalLength = po.c0.K(1,1);
+
+    [~,rd,~,ub] = dp2stx(dp,    ...
       'FocalLength',focalLength,...
       'Baseline',   baseline,   ...
       'Quiet',      true,       ...
       'Ground',     'Plane',    ...
       'PlaneTol',   0.5,        ...
       'PlaneItr',   500,        ...
-      'SkyLine',    128);
+      'SkyLine',    128         ...
+    );
     
-    [x,y,z] = slicearray(dp2pts(dp,cam0,cam1));
+    [x,y,z] = slicearray(dp2pts(dp,po.c0,po.c1));
 
     % idx = find(dp > 0 & dp < ub);
     % idx = find(abs(dp-rd) < 1 & dp > 0);
@@ -92,8 +114,8 @@ function tfm = findRoadTransform(dp,cam0,cam1)
     t = -R*mean(G)';
 
     % make z-axis the first principal axis
-    tfm = [0,1,0;0,0,1;,1,0,1]*[R,t];
+    rcs = [0,1,0;0,0,1;,1,0,0]*[R,t];
 
     % preserve the shift in depth
-    tfm(3,4) = 0;
+    rcs(3,4) = 0;
 end
